@@ -300,21 +300,25 @@ CLI 必须支持用户随时输入消息，消息被异步写入 MessageBus，�
 
 ```
 src/
-  types.ts               # BusMessage, PendingProposal, UnitState, TurnResult
+  types.ts               # BusMessage, PendingProposal, UnitState, TurnResult, ToolLevel
   message-bus.ts          # MessageBus: 消息存储 + per-agent 读取游标（P1, P4）
-  tools.ts                # Vote/Report 工具定义 + buildToolList()
-  prompts.ts              # Generator/Verifier system prompts
+  tools.ts                # Vote/Report + L1工具定义(Bash/ReadFile/WriteFile) + buildToolList()
+  tool-executor.ts        # 阻塞式工具执行器：Bash(child_process), ReadFile, WriteFile
+  prompts.ts              # Generator/Verifier system prompts + L1 addendum
   agent-turn.ts           # AgentTurn: 独立Context + 消息注入 + 单轮LLM调用
-  deliberation-unit.ts    # DeliberationUnit: FSM + 核心轮转循环
-  cli.ts                  # CLI入口：异步readline + 彩色终端输出
+  deliberation-unit.ts    # DeliberationUnit: FSM + 核心轮转循环 + Executing状态
+  cli.ts                  # CLI入口：异步readline + 彩色终端输出 + L1模式
 ```
 
 **依赖**：`@mariozechner/pi-ai`（LLM调用）、`@sinclair/typebox`（Tool schema）。
 **不依赖**：`pi-agent-core`（其自动tool执行循环与提议-表决机制不兼容）。
 
-**运行**：`ANTHROPIC_API_KEY=... npm start`
+**运行**：
+- L0（纯对话）：`ANTHROPIC_API_KEY=... npm start`
+- L1（带环境工具）：`ANTHROPIC_API_KEY=... ELENCHUS_LEVEL=L1 npm start`
 
 ---
 
 **版本历史**：
+- v0.2 (2026-04-08)：L1实现——新增Bash/ReadFile/WriteFile阻塞式工具，Executing状态机，提议-表决泛化。
 - v0.1 (2026-04-08)：初始MVP设计，L0纯对话验证。异步用户输入。

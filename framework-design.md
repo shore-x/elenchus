@@ -139,7 +139,7 @@ version: 1.0
 
 ### 3.3 非阻塞式工具的执行流程
 
-当一个Agent提议执行非阻塞式工具（如SpawnChild）且被对方APPROVE后：工具在后台启动，框架将ACK（确认已启动）系统消息写入消息总线，状态机正常轮转。异步结果到达时写入消息总线，下一轮次可见。若Agent单元已Stopped，则作为触发消息唤醒。
+当一个Agent提议执行非阻塞式工具（如SpawnChild）且被对方APPROVE后：工具在后台启动，框架将ACK（确认已启动）系统消息写入消息总线，状态机正常轮转。异步结果到达时写入消息总线，下一轮次可见。若Agent单元已Idle，则作为触发消息唤醒。
 
 ACK与最终结果的区分借鉴了分布式系统的经典模式——ACK是同步的即时确认（"任务已启动"），Response是异步的最终结果（"任务已完成"）。
 
@@ -181,10 +181,10 @@ ACK与最终结果的区分借鉴了分布式系统的经典模式——ACK是�
 
 当前采用固定两层层级：
 
-- **L0（顶层）**：与用户交互，负责意图理解、任务分解、结果汇总。仅拥有非阻塞工具（SpawnChild、SendToChild），不执行环境操作，因此**永远不进入Executing状态**，始终保持活跃。
+- **L0（顶层）**：与用户交互，负责意图理解、任务分解、结果汇总。仅拥有非阻塞工具（SpawnChild、SendToChild），不执行环境操作，因此**永远不进入Executing状态**。可通过Yield回到Idle等待子Agent异步结果，被子Agent的返回消息或新用户消息唤醒。
 - **L1（执行层）**：由L0创建，执行具体操作。拥有阻塞式环境工具（Bash、ReadFile、WriteFile等），没有SpawnChild，是叶子节点。
 
-L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agent的Report结果异步到达L0的消息总线。
+L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agent的Yield结果异步到达L0的消息总线。
 
 > **设计决策**：两层足以覆盖"理解意图→分解任务→执行操作"的完整链路。协议天然支持扩展——如需更深层级，只需将SpawnChild注入中间层即可。
 
@@ -199,19 +199,19 @@ L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agen
 > **原则 P5（最小状态区分）**：状态仅在行为存在本质差异时才区分。行为相同的场景合并，行为不同的场景必须拆分。
 
 应用这一原则：
-- Agent A的轮次与Agent B的轮次行为不同（"当前轮到谁"决定调用哪个Agent生成回复）→ 拆分为**TurnA**和**TurnB**
+- Agent A的轮次与Agent B的轮次行为不同（“当前轮到谁”决定调用哪个Agent生成回复）→ 拆分为**TurnA**和**TurnB**
 - 等待不同类型阻塞式工具（bash、文件读写）的行为相同（阻塞等待结果）→ 合并为**Executing**
-- 初始化等待、已汇报休眠、被终止——三种不同的"不活跃"状态行为各异 → 拆分为**Idle**、**Stopped**、**Terminated**
+- 初始化等待与Yield后等待唤醒的行为相同（等待触发消息→TurnA）→ 合并为**Idle**
+- 被终止是不可恢复的终态，与Idle行为本质不同 → 拆分为**Terminated**
 
-### 5.2 六状态有限状态机
+### 5.2 五状态有限状态机
 
 | 状态 | 含义 |
 |------|------|
-| **Idle** | 已创建，等待首条触发消息 |
+| **Idle** | 等待触发消息（首次启动或Yield后），上下文已持久化，可被唤醒 |
 | **TurnA** | Agent A 的轮次：生成回复、表决、可提出新提议 |
 | **TurnB** | Agent B 的轮次：同上 |
 | **Executing** | 阻塞等待阻塞式工具执行结果，无Agent活跃 |
-| **Stopped** | 已通过Report汇报，上下文已持久化，可被唤醒 |
 | **Terminated** | 被父Agent强制终止，终态，不可恢复 |
 
 注：Agent单元的有效状态空间取决于其工具集——仅拥有非阻塞工具的单元（如L0）永远不进入Executing。
@@ -227,9 +227,8 @@ L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agen
 | T5 | TurnB | B通过了A的阻塞式提议 | Executing |
 | T6 | Executing | 结果返回（从TurnA进入） | TurnB |
 | T7 | Executing | 结果返回（从TurnB进入） | TurnA |
-| T8 | TurnA/TurnB | Report提议被通过 | Stopped |
-| T9 | Stopped | 收到触发消息 | TurnA |
-| T10 | 非Terminated | 父Agent发出强制终止 | Terminated |
+| T8 | TurnA/TurnB | Yield提议被通过 | Idle |
+| T9 | 非Terminated | 父Agent发出强制终止 | Terminated |
 
 对于非阻塞式提议被APPROVE的情况：工具在后台启动，ACK写入消息总线，状态机正常轮转（T2/T4），不进入Executing。
 
@@ -253,14 +252,14 @@ L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agen
 | 工具 | 说明 |
 |------|------|
 | **Vote** | 对待决提议表决。由框架条件注入，不构成提议。 |
-| **Report** | 向父Agent汇报并进入Stopped。构成提议，需对方投票通过。消息体为非结构化文本。 |
+| **Yield** | 向父Agent交付当前结论并回到Idle。构成提议，需对方投票通过。消息体为非结构化文本。 |
 
 **L0插件工具**：
 
 | 工具 | 阻塞性 | 说明 |
 |------|--------|------|
 | **SpawnChild** | 非阻塞 | 创建并启动子Agent单元，结果异步到达 |
-| **SendToChild** | 非阻塞 | 向已停止的子Agent发送消息并唤醒 |
+| **SendToChild** | 非阻塞 | 向已Idle的子Agent发送消息并唤醒 |
 
 **L1插件工具**：
 
@@ -293,11 +292,11 @@ L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agen
 |------|------|
 | Agent单元（Agent Unit） | 由两个Agent组成的最小协作执行单位，也是一个状态机实例 |
 | 消息总线（Message Bus） | 每个Agent单元的持久化消息存储，外部消息随时异步写入 |
-| 触发消息（Trigger Message） | 使Agent单元从Idle或Stopped状态转入TurnA的消息 |
+| 触发消息（Trigger Message） | 使Agent单元从Idle状态转入TurnA的消息 |
 | 提议（Proposal） | Agent通过工具调用提出的需要对方表决的动作请求 |
 | 表决（Vote） | 对对方提议的APPROVE或REJECT判定 |
 | 待决提议（Pending Proposal） | 已提出但尚未被表决的提议 |
-| Report | 默认工具，Agent单元向父Agent汇报并进入Stopped状态 |
+| Yield | 默认工具，Agent单元向父Agent交付当前结论并回到Idle状态 |
 | ACK系统消息 | 非阻塞工具被APPROVE后框架写入消息总线的即时确认消息 |
 | 阻塞式工具 | 对环境的原子操作，执行时Agent单元进入Executing状态 |
 | 非阻塞式工具 | 对其他Agent单元的操作，后台执行，结果异步到达 |
@@ -307,6 +306,7 @@ L0可同时运行多个L1子Agent（因SpawnChild是非阻塞的），各子Agen
 ---
 
 **版本历史**：
+- v1.1 (2026-04-09)：Report重命名为Yield，合并Stopped状态入Idle（6状态→5状态），简化转换规则为9条。
 - v1.0 (2026-04-08)：重构文档结构。从问题定义出发逐步推导，增加原理分析，精简方案细节。
 - v0.2 (2026-04-07)：工具架构重写，ACK机制，Report替代Terminate，固定两层层级。
 - v0.1 (2026-04-07)：初始版本。

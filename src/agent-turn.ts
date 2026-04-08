@@ -1,11 +1,12 @@
-// Elenchus MVP - AgentTurn
+// Elenchus - AgentTurn
 // Executes a single LLM turn for one agent: inject new messages → call pi-ai → parse response.
 // Each agent maintains an independent pi-ai Context (messages array).
 // The other agent's replies and system events are injected as user messages with prefixes.
+// L0: only Yield/Vote tools. L1: adds Bash/ReadFile/WriteFile (all as proposals).
 
 import { complete, type Context, type Message, type Model, type StopReason, type Tool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { type AgentId, type BusMessage, type TurnResult } from "./types.js";
+import { type AgentId, type BusMessage, type ToolLevel, type TurnResult } from "./types.js";
 import { buildToolList, type ElenchusTool } from "./tools.js";
 
 // Display name mapping for message prefixes
@@ -39,13 +40,34 @@ function convertBusMessagesToInjection(messages: BusMessage[], selfId: AgentId):
 }
 
 // Build a pending-proposal notification message for injection.
-function buildProposalNotification(proposal: { toolName: string; args: { content: string } }, proposerName: string): Message {
+// Supports any tool type (Yield, Bash, ReadFile, WriteFile, etc.)
+function buildProposalNotification(
+  proposal: { toolName: string; args: Record<string, unknown> },
+  proposerName: string,
+): Message {
+  let detail: string;
+  switch (proposal.toolName) {
+    case "yield":
+      detail = `The proposed content is:\n\n---\n${proposal.args.content}\n---`;
+      break;
+    case "bash":
+      detail = `Command: \`${proposal.args.command}\``;
+      break;
+    case "readFile":
+      detail = `File path: \`${proposal.args.path}\``;
+      break;
+    case "writeFile":
+      detail = `File path: \`${proposal.args.path}\`\nContent (${String(proposal.args.content).length} chars):\n---\n${String(proposal.args.content).slice(0, 500)}${String(proposal.args.content).length > 500 ? "\n[truncated]" : ""}\n---`;
+      break;
+    default:
+      detail = `Arguments: ${JSON.stringify(proposal.args)}`;
+  }
+
   return {
     role: "user",
     content:
-      `[System]: ${proposerName} has proposed a Report. The proposed content is:\n\n` +
-      `---\n${proposal.args.content}\n---\n\n` +
-      `Please evaluate this proposal carefully and call the **vote** tool to APPROVE or REJECT it.`,
+      `[System]: ${proposerName} has proposed to use the **${proposal.toolName}** tool.\n${detail}\n\n` +
+      `Please evaluate this proposal and call the **vote** tool to APPROVE or REJECT it.`,
     timestamp: Date.now(),
   };
 }
@@ -63,20 +85,22 @@ export class AgentTurn {
   private selfId: AgentId;
   private systemPrompt: string;
   private model: Model<any>;
+  private level: ToolLevel;
   // This agent's independent pi-ai message history
   private messages: Message[] = [];
 
-  constructor(selfId: AgentId, systemPrompt: string, model: Model<any>) {
+  constructor(selfId: AgentId, systemPrompt: string, model: Model<any>, level: ToolLevel = "L0") {
     this.selfId = selfId;
     this.systemPrompt = systemPrompt;
     this.model = model;
+    this.level = level;
   }
 
   // Execute one turn: inject new bus messages → call LLM → parse result.
   // Returns a TurnResult describing the agent's reply, any proposal, and any vote.
   async execute(
     newBusMessages: BusMessage[],
-    pendingProposal: { toolName: string; args: { content: string }; proposer: AgentId } | null,
+    pendingProposal: { toolName: string; args: Record<string, unknown>; proposer: AgentId } | null,
   ): Promise<TurnResult> {
     // 1. Inject new messages from the bus into this agent's context
     const injected = convertBusMessagesToInjection(newBusMessages, this.selfId);
@@ -90,7 +114,7 @@ export class AgentTurn {
 
     // 3. Build tool list (Vote only available when there's a pending proposal from the other agent)
     const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== this.selfId;
-    const tools = buildToolList(hasPendingFromOther);
+    const tools = buildToolList(hasPendingFromOther, this.level);
 
     // 4. Call LLM with explicit maxTokens to prevent proxy/API truncation
     const context: Context = {
@@ -105,51 +129,79 @@ export class AgentTurn {
     this.messages.push(response);
 
     // 6. Parse response into TurnResult
+    const validToolNames = new Set(tools.map((t) => t.name));
     const result: TurnResult = { reply: "", stopReason: response.stopReason };
 
     for (const block of response.content) {
       if (block.type === "text") {
         result.reply += block.text;
       } else if (block.type === "toolCall") {
-        if (block.name === "report") {
-          result.proposal = {
-            toolName: "report",
-            args: block.arguments as { content: string },
-          };
+        if (!validToolNames.has(block.name)) {
+          // LLM hallucinated a tool that doesn't exist — reject it
+          (result.unknownToolCalls ??= []).push({
+            name: block.name,
+            args: block.arguments as Record<string, unknown>,
+          });
+          this.messages.push({
+            role: "toolResult",
+            toolCallId: block.id,
+            toolName: block.name,
+            content: [{ type: "text", text: `Error: tool "${block.name}" does not exist. Only use tools explicitly provided by the framework: ${[...validToolNames].join(", ")}.` }],
+            isError: true,
+            timestamp: Date.now(),
+          });
         } else if (block.name === "vote") {
+          // Vote is the only tool that is NOT a proposal
           const args = block.arguments as { approve: boolean; reason: string };
           result.vote = {
             approve: args.approve,
             reason: args.reason,
           };
+          this.messages.push({
+            role: "toolResult",
+            toolCallId: block.id,
+            toolName: block.name,
+            content: [{ type: "text", text: this.buildToolAck(block.name, result) }],
+            isError: false,
+            timestamp: Date.now(),
+          });
+        } else {
+          // All other valid tool calls (yield, bash, readFile, writeFile) are proposals
+          result.proposal = {
+            toolName: block.name,
+            args: block.arguments as Record<string, unknown>,
+          };
+          this.messages.push({
+            role: "toolResult",
+            toolCallId: block.id,
+            toolName: block.name,
+            content: [{ type: "text", text: this.buildToolAck(block.name, result) }],
+            isError: false,
+            timestamp: Date.now(),
+          });
         }
-
-        // Add a synthetic tool result so the context stays valid for future turns.
-        // The framework "acknowledges" the tool call without actually executing it.
-        this.messages.push({
-          role: "toolResult",
-          toolCallId: block.id,
-          toolName: block.name,
-          content: [{ type: "text", text: this.buildToolAck(block.name, result) }],
-          isError: false,
-          timestamp: Date.now(),
-        });
       }
     }
 
     return result;
   }
 
+  // Return the number of messages in this agent's context (for debug display).
+  getContextSize(): number {
+    return this.messages.length;
+  }
+
   // Build an acknowledgement message for a tool call.
   private buildToolAck(toolName: string, result: TurnResult): string {
-    if (toolName === "report") {
-      return "Your report proposal has been recorded. Waiting for the other agent's vote.";
-    }
     if (toolName === "vote" && result.vote) {
       return result.vote.approve
         ? "Your APPROVE vote has been recorded."
         : "Your REJECT vote has been recorded.";
     }
-    return "Tool call acknowledged.";
+    if (toolName === "yield") {
+      return "Your yield proposal has been recorded. Waiting for the other agent's vote.";
+    }
+    // Blocking tools (bash, readFile, writeFile)
+    return `Your ${toolName} proposal has been recorded. Waiting for the other agent's vote.`;
   }
 }

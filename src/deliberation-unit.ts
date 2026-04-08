@@ -1,13 +1,17 @@
-// Elenchus MVP - DeliberationUnit
-// The core FSM that drives dual-agent turn alternation.
-// Implements the state machine from framework-design.md §5 (L0 subset: no Executing state).
+// Elenchus - DeliberationUnit
+// The core FSM (5-state: idle/turn-a/turn-b/executing/terminated) that drives dual-agent turn alternation.
+// L0: non-blocking child management (SpawnChild, SendToChild), never enters Executing.
+// L1: blocking environment tools (Bash, ReadFile, WriteFile), enters Executing on approval.
+// Yield returns the unit to Idle; any trigger message (user or child report) wakes it via T1.
 // User messages arrive asynchronously via MessageBus and are processed at the next turn boundary (P4).
 
 import { type Model } from "@mariozechner/pi-ai";
 import { AgentTurn } from "./agent-turn.js";
 import { MessageBus } from "./message-bus.js";
-import { GENERATOR_SYSTEM_PROMPT, VERIFIER_SYSTEM_PROMPT } from "./prompts.js";
-import { type AgentId, type OnSystemEvent, type OnTextDelta, type PendingProposal, type UnitState } from "./types.js";
+import { buildSystemPrompt } from "./prompts.js";
+import { type AgentId, type OnSystemEvent, type OnTextDelta, type PendingProposal, type SystemEvent, type ToolLevel, type UnitState } from "./types.js";
+import { isBlockingTool, isNonBlockingTool } from "./tools.js";
+import { executeBlockingTool } from "./tool-executor.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
   "agent-a": "Generator",
@@ -21,6 +25,7 @@ const OTHER_AGENT: Record<AgentId, AgentId> = {
 
 export interface DeliberationUnitOptions {
   model: Model<any>;
+  level?: ToolLevel;
   onTextDelta?: OnTextDelta;
   onSystemEvent?: OnSystemEvent;
 }
@@ -32,30 +37,40 @@ export class DeliberationUnit {
   private agentB: AgentTurn;
   private pendingProposal: PendingProposal | null = null;
   private loopRunning = false; // Re-entrancy guard
+  private level: ToolLevel;
+  private model: Model<any>;
+  private turnCounter = 0;
   private onTextDelta: OnTextDelta;
   private onSystemEvent: OnSystemEvent;
+  // Track which turn state we entered Executing from (for T6/T7 transitions)
+  private executingFromState: "turn-a" | "turn-b" | null = null;
+  // L0 child management: non-blocking child agent units
+  private children = new Map<string, DeliberationUnit>();
+  private childCounter = 0;
 
   constructor(options: DeliberationUnitOptions) {
+    this.level = options.level ?? "L0";
+    this.model = options.model;
     this.bus = new MessageBus();
-    this.agentA = new AgentTurn("agent-a", GENERATOR_SYSTEM_PROMPT, options.model);
-    this.agentB = new AgentTurn("agent-b", VERIFIER_SYSTEM_PROMPT, options.model);
+    this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level), options.model, this.level);
+    this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level), options.model, this.level);
     this.onTextDelta = options.onTextDelta ?? (() => {});
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
   }
 
   // Inject a user message into the bus. Can be called at any time (async-safe).
-  // If the unit is idle or stopped, this triggers the deliberation loop.
+  // If the unit is idle, this triggers the deliberation loop (T1: idle → turn-a).
   // If already running, the message is buffered and processed at the next turn boundary (P4).
   injectUserMessage(content: string): void {
     this.bus.write("user", content);
 
-    if ((this.state === "idle" || this.state === "stopped") && !this.loopRunning) {
-      // T1 (idle → turn-a) or T9 (stopped → turn-a): trigger message received
+    if (this.state === "idle" && !this.loopRunning) {
+      // T1: idle → turn-a (trigger message received)
       this.transition(this.state, "turn-a");
       this.loopRunning = true;
       this.runLoop()
         .catch((err) => {
-          this.onSystemEvent(`\n[Error] Deliberation loop crashed: ${err}`);
+          this.emit({ type: "error", message: `Deliberation loop crashed: ${err}` });
         })
         .finally(() => {
           this.loopRunning = false;
@@ -71,8 +86,12 @@ export class DeliberationUnit {
   }
 
   // Force terminate (P6: control plane operation, not via message bus)
+  // Cascades to all child units.
   terminate(): void {
     if (this.state !== "terminated") {
+      for (const child of this.children.values()) {
+        child.terminate();
+      }
       this.transition(this.state, "terminated");
     }
   }
@@ -86,9 +105,17 @@ export class DeliberationUnit {
 
       // Read new messages from bus (P4: visibility boundary at turn start)
       const newMessages = this.bus.readNewForAgent(currentAgent);
+      this.turnCounter++;
 
-      // Execute the turn
-      this.onSystemEvent(`\n[${agentName}]`);
+      // Emit turn-start event
+      this.emit({
+        type: "turn-start",
+        turn: this.turnCounter,
+        agent: currentAgent,
+        state: this.state,
+        contextSize: agentTurn.getContextSize(),
+        newMessages: newMessages.length,
+      });
 
       const result = await agentTurn.execute(
         newMessages,
@@ -100,30 +127,72 @@ export class DeliberationUnit {
         this.onTextDelta(currentAgent, result.reply);
       }
 
+      // Warn about hallucinated tool calls
+      if (result.unknownToolCalls?.length) {
+        for (const tc of result.unknownToolCalls) {
+          this.emit({ type: "warning", message: `${agentName} called unknown tool "${tc.name}" — ignored. LLM may be hallucinating tools.` });
+        }
+      }
+
       // Warn if response was truncated due to token limit
       if (result.stopReason === "length") {
-        this.onSystemEvent(`\n[System] ⚠ ${agentName}'s response was truncated (stopReason: length). Consider increasing maxTokens.`);
+        this.emit({ type: "warning", message: `${agentName}'s response was truncated (stopReason: length). Consider increasing maxTokens.` });
       }
 
       // Handle vote on pending proposal
       if (result.vote && this.pendingProposal) {
         const proposerName = AGENT_NAMES[this.pendingProposal.proposer];
+        const toolName = this.pendingProposal.toolName;
+
         if (result.vote.approve) {
-          // T8: Report approved → Stopped
-          this.onSystemEvent(`\n[System] ${agentName} voted APPROVE: ${result.vote.reason}`);
-          this.bus.write("system", `${agentName} voted APPROVE on ${proposerName}'s Report: ${result.vote.reason}`);
+          this.emit({ type: "vote", voter: currentAgent, proposer: this.pendingProposal.proposer, toolName, approve: true, reason: result.vote.reason });
+          this.bus.write("system", `${agentName} voted APPROVE on ${proposerName}'s ${toolName}: ${result.vote.reason}`);
 
-          // Deliver the report
-          const reportContent = this.pendingProposal.args.content;
-          this.onSystemEvent(`\n[Report] ${reportContent}`);
+          if (toolName === "yield") {
+            // T8: Yield approved → Idle
+            const yieldContent = this.pendingProposal.args.content as string;
+            this.emit({ type: "report", content: yieldContent });
+            this.pendingProposal = null;
+            this.transition(this.state, "idle");
+            return;
+          }
 
-          this.pendingProposal = null;
-          this.transition(this.state, "stopped");
-          return;
+          if (isBlockingTool(toolName)) {
+            // T3/T5: Blocking tool approved → Executing
+            const approvedProposal = this.pendingProposal;
+            this.pendingProposal = null;
+
+            // Remember where we came from for T6/T7
+            this.executingFromState = this.state as "turn-a" | "turn-b";
+            this.transition(this.state, "executing");
+
+            // Execute the tool
+            this.emit({ type: "tool-executing", toolName: approvedProposal.toolName, args: approvedProposal.args });
+            const execResult = await executeBlockingTool(approvedProposal.toolName, approvedProposal.args);
+
+            // Write result to bus
+            const statusTag = execResult.success ? "✓" : "✗";
+            this.bus.write("system", `[Tool Result] ${statusTag} ${toolName}:\n${execResult.output}`);
+            this.emit({ type: "tool-result", toolName, success: execResult.success, output: execResult.output, durationMs: execResult.durationMs });
+
+            // T6/T7: Executing → next turn
+            const nextState: UnitState = this.executingFromState === "turn-a" ? "turn-b" : "turn-a";
+            this.executingFromState = null;
+            this.transition("executing", nextState);
+            continue;
+          }
+
+          if (isNonBlockingTool(toolName)) {
+            // Non-blocking tool approved → execute in background, ACK to bus, FSM continues (T2/T4)
+            const approvedProposal = this.pendingProposal;
+            this.pendingProposal = null;
+            this.executeNonBlockingTool(approvedProposal);
+            // Fall through to normal T2/T4 transition below
+          }
         } else {
-          // Proposal rejected — clear it, continue deliberation
-          this.onSystemEvent(`\n[System] ${agentName} voted REJECT: ${result.vote.reason}`);
-          this.bus.write("system", `${agentName} voted REJECT on ${proposerName}'s Report: ${result.vote.reason}`);
+          // Proposal rejected
+          this.emit({ type: "vote", voter: currentAgent, proposer: this.pendingProposal.proposer, toolName, approve: false, reason: result.vote.reason });
+          this.bus.write("system", `${agentName} voted REJECT on ${proposerName}'s ${toolName}: ${result.vote.reason}`);
           this.pendingProposal = null;
         }
       }
@@ -134,9 +203,9 @@ export class DeliberationUnit {
           proposer: currentAgent,
           toolName: result.proposal.toolName,
           args: result.proposal.args,
-          messageId: "", // not critical for L0
+          messageId: "",
         };
-        this.onSystemEvent(`\n[System] ${agentName} proposed Report. Waiting for ${AGENT_NAMES[OTHER_AGENT[currentAgent]]}'s vote.`);
+        this.emit({ type: "proposal", agent: currentAgent, toolName: result.proposal.toolName, args: result.proposal.args });
       }
 
       // Write agent's reply to the bus so the other agent can see it
@@ -148,7 +217,112 @@ export class DeliberationUnit {
     }
   }
 
+  // Execute a non-blocking tool (SpawnChild, SendToChild) after APPROVE.
+  // Non-blocking: starts in background, ACK written to bus, FSM does NOT enter Executing (§3.3).
+  private executeNonBlockingTool(proposal: PendingProposal): void {
+    const { toolName, args } = proposal;
+
+    if (toolName === "spawnChild") {
+      const task = args.task as string;
+      this.childCounter++;
+      const childId = `child-${this.childCounter}`;
+
+      // Buffer child agent text per turn for truncated display
+      let childTextBuffer = "";
+      let childLastTurn = 0;
+      let childLastAgent: AgentId = "agent-a";
+
+      // Create L1 child unit with same model
+      const child = new DeliberationUnit({
+        model: this.model,
+        level: "L1",
+        onTextDelta: (_agent: AgentId, delta: string) => {
+          childTextBuffer += delta;
+        },
+        onSystemEvent: (event: SystemEvent) => {
+          if (event.type === "turn-start") {
+            // Emit previous turn's buffered content (if any)
+            if (childTextBuffer && childLastTurn > 0) {
+              this.emit({ type: "child-turn-content", childId, turn: childLastTurn, agent: childLastAgent, content: childTextBuffer });
+            }
+            childTextBuffer = "";
+            childLastTurn = event.turn;
+            childLastAgent = event.agent;
+            this.emit({ type: "child-progress", childId, turn: event.turn, agent: event.agent });
+          }
+          if (event.type === "report") {
+            // Emit last turn's buffered content before report
+            if (childTextBuffer && childLastTurn > 0) {
+              this.emit({ type: "child-turn-content", childId, turn: childLastTurn, agent: childLastAgent, content: childTextBuffer });
+              childTextBuffer = "";
+            }
+            // Child yielded — inject result into parent's bus and notify
+            this.bus.write("system", `[Child ${childId} Report]\n${event.content}`);
+            this.emit({ type: "child-reported", childId, content: event.content });
+            // Wake parent if idle (T1: trigger message from child)
+            this.wakeIfIdle();
+          }
+          if (event.type === "error") {
+            this.emit({ type: "warning", message: `Child ${childId}: ${event.message}` });
+          }
+        },
+      });
+
+      this.children.set(childId, child);
+
+      // ACK to parent bus and emit event
+      const taskPreview = task.length > 100 ? task.slice(0, 100) + "..." : task;
+      this.bus.write("system", `[System] Child unit ${childId} started with task: ${taskPreview}`);
+      this.emit({ type: "child-spawned", childId, task });
+
+      // Inject task as the child's first user message (triggers child's runLoop)
+      child.injectUserMessage(task);
+
+    } else if (toolName === "sendToChild") {
+      const childId = args.childId as string;
+      const message = args.message as string;
+      const child = this.children.get(childId);
+
+      if (!child) {
+        this.bus.write("system", `[System] Error: Child ${childId} not found. Available: ${[...this.children.keys()].join(", ") || "none"}`);
+        this.emit({ type: "warning", message: `sendToChild failed: child ${childId} not found` });
+        return;
+      }
+
+      if (child.getState() !== "idle") {
+        this.bus.write("system", `[System] Warning: Child ${childId} is in state "${child.getState()}", not idle. Message queued anyway.`);
+      }
+
+      // Inject message into child — wakes it if idle (T1)
+      child.injectUserMessage(message);
+      this.bus.write("system", `[System] Message sent to child ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`);
+      this.emit({ type: "child-message-sent", childId, message });
+    }
+  }
+
+  // Emit a structured event to the rendering layer.
+  private emit(event: SystemEvent): void {
+    this.onSystemEvent(event);
+  }
+
+  // Wake the unit from idle if a trigger message has been written to the bus.
+  // Used by child report handler to restart the deliberation loop.
+  private wakeIfIdle(): void {
+    if (this.state === "idle" && !this.loopRunning) {
+      this.transition("idle", "turn-a");
+      this.loopRunning = true;
+      this.runLoop()
+        .catch((err) => {
+          this.emit({ type: "error", message: `Deliberation loop crashed: ${err}` });
+        })
+        .finally(() => {
+          this.loopRunning = false;
+        });
+    }
+  }
+
   private transition(from: UnitState, to: UnitState): void {
+    this.emit({ type: "state-transition", from, to });
     this.state = to;
   }
 }
