@@ -1,6 +1,8 @@
 // Elenchus - Tool Definitions
-// L0: Yield + SpawnChild + SendToChild (non-blocking child management) + Vote (conditional).
-// L1: Yield + Bash + ReadFile + WriteFile (blocking environment tools) + Vote (conditional).
+// Three-layer tool allocation (§4.3):
+//   - Child management (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
+//   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
+//   - Framework tools (Yield, Vote) → all layers
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote.
 
 import { Type, type TObject } from "@sinclair/typebox";
@@ -100,10 +102,9 @@ export const writeFileTool: ElenchusTool = {
 export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
-    "Propose to create a new L1 child agent unit to execute a specific task. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "The child agent unit has environment tools (bash, file read/write) and will work on the task independently. " +
-    "Results will be delivered asynchronously as a [System] message when the child completes its report. " +
-    "Use this when the discussion requires real-world data: web searches, file operations, running programs, etc.",
+    "Propose to create a new child agent unit to execute a specific task. This is a PROPOSAL — the other agent must vote APPROVE. " +
+    "The child unit works independently; results arrive asynchronously as a [System] message when it yields. " +
+    "The framework automatically determines the child's capabilities based on the current layer.",
   parameters: Type.Object({
     task: Type.String({
       description: "A clear, specific description of the task for the child agent unit to accomplish. Include all necessary context.",
@@ -129,29 +130,63 @@ export const sendToChildTool: ElenchusTool = {
   category: "nonblocking",
 };
 
-const L0_TOOLS: ElenchusTool[] = [spawnChildTool, sendToChildTool];
-const L1_TOOLS: ElenchusTool[] = [bashTool, readFileTool, writeFileTool];
+// Sleep: pause without reporting to parent, with explicit timeout (§4.4)
+export const sleepTool: ElenchusTool = {
+  name: "sleep",
+  description:
+    "Propose to pause the deliberation and enter Idle without reporting to the parent. This is a PROPOSAL — the other agent must vote APPROVE. " +
+    "You must specify an explicit timeout. If no child agent reports before the timeout, " +
+    "the framework writes a timeout system message and wakes the unit. " +
+    "Use this when waiting for child agent results.",
+  parameters: Type.Object({
+    timeoutMs: Type.Number({
+      description: "Timeout in milliseconds. The unit will be woken after this duration if no other event wakes it first. You must specify this explicitly every time.",
+    }),
+  }),
+  category: "framework",
+};
 
-// Check if a tool is a blocking environment tool (L1)
+// Tool sets by capability category (§4.3)
+const CHILD_MGMT_TOOLS: ElenchusTool[] = [spawnChildTool, sendToChildTool, sleepTool];
+const ENV_TOOLS: ElenchusTool[] = [bashTool, readFileTool, writeFileTool];
+
+// Check if a tool is a blocking environment tool
 export function isBlockingTool(toolName: string): boolean {
-  return L1_TOOLS.some((t) => t.name === toolName);
+  return ENV_TOOLS.some((t) => t.name === toolName);
 }
 
-// Check if a tool is a non-blocking child management tool (L0)
+// Check if a tool is a non-blocking child management tool
 export function isNonBlockingTool(toolName: string): boolean {
-  return L0_TOOLS.some((t) => t.name === toolName);
+  return toolName === "spawnChild" || toolName === "sendToChild";
+}
+
+// Check if a tool triggers T8 (Yield or Sleep → Idle)
+export function isT8Tool(toolName: string): boolean {
+  return toolName === "yield" || toolName === "sleep";
 }
 
 // Build the tool list for a given turn.
 // Vote is only available when there is a pending proposal from the other agent.
-// L0 adds non-blocking child management tools. L1 adds blocking environment tools.
-export function buildToolList(hasPendingProposal: boolean, level: ToolLevel = "L0"): ElenchusTool[] {
+// Tool allocation follows §4.3 rules:
+//   - Child management tools → non-leaf (L0, L1)
+//   - Environment tools → non-coordination (L1, L2)
+//   - SendToChild: conditionally visible only when children exist
+export function buildToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {
   const tools: ElenchusTool[] = [yieldTool];
-  if (level === "L0") {
-    tools.push(...L0_TOOLS);
-  } else if (level === "L1") {
-    tools.push(...L1_TOOLS);
+
+  // Child management tools → non-leaf layers (L0, L1)
+  if (level !== "L2") {
+    tools.push(spawnChildTool, sleepTool);
+    if (hasChildren) {
+      tools.push(sendToChildTool);
+    }
   }
+
+  // Environment tools → non-coordination layers (L1, L2)
+  if (level !== "L0") {
+    tools.push(...ENV_TOOLS);
+  }
+
   if (hasPendingProposal) {
     tools.push(voteTool);
   }

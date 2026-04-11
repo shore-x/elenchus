@@ -2,7 +2,7 @@
 // Executes a single LLM turn for one agent: inject new messages → call pi-ai → parse response.
 // Each agent maintains an independent pi-ai Context (messages array).
 // The other agent's replies and system events are injected as user messages with prefixes.
-// L0: only Yield/Vote tools. L1: adds Bash/ReadFile/WriteFile (all as proposals).
+// Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
 import { complete, type Context, type Message, type Model, type StopReason, type Tool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
@@ -11,8 +11,8 @@ import { buildToolList, type ElenchusTool } from "./tools.js";
 
 // Display name mapping for message prefixes
 const DISPLAY_NAMES: Record<string, string> = {
-  "agent-a": "Generator",
-  "agent-b": "Verifier",
+  "agent-a": "Agent A",
+  "agent-b": "Agent B",
   user: "User",
   system: "System",
 };
@@ -59,6 +59,17 @@ function buildProposalNotification(
     case "writeFile":
       detail = `File path: \`${proposal.args.path}\`\nContent (${String(proposal.args.content).length} chars):\n---\n${String(proposal.args.content).slice(0, 500)}${String(proposal.args.content).length > 500 ? "\n[truncated]" : ""}\n---`;
       break;
+    case "sleep":
+      detail = `Timeout: ${proposal.args.timeoutMs}ms`;
+      break;
+    case "spawnChild": {
+      const task = String(proposal.args.task);
+      detail = `Task: ${task.length > 200 ? task.slice(0, 200) + "..." : task}`;
+      break;
+    }
+    case "sendToChild":
+      detail = `Child: ${proposal.args.childId}, Message: ${String(proposal.args.message).slice(0, 100)}${String(proposal.args.message).length > 100 ? "..." : ""}`;
+      break;
     default:
       detail = `Arguments: ${JSON.stringify(proposal.args)}`;
   }
@@ -101,6 +112,7 @@ export class AgentTurn {
   async execute(
     newBusMessages: BusMessage[],
     pendingProposal: { toolName: string; args: Record<string, unknown>; proposer: AgentId } | null,
+    hasChildren: boolean = false,
   ): Promise<TurnResult> {
     // 1. Inject new messages from the bus into this agent's context
     const injected = convertBusMessagesToInjection(newBusMessages, this.selfId);
@@ -114,7 +126,7 @@ export class AgentTurn {
 
     // 3. Build tool list (Vote only available when there's a pending proposal from the other agent)
     const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== this.selfId;
-    const tools = buildToolList(hasPendingFromOther, this.level);
+    const tools = buildToolList(hasPendingFromOther, this.level, hasChildren);
 
     // 4. Call LLM with explicit maxTokens to prevent proxy/API truncation
     const context: Context = {
@@ -201,7 +213,9 @@ export class AgentTurn {
     if (toolName === "yield") {
       return "Your yield proposal has been recorded. Waiting for the other agent's vote.";
     }
-    // Blocking tools (bash, readFile, writeFile)
+    if (toolName === "sleep") {
+      return "Your sleep proposal has been recorded. Waiting for the other agent's vote.";
+    }
     return `Your ${toolName} proposal has been recorded. Waiting for the other agent's vote.`;
   }
 }

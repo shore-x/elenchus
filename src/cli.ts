@@ -1,8 +1,9 @@
+#!/usr/bin/env node
 // Elenchus - CLI Entry Point
 // Async user input: user can type at any time. Messages are written to the MessageBus
 // and processed at the next turn boundary (P4). The deliberation loop runs concurrently
 // with user input — stdin is never blocked by agent processing.
-// Supports L0/L1 via ELENCHUS_LEVEL, verbosity via ELENCHUS_VERBOSE (0/1/2).
+// Supports L0/L1/L2 via ELENCHUS_LEVEL, verbosity via ELENCHUS_VERBOSE (0/1/2).
 
 import * as readline from "node:readline";
 import { getModel } from "@mariozechner/pi-ai";
@@ -28,12 +29,17 @@ const AGENT_COLORS: Record<AgentId, string> = {
 };
 
 const AGENT_NAMES: Record<AgentId, string> = {
-  "agent-a": "Generator",
-  "agent-b": "Verifier",
+  "agent-a": "Agent A",
+  "agent-b": "Agent B",
 };
 
 function printBanner(level: ToolLevel, verbose: number): void {
-  const modeDesc = level === "L1" ? "L1: Deliberation + Environment Tools" : "L0: Pure Deliberation Mode";
+  const modeDescs: Record<ToolLevel, string> = {
+    L0: "L0: Coordination (child management only)",
+    L1: "L1: Planning + Execution (full capabilities)",
+    L2: "L2: Execution (environment tools only)",
+  };
+  const modeDesc = modeDescs[level];
   console.log(`${C.gray}
 ╔══════════════════════════════════════════════════╗
 ║  Elenchus - Dual-Agent Deliberation Framework    ║
@@ -60,6 +66,8 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
       return `${args.path} (${String(args.content).length} chars)`;
     case "yield":
       return String(args.content);
+    case "sleep":
+      return `timeout: ${args.timeoutMs}ms`;
     case "spawnChild": {
       const task = String(args.task);
       return task.length > 100 ? task.slice(0, 100) + "..." : task;
@@ -72,12 +80,13 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
 }
 
 // Categorize tools for CLI rendering.
-const L0_CHILD_TOOLS = new Set(["spawnChild", "sendToChild"]);
-function isL1Tool(toolName: string): boolean {
-  return toolName !== "yield" && !L0_CHILD_TOOLS.has(toolName);
+const CHILD_TOOLS = new Set(["spawnChild", "sendToChild"]);
+const FRAMEWORK_TOOLS = new Set(["yield", "sleep", "vote"]);
+function isEnvTool(toolName: string): boolean {
+  return !FRAMEWORK_TOOLS.has(toolName) && !CHILD_TOOLS.has(toolName);
 }
 function isChildTool(toolName: string): boolean {
-  return L0_CHILD_TOOLS.has(toolName);
+  return CHILD_TOOLS.has(toolName);
 }
 
 // Render a structured SystemEvent to the terminal based on verbosity level.
@@ -101,9 +110,9 @@ function renderEvent(event: SystemEvent, verbose: number): void {
       if (isChildTool(event.toolName)) {
         // L0 child tool proposal — blue
         process.stdout.write(`${C.blue}[Child Proposal] ${name} → ${event.toolName}: ${detail}${C.reset}\n`);
-      } else if (isL1Tool(event.toolName)) {
-        // L1 env tool proposal — magenta, indented
-        process.stdout.write(`${C.magenta}  [L1 Proposal] ${name} → ${event.toolName}: ${detail}${C.reset}\n`);
+      } else if (isEnvTool(event.toolName)) {
+        // Environment tool proposal — magenta, indented
+        process.stdout.write(`${C.magenta}  [Env Proposal] ${name} → ${event.toolName}: ${detail}${C.reset}\n`);
       } else {
         // L0 yield proposal — always show full content
         process.stdout.write(`${C.gray}[Proposal] ${name} \u2192 yield: ${detail}${C.reset}\n`);
@@ -115,8 +124,8 @@ function renderEvent(event: SystemEvent, verbose: number): void {
       const tag = event.approve ? "APPROVE" : "REJECT";
       if (isChildTool(event.toolName)) {
         process.stdout.write(`${C.blue}[Child Vote] ${voterName} → ${event.toolName} ${tag}: ${event.reason}${C.reset}\n`);
-      } else if (isL1Tool(event.toolName)) {
-        process.stdout.write(`${C.magenta}  [L1 Vote] ${voterName} → ${event.toolName} ${tag}: ${event.reason}${C.reset}\n`);
+      } else if (isEnvTool(event.toolName)) {
+        process.stdout.write(`${C.magenta}  [Env Vote] ${voterName} → ${event.toolName} ${tag}: ${event.reason}${C.reset}\n`);
       } else {
         process.stdout.write(`${C.gray}[Vote] ${voterName} → ${tag}: ${event.reason}${C.reset}\n`);
       }
@@ -132,14 +141,14 @@ function renderEvent(event: SystemEvent, verbose: number): void {
       break;
     case "tool-executing": {
       const detail = formatToolArgs(event.toolName, event.args);
-      process.stdout.write(`${C.magenta}  [L1 Executing] ${event.toolName}: ${detail}${C.reset}\n`);
+      process.stdout.write(`${C.magenta}  [Env Executing] ${event.toolName}: ${detail}${C.reset}\n`);
       break;
     }
     case "tool-result": {
       const tag = event.success ? "✓" : "✗";
       const duration = verbose >= 1 ? ` (${(event.durationMs / 1000).toFixed(1)}s)` : "";
       const preview = event.output.length > 200 ? event.output.slice(0, 200) + "..." : event.output;
-      process.stdout.write(`${C.magenta}  [L1 Result ${tag}]${duration} ${preview}${C.reset}\n`);
+      process.stdout.write(`${C.magenta}  [Env Result ${tag}]${duration} ${preview}${C.reset}\n`);
       break;
     }
     case "child-spawned":
@@ -189,8 +198,8 @@ async function main(): Promise<void> {
   const modelName = process.env.ELENCHUS_MODEL ?? "claude-sonnet-4-20250514";
 
   const level = (process.env.ELENCHUS_LEVEL ?? "L0").toUpperCase() as ToolLevel;
-  if (level !== "L0" && level !== "L1") {
-    console.error(`Invalid ELENCHUS_LEVEL: ${level}. Must be L0 or L1.`);
+  if (level !== "L0" && level !== "L1" && level !== "L2") {
+    console.error(`Invalid ELENCHUS_LEVEL: ${level}. Must be L0, L1, or L2.`);
     process.exit(1);
   }
 
@@ -212,7 +221,8 @@ async function main(): Promise<void> {
   printBanner(level, verbose);
   const baseUrlInfo = baseUrl ? ` (base: ${baseUrl})` : "";
   console.log(`${C.gray}[System] Using model: ${provider}/${modelName}${baseUrlInfo}${C.reset}`);
-  console.log(`${C.gray}[System] Level: ${level}${level === "L1" ? " (Bash, ReadFile, WriteFile enabled)" : ""}${C.reset}\n`);
+  const levelInfo = level === "L0" ? "" : level === "L1" ? " (child mgmt + env tools)" : " (env tools only)";
+  console.log(`${C.gray}[System] Level: ${level}${levelInfo}${C.reset}\n`);
 
   const unit = new DeliberationUnit({
     model,
@@ -251,6 +261,13 @@ async function main(): Promise<void> {
   });
 
   rl.on("close", () => {
+    process.exit(0);
+  });
+
+  // Handle Ctrl+C: force terminate and exit even if the event loop is busy
+  process.on("SIGINT", () => {
+    console.log(`\n${C.gray}[System] Interrupted (SIGINT). Terminating...${C.reset}`);
+    unit.terminate();
     process.exit(0);
   });
 

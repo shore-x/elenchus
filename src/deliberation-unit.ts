@@ -1,8 +1,10 @@
 // Elenchus - DeliberationUnit
 // The core FSM (5-state: idle/turn-a/turn-b/executing/terminated) that drives dual-agent turn alternation.
-// L0: non-blocking child management (SpawnChild, SendToChild), never enters Executing.
-// L1: blocking environment tools (Bash, ReadFile, WriteFile), enters Executing on approval.
-// Yield returns the unit to Idle; any trigger message (user or child report) wakes it via T1.
+// Three-layer architecture (P9): all layers share this same FSM. Tool sets differ by layer (§4.3):
+//   L0: child management only → never enters Executing
+//   L1: child management + environment tools → full FSM
+//   L2: environment tools only (leaf node) → no child spawning
+// Yield and Sleep both trigger T8 (→ Idle). Sleep adds a timeout timer (§4.4).
 // User messages arrive asynchronously via MessageBus and are processed at the next turn boundary (P4).
 
 import { type Model } from "@mariozechner/pi-ai";
@@ -10,12 +12,12 @@ import { AgentTurn } from "./agent-turn.js";
 import { MessageBus } from "./message-bus.js";
 import { buildSystemPrompt } from "./prompts.js";
 import { type AgentId, type OnSystemEvent, type OnTextDelta, type PendingProposal, type SystemEvent, type ToolLevel, type UnitState } from "./types.js";
-import { isBlockingTool, isNonBlockingTool } from "./tools.js";
+import { isBlockingTool, isNonBlockingTool, isT8Tool } from "./tools.js";
 import { executeBlockingTool } from "./tool-executor.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
-  "agent-a": "Generator",
-  "agent-b": "Verifier",
+  "agent-a": "Agent A",
+  "agent-b": "Agent B",
 };
 
 const OTHER_AGENT: Record<AgentId, AgentId> = {
@@ -44,9 +46,14 @@ export class DeliberationUnit {
   private onSystemEvent: OnSystemEvent;
   // Track which turn state we entered Executing from (for T6/T7 transitions)
   private executingFromState: "turn-a" | "turn-b" | null = null;
-  // L0 child management: non-blocking child agent units
+  // Child management: non-blocking child agent units (L0 and L1)
   private children = new Map<string, DeliberationUnit>();
   private childCounter = 0;
+  // Sleep timeout timer (§4.4): cleared when woken by child report or any trigger
+  private sleepTimer: ReturnType<typeof setTimeout> | null = null;
+  // Safety: consecutive empty responses counter (no text, no proposal, no vote)
+  private consecutiveEmptyTurns = 0;
+  private static readonly MAX_EMPTY_TURNS = 4;
 
   constructor(options: DeliberationUnitOptions) {
     this.level = options.level ?? "L0";
@@ -117,10 +124,32 @@ export class DeliberationUnit {
         newMessages: newMessages.length,
       });
 
-      const result = await agentTurn.execute(
-        newMessages,
-        this.pendingProposal,
-      );
+      const hasChildren = this.children.size > 0;
+      let result;
+      try {
+        result = await agentTurn.execute(
+          newMessages,
+          this.pendingProposal,
+          hasChildren,
+        );
+      } catch (err) {
+        this.emit({ type: "error", message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
+        this.transition(this.state, "idle");
+        return;
+      }
+
+      // Safety: detect consecutive empty responses (likely misconfigured API)
+      const isEmpty = !result.reply?.trim() && !result.proposal && !result.vote;
+      if (isEmpty) {
+        this.consecutiveEmptyTurns++;
+        if (this.consecutiveEmptyTurns >= DeliberationUnit.MAX_EMPTY_TURNS) {
+          this.emit({ type: "error", message: `${DeliberationUnit.MAX_EMPTY_TURNS} consecutive empty responses detected. Halting — likely API misconfiguration (wrong key, URL, or model).` });
+          this.transition(this.state, "idle");
+          return;
+        }
+      } else {
+        this.consecutiveEmptyTurns = 0;
+      }
 
       // Display the reply
       if (result.reply) {
@@ -149,11 +178,24 @@ export class DeliberationUnit {
           this.bus.write("system", `${agentName} voted APPROVE on ${proposerName}'s ${toolName}: ${result.vote.reason}`);
 
           if (toolName === "yield") {
-            // T8: Yield approved → Idle
+            // T8: Yield approved → Idle (with report to parent)
             const yieldContent = this.pendingProposal.args.content as string;
             this.emit({ type: "report", content: yieldContent });
             this.pendingProposal = null;
             this.transition(this.state, "idle");
+            return;
+          }
+
+          if (toolName === "sleep") {
+            // T8: Sleep approved → Idle (no report to parent, start timeout timer §4.4)
+            const timeoutMs = this.pendingProposal.args.timeoutMs as number;
+            this.pendingProposal = null;
+            this.transition(this.state, "idle");
+            this.sleepTimer = setTimeout(() => {
+              this.sleepTimer = null;
+              this.bus.write("system", `[System] Sleep timeout after ${timeoutMs}ms. No child agent has reported.`);
+              this.wakeIfIdle();
+            }, timeoutMs);
             return;
           }
 
@@ -232,10 +274,11 @@ export class DeliberationUnit {
       let childLastTurn = 0;
       let childLastAgent: AgentId = "agent-a";
 
-      // Create L1 child unit with same model
+      // Create child unit — level is parent+1 (L0→L1, L1→L2)
+      const childLevel = this.level === "L0" ? "L1" as const : "L2" as const;
       const child = new DeliberationUnit({
         model: this.model,
-        level: "L1",
+        level: childLevel,
         onTextDelta: (_agent: AgentId, delta: string) => {
           childTextBuffer += delta;
         },
@@ -308,6 +351,11 @@ export class DeliberationUnit {
   // Wake the unit from idle if a trigger message has been written to the bus.
   // Used by child report handler to restart the deliberation loop.
   private wakeIfIdle(): void {
+    // Clear sleep timer if active — we're being woken by an event
+    if (this.sleepTimer) {
+      clearTimeout(this.sleepTimer);
+      this.sleepTimer = null;
+    }
     if (this.state === "idle" && !this.loopRunning) {
       this.transition("idle", "turn-a");
       this.loopRunning = true;

@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "description": "Dual-Agent Deliberation Framework for LLM Hallucination Mitigation",
   "type": "module",
-  "main": "src/cli.ts",
+  "main": "dist/cli.js",
+  "bin": {
+    "elenchus": "dist/cli.js"
+  },
   "scripts": {
     "start": "tsx src/cli.ts",
     "build": "tsc",
+    "prepare": "npm run build",
     "check": "tsc --noEmit"
   },
   "dependencies": {
