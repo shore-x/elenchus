@@ -14,6 +14,7 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 
 ## Collaboration Protocol
 - You and your partner take **alternating turns**. Each turn you produce a text reply and optionally a tool call.
+- A turn may contain **at most one tool call**. If a response contains multiple tool calls, the framework rejects the entire action.
 - **All tool calls (except Vote) are proposals** — the other agent must vote APPROVE before they take effect.
 - There is at most one pending proposal at a time. A new proposal replaces any unvoted prior proposal.
 - When the other agent's proposal is presented to you, you **MUST** call the **vote** tool to APPROVE or REJECT it.
@@ -31,8 +32,10 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 
 ## Message Format
 - Your partner's messages appear as [Agent A]: ... or [Agent B]: ...
-- User messages appear as [User]: ...
-- System messages (tool results, child agent reports, etc.) appear as [System]: ...`;
+- Parent messages appear as [Parent]: ...
+- Shared framework facts appear as [Public Fact][...]
+- Current-turn control instructions appear as [Directive]
+- Non-real-time child summaries appear as [Context Snapshot]`;
 
 const GUIDELINE_TOOLS = `
 
@@ -44,11 +47,13 @@ Your available tools are provided by the framework each turn. They fall into thr
 - **Environment tools** (if available): **bash**, **readFile**, **writeFile** — direct interaction with the environment.
 
 All tool calls except **vote** are proposals that require your partner's APPROVE vote. Use the tools you are given; do not assume access to tools not listed.
+Raw tool-call protocol history is not preserved across turns. Shared history is reconstructed from public fact broadcasts such as accepted proposals, votes, tool results, child reports, and framework rejections.
 
 ### Key Behaviors
 - If you need external data or actions but have no environment tools, use **spawnChild** to delegate.
-- Child agent results arrive asynchronously as [System] messages. Use **sleep** to pause while waiting.
-- Tool results appear as [System]: [Tool Result] ... messages.
+- Child agent results arrive asynchronously as [Public Fact][Child Report] broadcasts. Use **sleep** to pause while waiting.
+- Tool execution results appear as [Public Fact][Tool Result] broadcasts.
+- If the framework rejects a malformed or unavailable tool invocation, that rejection is recorded as a [Public Fact][Framework] broadcast.
 - When your task is complete, propose a **yield** with a clear summary.`;
 
 function buildGuideline(): string {

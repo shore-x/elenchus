@@ -1,0 +1,256 @@
+import { type AgentId, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type VoteMessage } from "./types.js";
+
+let nextConversationMessageId = 0;
+
+function generateConversationMessageId(): string {
+  return `msg-${++nextConversationMessageId}-${Date.now()}`;
+}
+
+export class ConversationLedger {
+  private messages: ConversationMessage[] = [];
+  private cursors: Record<AgentId, number> = {
+    "agent-a": 0,
+    "agent-b": 0,
+  };
+
+  appendParentMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
+    const message: ConversationMessage = {
+      id: generateConversationMessageId(),
+      kind: "parent_message",
+      authoredBy: "parent",
+      content,
+      timestamp: Date.now(),
+      turnAuthored: meta.turnAuthored,
+      visibleFromTurn: meta.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendAgentMessage(agent: AgentId, content: string, meta: LedgerMessageMeta): ConversationMessage {
+    const message: ConversationMessage = {
+      id: generateConversationMessageId(),
+      kind: "agent_message",
+      authoredBy: agent,
+      content,
+      timestamp: Date.now(),
+      turnAuthored: meta.turnAuthored,
+      visibleFromTurn: meta.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendProposalMessage(proposal: Omit<ProposalMessage, "id" | "kind" | "timestamp" | "status">): ProposalMessage {
+    const existingPendingProposal = this.getPendingProposal();
+    if (existingPendingProposal) {
+      throw new Error(`Cannot append proposal ${proposal.toolName}; proposal ${existingPendingProposal.id} is still pending`);
+    }
+
+    const message: ProposalMessage = {
+      id: generateConversationMessageId(),
+      kind: "proposal_message",
+      authoredBy: proposal.authoredBy,
+      toolName: proposal.toolName,
+      args: proposal.args,
+      proposedStep: proposal.proposedStep,
+      timestamp: Date.now(),
+      turnAuthored: proposal.turnAuthored,
+      visibleFromTurn: proposal.visibleFromTurn,
+      status: "pending",
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendVoteMessage(vote: Omit<VoteMessage, "id" | "kind" | "timestamp" | "authoredBy"> & { voter: AgentId }): VoteMessage {
+    const message: VoteMessage = {
+      id: generateConversationMessageId(),
+      kind: "vote_message",
+      authoredBy: vote.voter,
+      proposalId: vote.proposalId,
+      approve: vote.approve,
+      reason: vote.reason,
+      timestamp: Date.now(),
+      turnAuthored: vote.turnAuthored,
+      visibleFromTurn: vote.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendToolResultMessage(result: Omit<ToolResultMessage, "id" | "kind" | "timestamp" | "authoredBy">): ToolResultMessage {
+    const message: ToolResultMessage = {
+      id: generateConversationMessageId(),
+      kind: "tool_result_message",
+      authoredBy: "system",
+      proposalId: result.proposalId,
+      toolName: result.toolName,
+      success: result.success,
+      output: result.output,
+      durationMs: result.durationMs,
+      timestamp: Date.now(),
+      turnAuthored: result.turnAuthored,
+      visibleFromTurn: result.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendChildReportMessage(report: Omit<ChildReportMessage, "id" | "kind" | "timestamp" | "authoredBy">): ChildReportMessage {
+    const message: ChildReportMessage = {
+      id: generateConversationMessageId(),
+      kind: "child_report_message",
+      authoredBy: "system",
+      childId: report.childId,
+      content: report.content,
+      timestamp: Date.now(),
+      turnAuthored: report.turnAuthored,
+      visibleFromTurn: report.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  appendSystemMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
+    const message: ConversationMessage = {
+      id: generateConversationMessageId(),
+      kind: "system_message",
+      authoredBy: "system",
+      content,
+      timestamp: Date.now(),
+      turnAuthored: meta.turnAuthored,
+      visibleFromTurn: meta.visibleFromTurn,
+    };
+    this.messages.push(message);
+    return message;
+  }
+
+  readNewForAgent(agent: AgentId, turn: number): ConversationMessage[] {
+    const start = this.cursors[agent];
+    let end = start;
+
+    while (end < this.messages.length && this.messages[end].visibleFromTurn <= turn) {
+      end++;
+    }
+
+    const unread = this.messages.slice(start, end);
+    this.cursors[agent] = end;
+    return unread;
+  }
+
+  peekNewForAgent(agent: AgentId, turn: number): ConversationMessage[] {
+    const start = this.cursors[agent];
+    let end = start;
+
+    while (end < this.messages.length && this.messages[end].visibleFromTurn <= turn) {
+      end++;
+    }
+
+    return this.messages.slice(start, end);
+  }
+
+  hasNewMessages(agent: AgentId, turn: number): boolean {
+    const start = this.cursors[agent];
+    return start < this.messages.length && this.messages[start].visibleFromTurn <= turn;
+  }
+
+  getProposalById(proposalId: string): ProposalMessage | undefined {
+    const message = this.messages.find((entry): entry is ProposalMessage => entry.kind === "proposal_message" && entry.id === proposalId);
+    return message;
+  }
+
+  getPendingProposal(): ProposalMessage | null {
+    let pendingProposal: ProposalMessage | null = null;
+
+    for (const message of this.messages) {
+      if (message.kind !== "proposal_message" || message.status !== "pending") {
+        continue;
+      }
+
+      if (pendingProposal) {
+        throw new Error(`Multiple pending proposals detected: ${pendingProposal.id} and ${message.id}`);
+      }
+
+      pendingProposal = message;
+    }
+
+    return pendingProposal;
+  }
+
+  getPendingProposalView(): PendingProposal | null {
+    const proposal = this.getPendingProposal();
+    if (!proposal) {
+      return null;
+    }
+
+    return {
+      proposer: proposal.authoredBy,
+      toolName: proposal.toolName,
+      args: proposal.args,
+      proposedStep: proposal.proposedStep,
+      messageId: proposal.id,
+    };
+  }
+
+  hasPendingProposal(): boolean {
+    return this.getPendingProposal() !== null;
+  }
+
+  markProposalApproved(proposalId: string): ProposalMessage {
+    return this.updateProposalStatus(proposalId, "approved");
+  }
+
+  markProposalRejected(proposalId: string): ProposalMessage {
+    return this.updateProposalStatus(proposalId, "rejected");
+  }
+
+  markProposalSuperseded(proposalId: string): ProposalMessage {
+    return this.updateProposalStatus(proposalId, "superseded");
+  }
+
+  readAll(): readonly ConversationMessage[] {
+    return this.messages;
+  }
+
+  exportSnapshot(): ConversationLedgerSnapshot {
+    return {
+      messages: this.messages.map((message) => ({ ...message })),
+      cursors: { ...this.cursors },
+    };
+  }
+
+  loadSnapshot(snapshot: ConversationLedgerSnapshot): void {
+    this.messages = snapshot.messages.map((message) => ({ ...message }));
+    this.cursors = { ...snapshot.cursors };
+  }
+
+  toPendingProposal(proposalId: string): PendingProposal | null {
+    const proposal = this.getProposalById(proposalId);
+    if (!proposal || proposal.status !== "pending") {
+      return null;
+    }
+
+    return {
+      proposer: proposal.authoredBy,
+      toolName: proposal.toolName,
+      args: proposal.args,
+      proposedStep: proposal.proposedStep,
+      messageId: proposal.id,
+    };
+  }
+
+  private updateProposalStatus(proposalId: string, status: ProposalStatus): ProposalMessage {
+    const proposal = this.getProposalById(proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal ${proposalId} not found`);
+    }
+
+    if (proposal.status !== "pending") {
+      throw new Error(`Proposal ${proposalId} is ${proposal.status}; cannot transition to ${status}`);
+    }
+
+    proposal.status = status;
+    return proposal;
+  }
+}

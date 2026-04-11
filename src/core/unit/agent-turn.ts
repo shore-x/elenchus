@@ -5,103 +5,14 @@
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
 import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
-import { type AgentId, type BusMessage, type ChildCommitView, type PendingProposal, type ProposalCall, type ToolLevel, type TurnResult } from "../types.js";
+import { ConversationProjector } from "../conversation-projector.js";
+import { type AgentId, type ChildCommitView, type ConversationMessage, type FrameworkBroadcast, type PendingProposal, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type VoteCall } from "../types.js";
 import { buildToolList, type ElenchusTool } from "../tools.js";
 
-const DISPLAY_NAMES: Record<string, string> = {
+const DISPLAY_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
-  user: "User",
-  system: "System",
 };
-
-function convertBusMessagesToInjection(messages: BusMessage[], selfId: AgentId): LlmMessage[] {
-  const result: LlmMessage[] = [];
-
-  for (const msg of messages) {
-    if (msg.source === selfId) continue;
-
-    const prefix = DISPLAY_NAMES[msg.source] ?? msg.source;
-    const text = `[${prefix}]: ${msg.content}`;
-
-    result.push({
-      role: "user",
-      content: text,
-      timestamp: msg.timestamp,
-    });
-  }
-
-  return result;
-}
-
-function buildProposalNotification(proposal: ProposalCall, proposerName: string): LlmMessage {
-  let detail: string;
-  switch (proposal.toolName) {
-    case "yield":
-      detail = `The proposed content is:\n\n---\n${proposal.args.content}\n---`;
-      break;
-    case "bash":
-      detail = `Command: \`${proposal.args.command}\``;
-      break;
-    case "readFile":
-      detail = `File path: \`${proposal.args.path}\``;
-      break;
-    case "writeFile":
-      detail = `File path: \`${proposal.args.path}\`\nContent (${String(proposal.args.content).length} chars):\n---\n${String(proposal.args.content).slice(0, 500)}${String(proposal.args.content).length > 500 ? "\n[truncated]" : ""}\n---`;
-      break;
-    case "sleep":
-      detail = `Timeout: ${proposal.args.timeoutMs}ms`;
-      break;
-    case "spawnChild": {
-      const task = String(proposal.args.task);
-      detail = `Task: ${task.length > 200 ? task.slice(0, 200) + "..." : task}`;
-      break;
-    }
-    case "sendToChild":
-      detail = `Child: ${proposal.args.childId}, Message: ${String(proposal.args.message).slice(0, 100)}${String(proposal.args.message).length > 100 ? "..." : ""}`;
-      break;
-    default:
-      detail = `Arguments: ${JSON.stringify(proposal.args)}`;
-  }
-
-  return {
-    role: "user",
-    content:
-      `[System]: ${proposerName} has proposed to use the **${proposal.toolName}** tool.\n` +
-      `Proposed step: ${proposal.proposedStep}\n${detail}\n\n` +
-      `Please evaluate this proposal and call the **vote** tool to APPROVE or REJECT it.`,
-    timestamp: Date.now(),
-  };
-}
-
-function buildChildCommitViewMessage(childCommitViews: readonly ChildCommitView[]): LlmMessage | null {
-  if (childCommitViews.length === 0) {
-    return null;
-  }
-
-  const lines = [
-    "[System]: Child unit commit log snapshot (accepted steps only; not real-time activity):",
-  ];
-
-  for (const view of childCommitViews) {
-    lines.push(`- ${view.childId} [state: ${view.state}]`);
-    if (view.committedSteps.length === 0) {
-      lines.push("  - no committed steps yet");
-      continue;
-    }
-
-    for (const step of view.committedSteps) {
-      const proposerName = DISPLAY_NAMES[step.proposedBy] ?? step.proposedBy;
-      lines.push(`  - ${proposerName} via ${step.toolName}: ${step.proposedStep}`);
-    }
-  }
-
-  return {
-    role: "user",
-    content: lines.join("\n"),
-    timestamp: Date.now(),
-  };
-}
 
 function toProviderTools(tools: ElenchusTool[]): LlmToolDefinition[] {
   return tools.map((t) => ({
@@ -111,11 +22,16 @@ function toProviderTools(tools: ElenchusTool[]): LlmToolDefinition[] {
   }));
 }
 
+function getDisplayName(agentId: AgentId): string {
+  return DISPLAY_NAMES[agentId] ?? agentId;
+}
+
 export class AgentTurn {
   private selfId: AgentId;
   private systemPrompt: string;
   private llmClient: LlmClient;
   private level: ToolLevel;
+  private projector: ConversationProjector;
   private messages: LlmMessage[] = [];
 
   constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0") {
@@ -123,25 +39,27 @@ export class AgentTurn {
     this.systemPrompt = systemPrompt;
     this.llmClient = llmClient;
     this.level = level;
+    this.projector = new ConversationProjector();
   }
 
   async execute(
-    newBusMessages: BusMessage[],
+    newConversationMessages: ConversationMessage[],
     pendingProposal: PendingProposal | null,
     hasChildren: boolean = false,
     childCommitViews: readonly ChildCommitView[] = [],
   ): Promise<TurnResult> {
-    const injected = convertBusMessagesToInjection(newBusMessages, this.selfId);
+    const injected = this.projector.projectNewMessages(newConversationMessages, this.selfId);
     this.messages.push(...injected);
 
     if (pendingProposal && pendingProposal.proposer !== this.selfId) {
       const proposerName = DISPLAY_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
-      this.messages.push(buildProposalNotification(pendingProposal, proposerName));
+      const voterName = DISPLAY_NAMES[this.selfId] ?? this.selfId;
+      this.messages.push(this.projector.buildProposalNotification(pendingProposal, proposerName, voterName));
     }
 
     const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== this.selfId;
     const tools = buildToolList(hasPendingFromOther, this.level, hasChildren);
-    const childCommitViewMessage = buildChildCommitViewMessage(childCommitViews);
+    const childCommitViewMessage = this.projector.buildChildCommitViewMessage(childCommitViews);
 
     const context: LlmContext = {
       systemPrompt: this.systemPrompt,
@@ -150,95 +68,125 @@ export class AgentTurn {
     };
 
     const response = await this.llmClient.complete(context, { maxTokens: 8192 });
-    this.messages.push(response);
-
-    const validToolNames = new Set(tools.map((t) => t.name));
-    const result: TurnResult = { reply: "", stopReason: response.stopReason };
-
-    for (const block of response.content) {
-      if (block.type === "text") {
-        result.reply += block.text;
-      } else if (block.type === "toolCall") {
-        if (!validToolNames.has(block.name)) {
-          (result.unknownToolCalls ??= []).push({
-            name: block.name,
-            args: block.arguments,
-          });
-          this.messages.push({
-            role: "toolResult",
-            toolCallId: block.id,
-            toolName: block.name,
-            content: [{ type: "text", text: `Error: tool "${block.name}" does not exist. Only use tools explicitly provided by the framework: ${[...validToolNames].join(", ")}.` }],
-            isError: true,
-            timestamp: Date.now(),
-          });
-        } else if (block.name === "vote") {
-          const args = block.arguments as { approve: boolean; reason: string };
-          result.vote = {
-            approve: args.approve,
-            reason: args.reason,
-          };
-          this.messages.push({
-            role: "toolResult",
-            toolCallId: block.id,
-            toolName: block.name,
-            content: [{ type: "text", text: this.buildToolAck(block.name, result) }],
-            isError: false,
-            timestamp: Date.now(),
-          });
-        } else {
-          const rawArgs = block.arguments;
-          const proposedStep = typeof rawArgs.proposedStep === "string" ? rawArgs.proposedStep.trim() : "";
-
-          if (!proposedStep) {
-            this.messages.push({
-              role: "toolResult",
-              toolCallId: block.id,
-              toolName: block.name,
-              content: [{ type: "text", text: "Error: proposal tools must include a non-empty proposedStep that explains how the action advances the task." }],
-              isError: true,
-              timestamp: Date.now(),
-            });
-            continue;
-          }
-
-          const { proposedStep: _proposedStep, ...toolArgs } = rawArgs;
-          result.proposal = {
-            toolName: block.name,
-            args: toolArgs,
-            proposedStep,
-          };
-          this.messages.push({
-            role: "toolResult",
-            toolCallId: block.id,
-            toolName: block.name,
-            content: [{ type: "text", text: this.buildToolAck(block.name, result) }],
-            isError: false,
-            timestamp: Date.now(),
-          });
-        }
-      }
+    const sanitizedResponse = this.sanitizeAssistantResponse(response);
+    if (sanitizedResponse) {
+      this.messages.push(sanitizedResponse);
     }
 
-    return result;
+    return this.parseTurnResult(response, tools);
   }
 
   getContextSize(): number {
     return this.messages.length;
   }
 
-  private buildToolAck(toolName: string, result: TurnResult): string {
-    if (toolName === "vote" && result.vote) {
-      return result.vote.approve
-        ? "Your APPROVE vote has been recorded."
-        : "Your REJECT vote has been recorded.";
+  private sanitizeAssistantResponse(response: Awaited<ReturnType<LlmClient["complete"]>>): LlmMessage | null {
+    const textBlocks = response.content.filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text");
+    if (textBlocks.length === 0) {
+      return null;
     }
-    if (toolName === "yield") {
-      return "Your yield proposal has been recorded. Waiting for the other agent's vote.";
+
+    return {
+      ...response,
+      content: textBlocks,
+    };
+  }
+
+  private parseTurnResult(response: Awaited<ReturnType<LlmClient["complete"]>>, tools: readonly ElenchusTool[]): TurnResult {
+    const result: TurnResult = {
+      reply: response.content
+        .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
+        .map((block) => block.text)
+        .join(""),
+      stopReason: response.stopReason,
+    };
+
+    const toolCalls = response.content.filter((block): block is Extract<typeof block, { type: "toolCall" }> => block.type === "toolCall");
+    if (toolCalls.length === 0) {
+      return result;
     }
-    if (toolName === "sleep") {
-      return "Your sleep proposal has been recorded. Waiting for the other agent's vote.";
+
+    const agentName = getDisplayName(this.selfId);
+    if (toolCalls.length > 1) {
+      result.frameworkBroadcasts = [
+        this.createFrameworkBroadcast(
+          "malformed_multiple_tool_calls",
+          `Framework rejected ${agentName}'s tool invocation because the response contained multiple tool calls. No proposal or vote was recorded.`,
+        ),
+      ];
+      return result;
     }
-    return `Your ${toolName} proposal has been recorded. Waiting for the other agent's vote.`;
+
+    const [toolCall] = toolCalls;
+    const validToolNames = new Set(tools.map((tool) => tool.name));
+    if (!validToolNames.has(toolCall.name)) {
+      result.frameworkBroadcasts = [
+        this.createFrameworkBroadcast(
+          "tool_not_available",
+          `Framework rejected ${agentName}'s tool invocation because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`,
+        ),
+      ];
+      return result;
+    }
+
+    if (toolCall.name === "vote") {
+      const vote = this.parseVoteCall(toolCall.arguments);
+      if (!vote) {
+        result.frameworkBroadcasts = [
+          this.createFrameworkBroadcast(
+            "vote_arguments_invalid",
+            `Framework rejected ${agentName}'s vote invocation because the vote arguments were invalid. No vote was recorded.`,
+          ),
+        ];
+        return result;
+      }
+
+      result.action = { kind: "vote", vote };
+      return result;
+    }
+
+    const proposal = this.parseProposalCall(toolCall.name, toolCall.arguments);
+    if (!proposal) {
+      result.frameworkBroadcasts = [
+        this.createFrameworkBroadcast(
+          "proposal_missing_proposed_step",
+          `Framework rejected ${agentName}'s ${toolCall.name} proposal because proposedStep was missing or empty. No proposal was recorded.`,
+        ),
+      ];
+      return result;
+    }
+
+    result.action = { kind: "proposal", proposal };
+    return result;
+  }
+
+  private parseVoteCall(rawArgs: Record<string, unknown>): VoteCall | null {
+    const reason = typeof rawArgs.reason === "string" ? rawArgs.reason.trim() : "";
+    if (typeof rawArgs.approve !== "boolean" || !reason) {
+      return null;
+    }
+
+    return {
+      approve: rawArgs.approve,
+      reason,
+    };
+  }
+
+  private parseProposalCall(toolName: string, rawArgs: Record<string, unknown>): ProposalCall | null {
+    const proposedStep = typeof rawArgs.proposedStep === "string" ? rawArgs.proposedStep.trim() : "";
+    if (!proposedStep) {
+      return null;
+    }
+
+    const { proposedStep: _proposedStep, ...toolArgs } = rawArgs;
+    return {
+      toolName,
+      args: toolArgs,
+      proposedStep,
+    };
+  }
+
+  private createFrameworkBroadcast(code: FrameworkBroadcast["code"], content: string): FrameworkBroadcast {
+    return { code, content };
   }
 }

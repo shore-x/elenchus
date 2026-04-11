@@ -8,11 +8,118 @@
 
 export type AgentId = "agent-a" | "agent-b";
 export type MessageSource = "user" | AgentId | "system";
+export type ConversationAuthor = AgentId | "parent" | "system";
+export type ProposalStatus = "pending" | "approved" | "rejected" | "superseded";
 
 export interface ProposalCall {
   toolName: string;
   args: Record<string, unknown>;
   proposedStep: string;
+}
+
+export interface VoteCall {
+  approve: boolean;
+  reason: string;
+}
+
+export type FrameworkBroadcastCode =
+  | "malformed_multiple_tool_calls"
+  | "tool_not_available"
+  | "proposal_missing_proposed_step"
+  | "vote_arguments_invalid";
+
+export interface FrameworkBroadcast {
+  code: FrameworkBroadcastCode;
+  content: string;
+}
+
+export type TurnAction =
+  | { kind: "proposal"; proposal: ProposalCall }
+  | { kind: "vote"; vote: VoteCall };
+
+export interface LedgerMessageMeta {
+  turnAuthored: number;
+  visibleFromTurn: number;
+}
+
+export interface ConversationMessageBase extends LedgerMessageMeta {
+  id: string;
+  kind:
+    | "parent_message"
+    | "agent_message"
+    | "system_message"
+    | "proposal_message"
+    | "vote_message"
+    | "tool_result_message"
+    | "child_report_message";
+  authoredBy: ConversationAuthor;
+  timestamp: number;
+}
+
+export interface ParentMessage extends ConversationMessageBase {
+  kind: "parent_message";
+  authoredBy: "parent";
+  content: string;
+}
+
+export interface AgentMessage extends ConversationMessageBase {
+  kind: "agent_message";
+  authoredBy: AgentId;
+  content: string;
+}
+
+export interface SystemMessage extends ConversationMessageBase {
+  kind: "system_message";
+  authoredBy: "system";
+  content: string;
+}
+
+export interface ProposalMessage extends ConversationMessageBase {
+  kind: "proposal_message";
+  authoredBy: AgentId;
+  toolName: string;
+  args: Record<string, unknown>;
+  proposedStep: string;
+  status: ProposalStatus;
+}
+
+export interface VoteMessage extends ConversationMessageBase {
+  kind: "vote_message";
+  authoredBy: AgentId;
+  proposalId: string;
+  approve: boolean;
+  reason: string;
+}
+
+export interface ToolResultMessage extends ConversationMessageBase {
+  kind: "tool_result_message";
+  authoredBy: "system";
+  proposalId: string;
+  toolName: string;
+  success: boolean;
+  output: string;
+  durationMs: number;
+}
+
+export interface ChildReportMessage extends ConversationMessageBase {
+  kind: "child_report_message";
+  authoredBy: "system";
+  childId: string;
+  content: string;
+}
+
+export type ConversationMessage =
+  | ParentMessage
+  | AgentMessage
+  | SystemMessage
+  | ProposalMessage
+  | VoteMessage
+  | ToolResultMessage
+  | ChildReportMessage;
+
+export interface ConversationLedgerSnapshot {
+  messages: ConversationMessage[];
+  cursors: Record<AgentId, number>;
 }
 
 export interface CommittedStep {
@@ -33,15 +140,7 @@ export interface UnitScope {
   path: number[];
 }
 
-// A message on the MessageBus (P1: all external inputs are uniform Messages)
-export interface BusMessage {
-  id: string;
-  source: MessageSource;
-  content: string;
-  timestamp: number;
-  // If this message carries a proposal (Yield, Bash, ReadFile, WriteFile, etc.)
-  proposal?: ProposalCall;
-}
+export type BusMessage = ConversationMessage;
 
 // A pending proposal awaiting the other agent's vote
 export interface PendingProposal {
@@ -61,12 +160,8 @@ export type UnitState = "idle" | "turn-a" | "turn-b" | "executing" | "terminated
 export interface TurnResult {
   reply: string;
   stopReason: string;
-  proposal?: ProposalCall;
-  vote?: {
-    approve: boolean;
-    reason: string;
-  };
-  unknownToolCalls?: { name: string; args: Record<string, unknown> }[];
+  action?: TurnAction;
+  frameworkBroadcasts?: FrameworkBroadcast[];
 }
 
 // Structured event system — replaces untyped string callbacks.

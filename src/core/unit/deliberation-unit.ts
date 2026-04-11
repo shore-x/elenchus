@@ -4,10 +4,10 @@
 // allowing CLI and future UI layers to share the same runtime without inheriting Node-specific details.
 
 import { AgentTurn } from "./agent-turn.js";
-import { MessageBus } from "../message-bus.js";
+import { ConversationLedger } from "../conversation-ledger.js";
 import { buildSystemPrompt } from "../prompts.js";
 import type { LlmClient, ToolExecutor } from "../ports.js";
-import { type AgentId, type ChildCommitView, type CommittedStep, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
+import { type AgentId, type ChildCommitView, type CommittedStep, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
 import { isBlockingTool, isNonBlockingTool } from "../tools.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
@@ -25,10 +25,9 @@ export interface DeliberationUnitOptions {
 
 export class DeliberationUnit {
   private state: UnitState = "idle";
-  private bus: MessageBus;
+  private ledger: ConversationLedger;
   private agentA: AgentTurn;
   private agentB: AgentTurn;
-  private pendingProposal: PendingProposal | null = null;
   private loopRunning = false;
   private level: ToolLevel;
   private llmClient: LlmClient;
@@ -49,7 +48,7 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.bus = new MessageBus();
+    this.ledger = new ConversationLedger();
     this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level), this.llmClient, this.level);
     this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level), this.llmClient, this.level);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
@@ -60,7 +59,7 @@ export class DeliberationUnit {
   }
 
   injectUserMessage(content: string): void {
-    this.bus.write("user", content);
+    this.ledger.appendParentMessage(content, this.buildDeferredVisibilityMeta());
 
     if (this.state === "idle" && !this.loopRunning) {
       this.transition(this.state, "turn-a");
@@ -112,6 +111,17 @@ export class DeliberationUnit {
     });
   }
 
+  private buildDeferredVisibilityMeta(): LedgerMessageMeta {
+    return {
+      turnAuthored: this.turnCounter,
+      visibleFromTurn: this.turnCounter + 1,
+    };
+  }
+
+  private getPendingProposal(): PendingProposal | null {
+    return this.ledger.getPendingProposalView();
+  }
+
   private sameScope(left: UnitScope, right: UnitScope): boolean {
     return left.level === right.level
       && left.path.length === right.path.length
@@ -124,8 +134,8 @@ export class DeliberationUnit {
       const agentName = AGENT_NAMES[currentAgent];
       const agentTurn = currentAgent === "agent-a" ? this.agentA : this.agentB;
 
-      const newMessages = this.bus.readNewForAgent(currentAgent);
       this.turnCounter++;
+      const newMessages = this.ledger.readNewForAgent(currentAgent, this.turnCounter);
 
       this.emit({
         type: "turn-start",
@@ -139,11 +149,12 @@ export class DeliberationUnit {
 
       const hasChildren = this.children.size > 0;
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
+      const pendingProposal = this.getPendingProposal();
       let result;
       try {
         result = await agentTurn.execute(
           newMessages,
-          this.pendingProposal,
+          pendingProposal,
           hasChildren,
           childCommitViews,
         );
@@ -153,7 +164,7 @@ export class DeliberationUnit {
         return;
       }
 
-      const isEmpty = !result.reply?.trim() && !result.proposal && !result.vote;
+      const isEmpty = !result.reply?.trim() && !result.action && !(result.frameworkBroadcasts?.length);
       if (isEmpty) {
         this.consecutiveEmptyTurns++;
         if (this.consecutiveEmptyTurns >= DeliberationUnit.MAX_EMPTY_TURNS) {
@@ -166,12 +177,15 @@ export class DeliberationUnit {
       }
 
       if (result.reply) {
+        this.ledger.appendAgentMessage(currentAgent, result.reply, this.buildDeferredVisibilityMeta());
         this.emit({ type: "agent-message", scope: this.scope, turn: this.turnCounter, agent: currentAgent, content: result.reply });
       }
 
-      if (result.unknownToolCalls?.length) {
-        for (const tc of result.unknownToolCalls) {
-          this.emit({ type: "warning", scope: this.scope, message: `${agentName} called unknown tool "${tc.name}" — ignored. LLM may be hallucinating tools.` });
+      if (result.frameworkBroadcasts?.length) {
+        const broadcastMeta = this.buildDeferredVisibilityMeta();
+        for (const broadcast of result.frameworkBroadcasts) {
+          this.ledger.appendSystemMessage(broadcast.content, broadcastMeta);
+          this.emit({ type: "warning", scope: this.scope, message: broadcast.content });
         }
       }
 
@@ -179,44 +193,55 @@ export class DeliberationUnit {
         this.emit({ type: "warning", scope: this.scope, message: `${agentName}'s response was truncated (stopReason: length). Consider increasing maxTokens.` });
       }
 
-      if (result.vote && this.pendingProposal) {
-        const proposerName = AGENT_NAMES[this.pendingProposal.proposer];
-        const toolName = this.pendingProposal.toolName;
+      if (result.action?.kind === "vote" && pendingProposal) {
+        const vote = result.action.vote;
+        const toolName = pendingProposal.toolName;
+        const voteMeta = this.buildDeferredVisibilityMeta();
 
-        if (result.vote.approve) {
-          const approvedProposal = this.pendingProposal;
-          this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: this.pendingProposal.proposer, toolName, approve: true, reason: result.vote.reason });
-          this.bus.write("system", `${agentName} voted APPROVE on ${proposerName}'s ${toolName}: ${result.vote.reason}`);
+        if (vote.approve) {
+          const approvedProposal = pendingProposal;
+          this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: true, reason: vote.reason });
+          this.ledger.appendVoteMessage({
+            voter: currentAgent,
+            proposalId: approvedProposal.messageId,
+            approve: true,
+            reason: vote.reason,
+            ...voteMeta,
+          });
+          this.ledger.markProposalApproved(approvedProposal.messageId);
           this.recordCommittedStep(approvedProposal);
 
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;
             this.emit({ type: "report", scope: this.scope, content: yieldContent });
-            this.pendingProposal = null;
             this.transition(this.state, "idle");
             return;
           }
 
           if (toolName === "sleep") {
             const timeoutMs = approvedProposal.args.timeoutMs as number;
-            this.pendingProposal = null;
             this.transition(this.state, "idle");
             this.sleepTimer = setTimeout(() => {
               this.sleepTimer = null;
-              this.bus.write("system", `[System] Sleep timeout after ${timeoutMs}ms. No child agent has reported.`);
+              this.ledger.appendSystemMessage(`Sleep timeout after ${timeoutMs}ms. No child agent has reported.`, this.buildDeferredVisibilityMeta());
               this.wakeIfIdle();
             }, timeoutMs);
             return;
           }
 
           if (isBlockingTool(toolName)) {
-            this.pendingProposal = null;
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
             const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args);
-            const statusTag = execResult.success ? "✓" : "✗";
-            this.bus.write("system", `[Tool Result] ${statusTag} ${toolName}:\n${execResult.output}`);
+            this.ledger.appendToolResultMessage({
+              proposalId: approvedProposal.messageId,
+              toolName,
+              success: execResult.success,
+              output: execResult.output,
+              durationMs: execResult.durationMs,
+              ...this.buildDeferredVisibilityMeta(),
+            });
             this.emit({ type: "tool-result", scope: this.scope, toolName, success: execResult.success, output: execResult.output, durationMs: execResult.durationMs });
             const nextState: UnitState = this.executingFromState === "turn-a" ? "turn-b" : "turn-a";
             this.executingFromState = null;
@@ -225,28 +250,33 @@ export class DeliberationUnit {
           }
 
           if (isNonBlockingTool(toolName)) {
-            this.pendingProposal = null;
             this.executeNonBlockingTool(approvedProposal);
           }
         } else {
-          this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: this.pendingProposal.proposer, toolName, approve: false, reason: result.vote.reason });
-          this.bus.write("system", `${agentName} voted REJECT on ${proposerName}'s ${toolName}: ${result.vote.reason}`);
-          this.pendingProposal = null;
+          this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: false, reason: vote.reason });
+          this.ledger.appendVoteMessage({
+            voter: currentAgent,
+            proposalId: pendingProposal.messageId,
+            approve: false,
+            reason: vote.reason,
+            ...voteMeta,
+          });
+          this.ledger.markProposalRejected(pendingProposal.messageId);
         }
       }
 
-      if (result.proposal) {
-        this.pendingProposal = {
-          proposer: currentAgent,
-          toolName: result.proposal.toolName,
-          args: result.proposal.args,
-          proposedStep: result.proposal.proposedStep,
-          messageId: "",
-        };
-        this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: result.proposal.toolName, args: result.proposal.args });
+      if (result.action?.kind === "proposal") {
+        const proposal = result.action.proposal;
+        this.ledger.appendProposalMessage({
+          authoredBy: currentAgent,
+          toolName: proposal.toolName,
+          args: proposal.args,
+          proposedStep: proposal.proposedStep,
+          ...this.buildDeferredVisibilityMeta(),
+        });
+        this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: proposal.toolName, args: proposal.args });
       }
 
-      this.bus.write(currentAgent, result.reply, result.proposal);
       const nextState: UnitState = this.state === "turn-a" ? "turn-b" : "turn-a";
       this.transition(this.state, nextState);
     }
@@ -270,7 +300,11 @@ export class DeliberationUnit {
         path: childPath,
         onSystemEvent: (event: SystemEvent) => {
           if (event.type === "report" && this.sameScope(event.scope, childScope)) {
-            this.bus.write("system", `[Child ${childId} Report]\n${event.content}`);
+            this.ledger.appendChildReportMessage({
+              childId,
+              content: event.content,
+              ...this.buildDeferredVisibilityMeta(),
+            });
             this.wakeIfIdle();
           }
           this.emit(event);
@@ -280,7 +314,7 @@ export class DeliberationUnit {
       this.children.set(childId, child);
 
       const taskPreview = task.length > 100 ? task.slice(0, 100) + "..." : task;
-      this.bus.write("system", `[System] Child unit ${childId} started with task: ${taskPreview}`);
+      this.ledger.appendSystemMessage(`Child unit ${childId} started with task: ${taskPreview}`, this.buildDeferredVisibilityMeta());
       this.emit({ type: "child-spawned", scope: childScope, task });
       child.injectUserMessage(task);
     } else if (toolName === "sendToChild") {
@@ -289,17 +323,17 @@ export class DeliberationUnit {
       const child = this.children.get(childId);
 
       if (!child) {
-        this.bus.write("system", `[System] Error: Child ${childId} not found. Available: ${[...this.children.keys()].join(", ") || "none"}`);
+        this.ledger.appendSystemMessage(`Error: Child ${childId} not found. Available: ${[...this.children.keys()].join(", ") || "none"}`, this.buildDeferredVisibilityMeta());
         this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not found` });
         return;
       }
 
       if (child.getState() !== "idle") {
-        this.bus.write("system", `[System] Warning: Child ${childId} is in state "${child.getState()}", not idle. Message queued anyway.`);
+        this.ledger.appendSystemMessage(`Warning: Child ${childId} is in state "${child.getState()}", not idle. Message queued anyway.`, this.buildDeferredVisibilityMeta());
       }
 
       child.injectUserMessage(message);
-      this.bus.write("system", `[System] Message sent to child ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`);
+      this.ledger.appendSystemMessage(`Message sent to child ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`, this.buildDeferredVisibilityMeta());
       this.emit({ type: "child-message-sent", scope: child.scope, message });
     }
   }
