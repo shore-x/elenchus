@@ -1,15 +1,13 @@
 // Elenchus - AgentTurn
-// Executes a single LLM turn for one agent: inject new messages → call pi-ai → parse response.
-// Each agent maintains an independent pi-ai Context (messages array).
+// Executes a single LLM turn for one agent using the abstract LlmClient port.
+// Each agent maintains an independent message history.
 // The other agent's replies and system events are injected as user messages with prefixes.
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
-import { complete, type Context, type Message, type Model, type StopReason, type Tool } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
-import { type AgentId, type BusMessage, type ChildCommitView, type PendingProposal, type ProposalCall, type ToolLevel, type TurnResult } from "./types.js";
-import { buildToolList, type ElenchusTool } from "./tools.js";
+import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
+import { type AgentId, type BusMessage, type ChildCommitView, type PendingProposal, type ProposalCall, type ToolLevel, type TurnResult } from "../types.js";
+import { buildToolList, type ElenchusTool } from "../tools.js";
 
-// Display name mapping for message prefixes
 const DISPLAY_NAMES: Record<string, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
@@ -17,13 +15,10 @@ const DISPLAY_NAMES: Record<string, string> = {
   system: "System",
 };
 
-// Convert BusMessages into pi-ai user messages for injection into an agent's context.
-// The agent's own previous replies are already in its context as assistant messages.
-function convertBusMessagesToInjection(messages: BusMessage[], selfId: AgentId): Message[] {
-  const result: Message[] = [];
+function convertBusMessagesToInjection(messages: BusMessage[], selfId: AgentId): LlmMessage[] {
+  const result: LlmMessage[] = [];
 
   for (const msg of messages) {
-    // Skip own messages — they are already in context as assistant messages
     if (msg.source === selfId) continue;
 
     const prefix = DISPLAY_NAMES[msg.source] ?? msg.source;
@@ -39,12 +34,7 @@ function convertBusMessagesToInjection(messages: BusMessage[], selfId: AgentId):
   return result;
 }
 
-// Build a pending-proposal notification message for injection.
-// Supports any tool type (Yield, Bash, ReadFile, WriteFile, etc.)
-function buildProposalNotification(
-  proposal: ProposalCall,
-  proposerName: string,
-): Message {
+function buildProposalNotification(proposal: ProposalCall, proposerName: string): LlmMessage {
   let detail: string;
   switch (proposal.toolName) {
     case "yield":
@@ -84,7 +74,7 @@ function buildProposalNotification(
   };
 }
 
-function buildChildCommitViewMessage(childCommitViews: readonly ChildCommitView[]): Message | null {
+function buildChildCommitViewMessage(childCommitViews: readonly ChildCommitView[]): LlmMessage | null {
   if (childCommitViews.length === 0) {
     return null;
   }
@@ -113,8 +103,7 @@ function buildChildCommitViewMessage(childCommitViews: readonly ChildCommitView[
   };
 }
 
-// Convert ElenchusTool[] to pi-ai Tool[] format
-function toProviderTools(tools: ElenchusTool[]): Tool[] {
+function toProviderTools(tools: ElenchusTool[]): LlmToolDefinition[] {
   return tools.map((t) => ({
     name: t.name,
     description: t.description,
@@ -125,54 +114,44 @@ function toProviderTools(tools: ElenchusTool[]): Tool[] {
 export class AgentTurn {
   private selfId: AgentId;
   private systemPrompt: string;
-  private model: Model<any>;
+  private llmClient: LlmClient;
   private level: ToolLevel;
-  // This agent's independent pi-ai message history
-  private messages: Message[] = [];
+  private messages: LlmMessage[] = [];
 
-  constructor(selfId: AgentId, systemPrompt: string, model: Model<any>, level: ToolLevel = "L0") {
+  constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0") {
     this.selfId = selfId;
     this.systemPrompt = systemPrompt;
-    this.model = model;
+    this.llmClient = llmClient;
     this.level = level;
   }
 
-  // Execute one turn: inject new bus messages → call LLM → parse result.
-  // Returns a TurnResult describing the agent's reply, any proposal, and any vote.
   async execute(
     newBusMessages: BusMessage[],
     pendingProposal: PendingProposal | null,
     hasChildren: boolean = false,
     childCommitViews: readonly ChildCommitView[] = [],
   ): Promise<TurnResult> {
-    // 1. Inject new messages from the bus into this agent's context
     const injected = convertBusMessagesToInjection(newBusMessages, this.selfId);
     this.messages.push(...injected);
 
-    // 2. If there is a pending proposal from the other agent, inject a notification
     if (pendingProposal && pendingProposal.proposer !== this.selfId) {
       const proposerName = DISPLAY_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
       this.messages.push(buildProposalNotification(pendingProposal, proposerName));
     }
 
-    // 3. Build tool list (Vote only available when there's a pending proposal from the other agent)
     const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== this.selfId;
     const tools = buildToolList(hasPendingFromOther, this.level, hasChildren);
     const childCommitViewMessage = buildChildCommitViewMessage(childCommitViews);
 
-    // 4. Call LLM with explicit maxTokens to prevent proxy/API truncation
-    const context: Context = {
+    const context: LlmContext = {
       systemPrompt: this.systemPrompt,
       messages: childCommitViewMessage ? [...this.messages, childCommitViewMessage] : this.messages,
       tools: toProviderTools(tools),
     };
 
-    const response = await complete(this.model, context, { maxTokens: 8192 });
-
-    // 5. Add assistant response to this agent's context
+    const response = await this.llmClient.complete(context, { maxTokens: 8192 });
     this.messages.push(response);
 
-    // 6. Parse response into TurnResult
     const validToolNames = new Set(tools.map((t) => t.name));
     const result: TurnResult = { reply: "", stopReason: response.stopReason };
 
@@ -181,10 +160,9 @@ export class AgentTurn {
         result.reply += block.text;
       } else if (block.type === "toolCall") {
         if (!validToolNames.has(block.name)) {
-          // LLM hallucinated a tool that doesn't exist — reject it
           (result.unknownToolCalls ??= []).push({
             name: block.name,
-            args: block.arguments as Record<string, unknown>,
+            args: block.arguments,
           });
           this.messages.push({
             role: "toolResult",
@@ -195,7 +173,6 @@ export class AgentTurn {
             timestamp: Date.now(),
           });
         } else if (block.name === "vote") {
-          // Vote is the only tool that is NOT a proposal
           const args = block.arguments as { approve: boolean; reason: string };
           result.vote = {
             approve: args.approve,
@@ -210,8 +187,7 @@ export class AgentTurn {
             timestamp: Date.now(),
           });
         } else {
-          // All other valid tool calls (yield, bash, readFile, writeFile) are proposals
-          const rawArgs = block.arguments as Record<string, unknown>;
+          const rawArgs = block.arguments;
           const proposedStep = typeof rawArgs.proposedStep === "string" ? rawArgs.proposedStep.trim() : "";
 
           if (!proposedStep) {
@@ -219,7 +195,7 @@ export class AgentTurn {
               role: "toolResult",
               toolCallId: block.id,
               toolName: block.name,
-              content: [{ type: "text", text: `Error: proposal tools must include a non-empty proposedStep that explains how the action advances the task.` }],
+              content: [{ type: "text", text: "Error: proposal tools must include a non-empty proposedStep that explains how the action advances the task." }],
               isError: true,
               timestamp: Date.now(),
             });
@@ -247,12 +223,10 @@ export class AgentTurn {
     return result;
   }
 
-  // Return the number of messages in this agent's context (for debug display).
   getContextSize(): number {
     return this.messages.length;
   }
 
-  // Build an acknowledgement message for a tool call.
   private buildToolAck(toolName: string, result: TurnResult): string {
     if (toolName === "vote" && result.vote) {
       return result.vote.approve
