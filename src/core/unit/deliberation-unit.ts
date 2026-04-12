@@ -4,6 +4,8 @@
 // allowing CLI and future UI layers to share the same runtime without inheriting Node-specific details.
 // Unit-level context compression is managed here via a separate CompressionTaskManager,
 // while agent-visible context remains a turn-scoped projection from ConversationLedger.
+// Parent-visible child context is restricted to the currently mounted child set; idle
+// children can be unmounted from that visible set and later remounted by new upward activity.
 
 import { AgentTurn } from "./agent-turn.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
@@ -43,6 +45,7 @@ export class DeliberationUnit {
   private scope: UnitScope;
   private executingFromState: "turn-a" | "turn-b" | null = null;
   private children = new Map<string, DeliberationUnit>();
+  private mountedChildren = new Set<string>();
   private childCounter = 0;
   private sleepTimer: ReturnType<typeof setTimeout> | null = null;
   private consecutiveEmptyTurns = 0;
@@ -104,11 +107,28 @@ export class DeliberationUnit {
   }
 
   private buildChildCommitViews(limit: number = DeliberationUnit.CHILD_COMMIT_VIEW_LIMIT): ChildCommitView[] {
-    return [...this.children.entries()].map(([childId, child]) => ({
-      childId,
-      state: child.getState(),
-      committedSteps: child.getCommittedSteps(limit),
-    }));
+    return [...this.mountedChildren]
+      .map((childId) => {
+        const child = this.children.get(childId);
+        if (!child) {
+          return null;
+        }
+
+        return {
+          childId,
+          state: child.getState(),
+          committedSteps: child.getCommittedSteps(limit),
+        } satisfies ChildCommitView;
+      })
+      .filter((view): view is ChildCommitView => view !== null);
+  }
+
+  private hasMountedChildren(): boolean {
+    return this.mountedChildren.size > 0;
+  }
+
+  private isChildMounted(childId: string): boolean {
+    return this.mountedChildren.has(childId);
   }
 
   private recordCommittedStep(proposal: PendingProposal): void {
@@ -263,7 +283,7 @@ export class DeliberationUnit {
       this.turnCounter++;
       const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
 
-      const hasChildren = this.children.size > 0;
+      const hasChildren = this.hasMountedChildren();
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
       const pendingProposal = this.getPendingProposal();
       const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
@@ -454,12 +474,20 @@ export class DeliberationUnit {
         path: childPath,
         onSystemEvent: (event: SystemEvent) => {
           if (event.type === "upward-message" && this.sameScope(event.scope, childScope)) {
+            const broadcastMeta = this.buildDeferredVisibilityMeta();
+            const wasMounted = this.isChildMounted(childId);
+            if (!wasMounted) {
+              this.mountedChildren.add(childId);
+            }
             this.ledger.appendChildReportMessage({
               childId,
               deliveryMode: event.deliveryMode,
               content: event.content,
-              ...this.buildDeferredVisibilityMeta(),
+              ...broadcastMeta,
             });
+            if (!wasMounted) {
+              this.ledger.appendSystemMessage(`Child unit ${childId} was remounted after new upward activity.`, broadcastMeta);
+            }
             this.wakeIfIdle();
           }
           this.emit(event);
@@ -467,6 +495,7 @@ export class DeliberationUnit {
       });
 
       this.children.set(childId, child);
+      this.mountedChildren.add(childId);
 
       const taskPreview = task.length > 100 ? task.slice(0, 100) + "..." : task;
       this.ledger.appendSystemMessage(`Child unit ${childId} started with the following task: ${taskPreview}`, this.buildDeferredVisibilityMeta());
@@ -477,9 +506,10 @@ export class DeliberationUnit {
       const message = args.message as string;
       const child = this.children.get(childId);
 
-      if (!child) {
-        this.ledger.appendSystemMessage(`The message could not be delivered to child unit ${childId} because no such child unit exists. Available child units: ${[...this.children.keys()].join(", ") || "none"}`, this.buildDeferredVisibilityMeta());
-        this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not found` });
+      if (!child || !this.isChildMounted(childId)) {
+        const visibleChildren = [...this.mountedChildren].join(", ") || "none";
+        this.ledger.appendSystemMessage(`The message could not be delivered to child unit ${childId} because no such currently visible child unit exists. Currently visible child units: ${visibleChildren}`, this.buildDeferredVisibilityMeta());
+        this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not currently visible` });
         return;
       }
 
@@ -490,6 +520,24 @@ export class DeliberationUnit {
       child.injectUserMessage(message);
       this.ledger.appendSystemMessage(`The following message was sent to child unit ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`, this.buildDeferredVisibilityMeta());
       this.emit({ type: "child-message-sent", scope: child.scope, message });
+    } else if (toolName === "unmountChild") {
+      const childId = args.childId as string;
+      const child = this.children.get(childId);
+
+      if (!child || !this.isChildMounted(childId)) {
+        const visibleChildren = [...this.mountedChildren].join(", ") || "none";
+        this.ledger.appendSystemMessage(`Child unit ${childId} could not be unmounted because it is not in the current visible child set. Currently visible child units: ${visibleChildren}`, this.buildDeferredVisibilityMeta());
+        this.emit({ type: "warning", scope: this.scope, message: `unmountChild failed: child ${childId} not currently visible` });
+        return;
+      }
+
+      if (child.getState() !== "idle") {
+        this.ledger.appendSystemMessage(`Child unit ${childId} could not be unmounted because it was in state "${child.getState()}" rather than idle.`, this.buildDeferredVisibilityMeta());
+        this.emit({ type: "warning", scope: this.scope, message: `unmountChild failed: child ${childId} not idle` });
+        return;
+      }
+
+      this.mountedChildren.delete(childId);
     }
   }
 

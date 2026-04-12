@@ -46,6 +46,8 @@ function renderProposalDetail(proposal: ProposalCall): string {
     }
     case "sendToChild":
       return `Child: ${proposal.args.childId}\nMessage:\n---\n${String(proposal.args.message)}\n---`;
+    case "unmountChild":
+      return `Child: ${proposal.args.childId}`;
     default:
       return `Arguments:\n${JSON.stringify(proposal.args, null, 2) ?? "{}"}`;
   }
@@ -251,7 +253,7 @@ export class ConversationProjector {
     const agentName = getDisplayName(agentId);
     const lines = [
       "[Context Snapshot]",
-      `The following child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`,
+      `The following currently visible child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`,
     ];
 
     for (const view of childCommitViews) {

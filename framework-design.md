@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-12
-version: 3.1
+version: 3.3
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -169,6 +169,8 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 对于复杂任务，父层可在多个 turn 中逐步形成多个 delegated workstream，而不必把所有子问题强行压进单一 child workflow。新消息到来时，应判断它更适合通过 `sendToChild` 并入既有 child 的工作流，还是更适合作为新的独立工作流生成新的 child。
 
+父层也可对一个 `idle` child 执行**解除挂载**，使其从父 agent 的当前可见上下文中消失，以减少 context 负担。解除挂载不表示终止、完成或删除；程序中仍保留父子从属关系。若该 child 之后产生新的 `upward-message`，它应自动重新挂载，并以轻量 runtime 广播提示该可见性恢复已经发生。
+
 ### 4.4 `commitLog` 可见性边界
 
 父层当前观察的是子单元的 **已提交推进步骤**，而不是子单元全部实时活动流。
@@ -212,14 +214,14 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - `TurnA/TurnB -> Idle`：批准 `yield` 或 `sleep`
 - `* -> Terminated`：父层强制终止
 
-对 `report`、`spawnChild`、`sendToChild`、`compressContext` 等非阻塞式提议，状态机正常轮转，不进入 `Executing`。
+对 `report`、`spawnChild`、`sendToChild`、`unmountChild`、`compressContext` 等非阻塞式提议，状态机正常轮转，不进入 `Executing`。
 
 ### 5.3 工具面摘要
 
 当前工具面可分为三类：
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
-- **Child management**：`spawnChild`、`sendToChild`、`sleep`
+- **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
 - **Environment**：`bash`、`readFile`、`writeFile`
 
 可用性规则保持简单：
@@ -283,12 +285,14 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 | CompressionTaskManager | 管理 unit 级压缩任务生命周期的运行时组件，负责活动任务状态、重复抑制与有限重试 |
 | 提议（Proposal） | Agent 通过工具调用提出的、需要另一侧表决的动作请求 |
 | 表决（Vote） | 对待决 proposal 的 APPROVE 或 REJECT 判定 |
+| 解除挂载（Unmount Child） | 父层对一个 `idle` child 执行的可见性管理动作：该 child 从父 agent 的当前上下文中消失，但程序中仍保留父子从属关系；后续只有新的 `upward-message` 可以触发自动重新挂载 |
 | proposedStep | proposal-producing tool call 上的短语义字段，表达“该动作对任务推进的意义” |
 | committedStep | proposal 获批后固化的已提交步骤 |
 | commitLog | 归属于 Agent Unit 的已提交步骤的历史序列，表示该单元正式接受过哪些任务推进步骤，而非成功历史 |
 
 ## 版本历史
 
+- **v3.3 (2026-04-12)**：在总纲中补充 child **解除挂载 / 自动重新挂载** 语义：父层可对 `idle` child 执行解除挂载，使其从父 agent 可见上下文中消失但保留程序中的父子从属关系；重新挂载仅由新的 `upward-message` 触发，并以轻量 runtime 广播提示可见性恢复。同步将 `unmountChild` 纳入 child-management 工具摘要与术语表。
 - **v3.2 (2026-04-12)**：在层级结构高层摘要中补充多 child 渐进式拆解与“新消息路由”原则：复杂任务可跨 turn 逐步形成多个 delegated workstream；新信息若与既有 child workflow 实质相关，可考虑通过 `sendToChild` 纳入原工作流，否则可考虑生成新的 child。
 - **v3.1 (2026-04-12)**：重写 `report` / `yield` 高层语义：两者统一视为常态 upward communication family，而非异常升级路径。`report` 表示向上沟通且保留本地主动推进，`yield` 表示向上沟通并交还当前阶段主动权后暂停；明确 `yield` 可在信息不足时主动请求补充信息。同步澄清 `spawnChild` 只提供初始 brief，父子上下文应通过 `report` / `yield` / `sendToChild` 持续流动。
 - **v3.0 (2026-04-12)**：将 `framework-design.md` 重构为总纲 + 索引，并拆分出 5 份专题文档：`conversation-model.md`、`context-compression.md`、`protocol-and-runtime.md`、`hierarchy-and-layers.md`、`state-machine-and-tools.md`。在总文档与专题文档中加入双向同步提醒，用于提示 AI 与人类在修改一侧时检查另一侧是否需要同步更新。

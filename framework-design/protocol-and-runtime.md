@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
 date: 2026-04-12
-version: 3.1
+version: 3.2
 ---
 
 # Protocol and Runtime
@@ -78,7 +78,7 @@ During `Executing`, no agent is active.
 
 ## 5. Non-Blocking Tool Execution
 
-Non-blocking tools such as `spawnChild`, `sendToChild`, `report`, and `compressContext` follow a different path:
+Non-blocking tools such as `spawnChild`, `sendToChild`, `unmountChild`, `report`, and `compressContext` follow a different path:
 
 1. proposal is approved
 2. runtime effect begins immediately or is scheduled asynchronously
@@ -100,6 +100,7 @@ Examples include:
 - task failed
 - child spawned
 - child message queued or delivered
+- child remounted after new upward activity
 - timeout fired
 - compression task failure or completion
 
@@ -146,6 +147,8 @@ So `sleep` is the pure waiting move, while `yield` is the waiting-after-communic
 
 A key benefit of locally recording both `yield` and `report` as `upward_message` is that later turns can still see what has already been sent upward. This matters especially when parent-child collaboration is iterative and context must keep flowing in both directions rather than being assumed complete at child spawn time.
 
+When an already unmounted child later emits a new `upward-message`, the upper layer should treat remount + upward delivery as one reliable and atomic runtime event chain. The child first re-enters the parent's visible child set, and the parent then receives the new child report together with a light runtime broadcast noting that the child was remounted because of new upward activity. External new messages do not remount old children.
+
 ## 8. Compression as a Non-Blocking Runtime Action
 
 `compressContext` is also non-blocking, but it has a very specific contract.
@@ -183,5 +186,6 @@ This preserves a clean separation between:
 
 ## Change Log
 
+- **v3.2 (2026-04-12)**: Added `unmountChild` to the non-blocking runtime model and documented the approved child remount contract: a new child `upward-message` must reliably and atomically remount that child into the parent's visible child set, accompanied by a light runtime broadcast. External new messages do not remount old children.
 - **v3.1 (2026-04-12)**: Reframed `report` and `yield` as one upward communication family rather than exceptional escalation paths. Clarified that `yield` is a general upward handoff that may request more information before pausing, while `report` is a routine coordination move used at key decision points when local progress can continue.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed action protocol and runtime semantics while the overview remains the canonical entry point and index.

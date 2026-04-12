@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - State Machine and Tools"
 date: 2026-04-12
-version: 3.1
+version: 3.2
 ---
 
 # State Machine and Tools
@@ -102,6 +102,7 @@ The tool surface is intentionally simple.
 
 - `spawnChild`
 - `sendToChild`
+- `unmountChild`
 - `sleep`
 
 ### 5.3 Environment Tools
@@ -120,6 +121,7 @@ The tool surface is intentionally simple.
 | CompressContext | ✓ | ✓ | ✓ |
 | SpawnChild | ✓ | ✓ | ✗ |
 | SendToChild | ✓（条件） | ✓（条件） | ✗ |
+| UnmountChild | ✓（条件） | ✓（条件） | ✗ |
 | Sleep | ✓ | ✓ | ✗ |
 | Bash | ✗ | ✓ | ✓ |
 | ReadFile | ✗ | ✓ | ✓ |
@@ -130,7 +132,7 @@ Rules in summary:
 - child-management tools belong to non-leaf layers
 - environment tools belong to non-pure-coordination layers
 - protocol tools belong to all layers
-- some tools, such as `vote` and `sendToChild`, are conditionally visible based on current state
+- some tools, such as `vote`, `sendToChild`, and `unmountChild`, are conditionally visible based on current state
 
 ## 7. Tool-Surface Notes
 
@@ -157,6 +159,15 @@ Rules in summary:
 - requires explicit `timeoutMs`
 - reserved for pure waiting rather than upward coordination
 
+### 7.4 `unmountChild`
+
+- proposal-producing
+- non-blocking
+- available only when the parent currently has visible child units
+- valid only for an `idle` child at runtime
+- removes that child from the parent agent's visible context without terminating it or removing the program's parent-child affiliation
+- if that child later emits a new `upward-message`, it automatically remounts into the parent's visible child set; the parent receives the new child report together with a light runtime broadcast noting the remount
+
 ## 8. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
@@ -168,5 +179,6 @@ Rules in summary:
 
 ## Change Log
 
+- **v3.2 (2026-04-12)**: Added `unmountChild` to the child-management tool surface. Documented it as a non-blocking visibility-management tool: it removes an `idle` child from the parent agent's visible context while preserving affiliation, and a later child `upward-message` automatically remounts the child with a light runtime broadcast.
 - **v3.1 (2026-04-12)**: Updated tool-surface notes to reflect the semantic rewrite of `report` and `yield`. `yield` is now documented as a general upward handoff-and-pause move, including requests for more information, while `report` is documented as routine upward coordination at key moments rather than a special-case escalation path.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed FSM and tool-surface semantics while the overview remains the canonical entry point and index.

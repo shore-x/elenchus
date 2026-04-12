@@ -58,6 +58,7 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 - When new incoming information is materially relevant to a child unit's current task, consider whether it belongs inside that existing child workflow rather than leaving the child on stale context.
 - Do not force unrelated or weakly related work into an existing child workflow. If new information instead opens a sufficiently separate line of work, a new child unit may be cleaner than overloading the current one.
 - When a child report reveals missing context, changed assumptions, or a need for redirection, seriously consider **sendToChild** rather than waiting for the child to finish.
+- Use **unmountChild** when an 'idle' child no longer needs to stay in the parent unit's current visible working set. Unmounting is a visibility-management move, not completion or termination.
 - Use **sleep** when waiting is itself the best next commitment because immediate further deliberation would add less value than allowing later information to arrive.
 - The absence of newly visible messages does not by itself mean the task is complete, blocked, or ready to pause.
 - These are decision principles, not a fixed scenario checklist. Let the task state determine which move is best.
@@ -76,7 +77,7 @@ const GUIDELINE_TOOLS = `
 The tools available in the current turn fall into three categories:
 
 - **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (refresh the memory snapshot), **vote** (evaluate your partner's proposal).
-- **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **sleep** (pause with timeout when waiting is the best next move).
+- **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **unmountChild** (remove an idle child from the parent unit's current visible working set without terminating it), **sleep** (pause with timeout when waiting is the best next move).
 - **Environment tools** (if available): **bash**, **readFile**, **writeFile** — direct interaction with the environment.
 
 The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall hierarchy.
@@ -92,6 +93,7 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - If the unit lacks enough context to continue with confidence, strongly prefer an explicit **yield** requesting the missing information over silently guessing.
 - Use **sendToChild** when ongoing delegated work should receive additional context, constraints, corrections, clarifications, redirection, or a response to the child's earlier report or yield.
 - Child agent upward messages arrive asynchronously as [Public Fact][Child Report] broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped; these messages often call for either **sendToChild**, local replanning, or further upward coordination.
+- Use **unmountChild** when an idle child no longer deserves space in the parent unit's current visible context. If that child later sends a new upward communication message, it will become visible again.
 - Use **sleep** when deliberate waiting would serve the task better than further immediate discussion, coordination, or action.
 - Tool execution results appear as [Public Fact][Tool Result] broadcasts.
 - If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a [Public Fact][Unit Runtime] broadcast.
