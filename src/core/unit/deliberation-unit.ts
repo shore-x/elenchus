@@ -9,11 +9,11 @@
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
 import { AgentTurn } from "./agent-turn.js";
-import { CapabilityBundle, createCapabilityBundle } from "../skills.js";
+import { createStaticCapabilityProvider, type CapabilityProvider } from "../skills.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
 import { ConversationLedger } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
-import { buildCompressionSystemPrompt, buildSystemPrompt } from "../prompts.js";
+import { buildCompressionSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
 import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
 
@@ -25,7 +25,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  capabilities?: CapabilityBundle;
+  capabilityProvider?: CapabilityProvider;
   level?: ToolLevel;
   path?: number[];
   unitId?: string;
@@ -45,7 +45,7 @@ export class DeliberationUnit {
   private level: ToolLevel;
   private llmClient: LlmClient;
   private toolExecutor: ToolExecutor;
-  private capabilities: CapabilityBundle;
+  private capabilityProvider: CapabilityProvider;
   private turnCounter = 0;
   private onSystemEvent: OnSystemEvent;
   private scope: UnitScope;
@@ -68,13 +68,13 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.capabilities = options.capabilities ?? createCapabilityBundle();
+    this.capabilityProvider = options.capabilityProvider ?? createStaticCapabilityProvider();
     this.unitId = options.unitId ?? DeliberationUnit.buildDefaultUnitId(options.path ?? []);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level, this.capabilities), this.llmClient, this.level, this.capabilities);
-    this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level, this.capabilities), this.llmClient, this.level, this.capabilities);
+    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.capabilityProvider);
+    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.capabilityProvider);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -358,7 +358,7 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
-      capabilities: this.capabilities,
+      capabilityProvider: this.capabilityProvider,
       level: childLevel,
       path: childPath,
       unitId,
@@ -613,7 +613,7 @@ export class DeliberationUnit {
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
 
-          const resolvedTool = this.capabilities.resolveTool(toolName);
+          const resolvedTool = this.capabilityProvider.getSnapshot().bundle.resolveTool(toolName);
 
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;

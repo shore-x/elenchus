@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - State Machine and Tools"
-date: 2026-04-12
-version: 3.2
+date: 2026-04-13
+version: 3.3
 ---
 
 # State Machine and Tools
@@ -110,6 +110,7 @@ The tool surface is intentionally simple.
 - `bash`
 - `readFile`
 - `writeFile`
+- `installSkill`
 
 ## 6. Tool Availability by Layer
 
@@ -126,6 +127,7 @@ The tool surface is intentionally simple.
 | Bash | ✗ | ✓ | ✓ |
 | ReadFile | ✗ | ✓ | ✓ |
 | WriteFile | ✗ | ✓ | ✓ |
+| InstallSkill | ✗ | ✓ | ✓ |
 
 Rules in summary:
 
@@ -133,6 +135,7 @@ Rules in summary:
 - environment tools belong to non-pure-coordination layers
 - protocol tools belong to all layers
 - some tools, such as `vote`, `sendToChild`, and `unmountChild`, are conditionally visible based on current state
+- `installSkill` is a built-in blocking environment tool for hot-installing a valid local skill package; successful installation refreshes the shared capability set and becomes visible from later turns, not retroactively inside the current turn
 
 ## 7. Tool-Surface Notes
 
@@ -168,6 +171,16 @@ Rules in summary:
 - removes that child from the parent agent's visible context without terminating it or removing the program's parent-child affiliation
 - if that child later emits a new `upward-message`, it automatically remounts into the parent's visible child set; the parent receives the new child report together with a light runtime broadcast noting the remount
 
+### 7.5 `installSkill`
+
+- proposal-producing
+- blocking
+- available only at L1 and L2
+- accepts a local directory source that must already contain a valid `skill.json` and `SKILL.md`
+- installs atomically into the runtime-managed skill directory
+- refreshes the shared capability provider on success
+- newly installed skill tools and prompt appendix become visible from the next turn rather than the current in-flight turn
+
 ## 8. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
@@ -179,6 +192,7 @@ Rules in summary:
 
 ## Change Log
 
+- **v3.3 (2026-04-13)**: Added the built-in blocking environment tool `installSkill` to the detailed tool surface. Documented it as an L1/L2-only hot-install mechanism for valid local skill-package directories, with next-turn capability visibility after successful installation.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the child-management tool surface. Documented it as a non-blocking visibility-management tool: it removes an `idle` child from the parent agent's visible context while preserving affiliation, and a later child `upward-message` automatically remounts the child with a light runtime broadcast.
 - **v3.1 (2026-04-12)**: Updated tool-surface notes to reflect the semantic rewrite of `report` and `yield`. `yield` is now documented as a general upward handoff-and-pause move, including requests for more information, while `report` is documented as routine upward coordination at key moments rather than a special-case escalation path.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed FSM and tool-surface semantics while the overview remains the canonical entry point and index.

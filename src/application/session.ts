@@ -2,7 +2,7 @@
 // This application-layer session is the stable surface that CLI and future UI layers consume,
 // including optional persistence-backed cold-start recovery of the root deliberation graph.
 
-import { compareSkillBindings, createCapabilityBundle, type CapabilityBundle } from "../core/skills.js";
+import { compareSkillBindings, createStaticCapabilityProvider, type CapabilityProvider } from "../core/skills.js";
 import { DeliberationUnit } from "../core/unit/deliberation-unit.js";
 import type { LlmClient, ToolExecutor } from "./ports.js";
 import type { SessionPersistenceAdapter } from "./session-persistence.js";
@@ -11,7 +11,7 @@ import type { CommittedStep, OnSystemEvent, ToolLevel, UnitState } from "../core
 export interface DeliberationSessionOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  capabilities?: CapabilityBundle;
+  capabilityProvider?: CapabilityProvider;
   level?: ToolLevel;
   onSystemEvent?: OnSystemEvent;
   persistence?: SessionPersistenceAdapter;
@@ -20,18 +20,18 @@ export interface DeliberationSessionOptions {
 export class DeliberationSession {
   private readonly unit: DeliberationUnit;
   private readonly persistence: SessionPersistenceAdapter | null;
-  private readonly capabilities: CapabilityBundle;
+  private readonly capabilityProvider: CapabilityProvider;
 
   constructor(options: DeliberationSessionOptions) {
     this.persistence = options.persistence ?? null;
-    this.capabilities = options.capabilities ?? createCapabilityBundle();
+    this.capabilityProvider = options.capabilityProvider ?? createStaticCapabilityProvider();
     const restoredSnapshot = this.persistence?.loadSnapshot() ?? null;
     const persistedSkillBindings = this.persistence?.loadSkillBindings?.() ?? null;
 
     this.unit = new DeliberationUnit({
       llmClient: options.llmClient,
       toolExecutor: options.toolExecutor,
-      capabilities: this.capabilities,
+      capabilityProvider: this.capabilityProvider,
       level: restoredSnapshot?.level ?? options.level,
       path: restoredSnapshot?.path,
       unitId: restoredSnapshot?.unitId,
@@ -48,7 +48,7 @@ export class DeliberationSession {
       });
 
       if (persistedSkillBindings) {
-        const bindingWarnings = compareSkillBindings(persistedSkillBindings, this.capabilities.getSkillBindings());
+        const bindingWarnings = compareSkillBindings(persistedSkillBindings, this.capabilityProvider.getSnapshot().bindings);
         for (const warning of bindingWarnings) {
           this.unit.appendSystemNotice(warning);
         }
@@ -87,6 +87,6 @@ export class DeliberationSession {
     }
 
     this.persistence.saveSnapshot(this.unit.exportSnapshot());
-    this.persistence.saveSkillBindings?.(this.capabilities.getSkillBindings());
+    this.persistence.saveSkillBindings?.(this.capabilityProvider.getSnapshot().bindings);
   }
 }

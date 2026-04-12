@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
-date: 2026-04-12
-version: 3.4
+date: 2026-04-13
+version: 3.7
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -170,6 +170,8 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - 当前可用工具列表
 - 当前层级可见的 capability appendix（例如安装后的 skill 指导）
 
+其中 capability 注入现在通过共享的 **capability provider** 在 turn 边界读取最新快照完成：已安装 skill 的 prompt appendix 与 skill tools 不必只在 session 启动时决定；新增 skill 在成功热安装后可从后续 turn 开始生效，而不会追溯改变已经开始的 turn。
+
 同时，框架采用 **无状态Agent + 外部化知识** 模型：知识不应沉淀为某个实例不可替代的隐藏积累，而应通过父层注入与外部资源传递。
 `spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文应通过 `report`、`yield` 与 `sendToChild` 在父子之间持续流动。
 
@@ -229,13 +231,14 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
 - **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
-- **Environment**：`bash`、`readFile`、`writeFile`，以及安装后的 blocking skill tools
+- **Environment**：`bash`、`readFile`、`writeFile`、`installSkill`，以及安装后的 blocking skill tools
 
 可用性规则保持简单：
 
 - 子Agent管理工具仅非叶子层可用
 - 环境工具仅非纯协调层可用
 - 协议工具所有层级都可用（其中部分工具按状态条件注入）
+- `installSkill` 是内建 blocking environment tool，目前仅支持从本地合法 skill package 目录做热安装，并在成功后从下一次 turn 开始暴露新 skill
 - 安装后的 skill 默认仅向 `L1` / `L2` 注入；skill tool 仍是 proposal-producing blocking tools，必须经另一侧 agent 批准后才进入 `Executing`
 
 installable skill 的正式模型见 [`framework-design/skill-system.md`](./framework-design/skill-system.md)。如果该专题文档中的 skill 注入规则、tool registry、执行模型或持久化绑定发生变化，也需回看本总纲中的第四章与第五章摘要是否仍然准确。
@@ -305,6 +308,7 @@ installable skill 的正式模型见 [`framework-design/skill-system.md`](./fram
 
 ## 版本历史
 
+- **v3.7 (2026-04-13)**：将 skill 运行时从启动期静态 bundle 升级为 turn-boundary capability provider。新增内建 blocking tool `installSkill`，当前支持从本地合法 skill package 目录执行热安装；安装成功后刷新 capability snapshot，并从下一次 turn 开始注入新的 skill prompt appendix 与 skill tools。同步更新总纲中的第四章、第五章摘要以反映热安装语义。
 - **v3.6 (2026-04-12)**：补充 SQLite 持久化的实现边界：当前 schema 不依赖数据库外键维护 unit graph，而由应用层持久化逻辑与保存顺序保证关系一致性；同时记录 `schema_meta` 版本号与开发期“版本不匹配即重建本地数据库”的策略。
 - **v3.5 (2026-04-12)**：将持久化实现从文件系统整份快照收敛为嵌入式 SQLite。当前默认数据库文件为 `.elenchus/state.db`；数据库保留全量 durable history，而冷启动恢复只按需重建 working set。既有冷启动归一化与“unmounted child 保留但默认不恢复”语义保持不变。
 - **v3.4 (2026-04-12)**：在总纲中加入文件系统持久化与冷启动恢复高层摘要。明确当前实现将可恢复 session 状态保存在运行目录下的 `.elenchus/` 中；`Memory Snapshot + Recent Raw Window` 同时承担启动工作集角色；冷启动时 `TurnA` / `TurnB` / `Executing` 统一归一化到 `Idle`；已解除挂载的 child 仍保留于磁盘，但默认不恢复进 active runtime graph。

@@ -36,6 +36,8 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
       return String(args.path);
     case "writeFile":
       return `${args.path} (${String(args.content).length} chars)`;
+    case "installSkill":
+      return String(args.sourcePath);
     case "yield":
       return String(args.content);
     case "report":

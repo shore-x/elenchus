@@ -79,7 +79,7 @@ The tools available in the current turn fall into three categories:
 
 - **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (refresh the memory snapshot), **vote** (evaluate your partner's proposal).
 - **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **unmountChild** (remove an idle child from the parent unit's current visible working set without terminating it), **sleep** (pause with timeout when waiting is the best next move).
-- **Environment tools** (if available): **bash**, **readFile**, **writeFile** — direct interaction with the environment.
+- **Environment tools** (if available): **bash**, **readFile**, **writeFile**, **installSkill** — direct interaction with the environment, including hot-installing a valid local skill package for later turns.
 
 The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall hierarchy.
 Raw assistant and tool-call traces are not carried forward as private chat history across turns. Each turn is grounded in shared context projected from public facts such as proposals, votes, tool results, child reports, and recorded protocol rejections.
@@ -96,9 +96,10 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - Child agent upward messages arrive asynchronously as [Public Fact][Child Report] broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped; these messages often call for either **sendToChild**, local replanning, or further upward coordination.
 - Use **unmountChild** when an idle child no longer deserves space in the parent unit's current visible context. If that child later sends a new upward communication message, it will become visible again.
 - Use **sleep** when deliberate waiting would serve the task better than further immediate discussion, coordination, or action.
+- Use **installSkill** only for a valid local skill package directory that is genuinely needed for the task; a newly installed skill becomes available from the next turn rather than retroactively changing the current one.
 - Tool execution results appear as [Public Fact][Tool Result] broadcasts.
 - If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a [Public Fact][Unit Runtime] broadcast.
-- When your task is complete, propose a **yield** with a clear summary.`;
+- When your task is complete, propose a **yield** with a clear summary or question`;
 
 function buildGuideline(): string {
   return GUIDELINE_HEADER + GUIDELINE_TOOLS;

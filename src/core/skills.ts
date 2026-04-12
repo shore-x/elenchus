@@ -43,6 +43,35 @@ export interface SkillBindingRecord {
   appliesToLevels: readonly ToolLevel[];
 }
 
+export interface CapabilitySnapshot {
+  epoch: number;
+  bundle: CapabilityBundle;
+  bindings: readonly SkillBindingRecord[];
+}
+
+export interface CapabilityProvider {
+  getSnapshot(): CapabilitySnapshot;
+  refresh(): CapabilitySnapshot;
+}
+
+export type SkillInstallSuccess = {
+  ok: true;
+  message: string;
+  installedBinding: SkillBindingRecord;
+  epoch: number;
+};
+
+export type SkillInstallFailure = {
+  ok: false;
+  message: string;
+};
+
+export type SkillInstallResult = SkillInstallSuccess | SkillInstallFailure;
+
+export interface SkillInstaller {
+  installFromLocalDirectory(sourcePath: string): Promise<SkillInstallResult>;
+}
+
 export interface ResolvedTool extends ElenchusTool {
   origin: "built-in" | "skill";
   skillId?: string;
@@ -203,8 +232,33 @@ export class CapabilityBundle {
   }
 }
 
+class StaticCapabilityProvider implements CapabilityProvider {
+  private snapshot: CapabilitySnapshot;
+
+  constructor(skills: readonly InstalledSkill[] = []) {
+    const bundle = new CapabilityBundle(skills);
+    this.snapshot = {
+      epoch: 0,
+      bundle,
+      bindings: bundle.getSkillBindings(),
+    };
+  }
+
+  getSnapshot(): CapabilitySnapshot {
+    return this.snapshot;
+  }
+
+  refresh(): CapabilitySnapshot {
+    return this.snapshot;
+  }
+}
+
 export function createCapabilityBundle(skills: readonly InstalledSkill[] = []): CapabilityBundle {
   return new CapabilityBundle(skills);
+}
+
+export function createStaticCapabilityProvider(skills: readonly InstalledSkill[] = []): CapabilityProvider {
+  return new StaticCapabilityProvider(skills);
 }
 
 export function getDefaultSkillLevels(): readonly ToolLevel[] {

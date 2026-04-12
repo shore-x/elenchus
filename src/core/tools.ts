@@ -160,6 +160,23 @@ export const writeFileTool: ElenchusTool = {
   appliesToLevels: EXECUTION_LEVELS,
 };
 
+export const installSkillTool: ElenchusTool = {
+  name: "installSkill",
+  description:
+    "Propose to hot-install a local skill package directory into the runtime-managed skills set. This is a PROPOSAL — the other agent must vote APPROVE before it executes. " +
+    "The source directory must already contain a valid skill package with skill.json and SKILL.md. " +
+    "Installation is atomic and the new skill becomes available from the next turn rather than retroactively changing the current turn.",
+  parameters: Type.Object({
+    sourcePath: Type.String({
+      description: "Absolute or relative path to a local directory containing a valid skill package to install.",
+    }),
+    proposedStep: proposedStepSchema,
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: EXECUTION_LEVELS,
+};
+
 export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
@@ -248,6 +265,7 @@ const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
   bashTool,
   readFileTool,
   writeFileTool,
+  installSkillTool,
   spawnChildTool,
   sendToChildTool,
   unmountChildTool,

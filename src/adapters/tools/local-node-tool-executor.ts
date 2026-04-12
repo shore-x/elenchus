@@ -5,7 +5,7 @@ import { exec, execFile } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { ToolExecutionResult, ToolExecutor } from "../../core/ports.js";
-import { createCapabilityBundle, type CapabilityBundle } from "../../core/skills.js";
+import { createStaticCapabilityProvider, type CapabilityProvider, type SkillInstaller } from "../../core/skills.js";
 
 const BASH_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_CHARS = 50_000;
@@ -84,11 +84,11 @@ function resolveCommand(command: string, skillDir: string): string {
 }
 
 async function executeSkillCommand(
-  capabilities: CapabilityBundle,
+  capabilityProvider: CapabilityProvider,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<{ success: boolean; output: string }> {
-  const tool = capabilities.resolveTool(toolName);
+  const tool = capabilityProvider.getSnapshot().bundle.resolveTool(toolName);
   if (!tool || tool.origin !== "skill" || !tool.runner || !tool.sourcePath) {
     return { success: false, output: `Unknown blocking skill tool: ${toolName}` };
   }
@@ -117,8 +117,26 @@ async function executeSkillCommand(
   });
 }
 
+async function executeInstallSkill(
+  installer: SkillInstaller | undefined,
+  sourcePath: string,
+): Promise<{ success: boolean; output: string }> {
+  if (!installer) {
+    return { success: false, output: "Skill installation is not available in this runtime." };
+  }
+
+  const result = await installer.installFromLocalDirectory(sourcePath);
+  return {
+    success: result.ok,
+    output: result.message,
+  };
+}
+
 export class LocalNodeToolExecutor implements ToolExecutor {
-  constructor(private readonly capabilities: CapabilityBundle = createCapabilityBundle()) {}
+  constructor(
+    private readonly capabilityProvider: CapabilityProvider = createStaticCapabilityProvider(),
+    private readonly skillInstaller?: SkillInstaller,
+  ) {}
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<ToolExecutionResult> {
     const start = Date.now();
@@ -133,9 +151,12 @@ export class LocalNodeToolExecutor implements ToolExecutor {
       case "writeFile":
         result = await executeWriteFile(args.path as string, args.content as string);
         break;
+      case "installSkill":
+        result = await executeInstallSkill(this.skillInstaller, args.sourcePath as string);
+        break;
       default:
         result = toolName.startsWith("skill.")
-          ? await executeSkillCommand(this.capabilities, toolName, args)
+          ? await executeSkillCommand(this.capabilityProvider, toolName, args)
           : { success: false, output: `Unknown blocking tool: ${toolName}` };
     }
     return { ...result, durationMs: Date.now() - start };

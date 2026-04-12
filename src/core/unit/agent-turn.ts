@@ -4,8 +4,9 @@
 // The full agent-visible context is projected per turn from ConversationLedger upstream.
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
+import { buildSystemPrompt } from "../prompts.js";
 import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
-import type { CapabilityBundle } from "../skills.js";
+import type { CapabilityProvider } from "../skills.js";
 import { type AgentId, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
 import { type ElenchusTool } from "../tools.js";
 
@@ -28,17 +29,15 @@ function getDisplayName(agentId: AgentId): string {
 
 export class AgentTurn {
   private selfId: AgentId;
-  private systemPrompt: string;
   private llmClient: LlmClient;
   private level: ToolLevel;
-  private capabilities: CapabilityBundle;
+  private capabilityProvider: CapabilityProvider;
 
-  constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0", capabilities: CapabilityBundle) {
+  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", capabilityProvider: CapabilityProvider) {
     this.selfId = selfId;
-    this.systemPrompt = systemPrompt;
     this.llmClient = llmClient;
     this.level = level;
-    this.capabilities = capabilities;
+    this.capabilityProvider = capabilityProvider;
   }
 
   async execute(
@@ -46,10 +45,11 @@ export class AgentTurn {
     hasPendingFromOther: boolean,
     hasChildren: boolean = false,
   ): Promise<TurnResult> {
-    const tools = this.capabilities.getToolsForTurn(hasPendingFromOther, this.level, hasChildren);
+    const snapshot = this.capabilityProvider.getSnapshot();
+    const tools = snapshot.bundle.getToolsForTurn(hasPendingFromOther, this.level, hasChildren);
 
     const context: LlmContext = {
-      systemPrompt: this.systemPrompt,
+      systemPrompt: buildSystemPrompt(this.selfId, this.level, snapshot.bundle),
       messages,
       tools: toProviderTools(tools),
     };

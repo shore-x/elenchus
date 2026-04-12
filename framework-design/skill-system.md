@@ -20,6 +20,7 @@ This document specifies:
 - the v1 skill package format
 - layer-specific injection rules
 - how skill tools participate in proposal-vote and blocking execution
+- how runtime hot install refreshes capability snapshots at turn boundaries
 - how skill bindings are persisted and checked on cold start
 
 It complements the execution semantics in [protocol-and-runtime.md](./protocol-and-runtime.md), the layer model in [hierarchy-and-layers.md](./hierarchy-and-layers.md), and the tool-surface summary in [state-machine-and-tools.md](./state-machine-and-tools.md).
@@ -61,13 +62,16 @@ A skill should expand the set of available actions and local guidance, not intro
 
 ### 1.2 Capability-bundle interpretation
 
-At session startup, installed skills are loaded from the file system and compiled into a runtime capability bundle. Units then receive a level-filtered view of that bundle.
+At runtime, installed skills are compiled into a capability bundle, but the session no longer treats that bundle as a single immutable startup artifact. Instead, the session owns a shared **capability provider** that can refresh the installed-skill set and publish a new capability snapshot.
 
 This means:
 
-- the bundle is immutable for the lifetime of the session
-- all units in the same session share the same installed-skill source set
+- all units in the same session share the same capability provider
+- each individual turn reads one snapshot from that provider and uses it consistently for prompt construction plus tool exposure
+- a newly installed skill does not retroactively change an already-started turn; it becomes visible from the next turn that reads the refreshed snapshot
 - each unit only sees the subset applicable to its layer
+
+The current hot-install implementation only supports additive change: new skills may appear at runtime, but running sessions do not yet support in-place skill modification, deletion, or upgrade.
 
 ## 2. Layer Injection Rules
 
@@ -240,6 +244,24 @@ They reuse the existing blocking-action transitions:
 
 This follows principle P8: blockingness is determined by the kind of external action being performed, not by whether the tool is built-in or skill-provided.
 
+### 5.5 Runtime hot-install tool
+
+The framework also provides a built-in blocking environment tool:
+
+- `installSkill`
+
+This tool is not skill-provided. It is part of the runtime's own capability-management surface.
+
+`installSkill`:
+
+- is available only at L1 and L2
+- is proposal-producing and blocking like other environment tools
+- currently accepts only a **local directory** source
+- requires the source directory to already contain a valid `skill.json` and `SKILL.md`
+- installs atomically into the runtime-managed `skills/` directory
+- refreshes the shared capability provider on success
+- makes the newly installed skill visible from the next turn rather than the current one
+
 ## 6. Prompt Injection Model
 
 A skill contributes a prompt appendix from `SKILL.md`.
@@ -266,7 +288,16 @@ The appendix should not try to redefine core protocol behavior.
 
 All applicable installed skills are injected for L1 and L2 in v1.
 
-This is a static per-session policy. The runtime does not yet perform relevance-based lazy activation.
+The layer policy remains static, but the concrete installed-skill set is refreshed at turn boundaries through the shared capability provider. The runtime still does not perform relevance-based lazy activation.
+
+### 6.3 Turn-boundary refresh rule
+
+Hot install uses **turn-boundary capability refresh**:
+
+- each `AgentTurn.execute()` reads the current capability snapshot before building the system prompt and tool list
+- that snapshot remains fixed for the duration of the turn
+- if another unit hot-installs a new skill while the current turn is already in flight, the current turn keeps its original snapshot
+- later turns naturally see the refreshed prompt appendix and tool set
 
 ## 7. Persistence and Cold-Start Recovery
 
@@ -298,6 +329,14 @@ On cold start, the runtime should:
 
 The v1 policy is **warn and continue** rather than strict refusal.
 
+### 7.4 Runtime install persistence effect
+
+When `installSkill` succeeds at runtime:
+
+- the shared capability provider refreshes immediately
+- the next durable session save persists the refreshed binding set
+- future cold starts compare against that newer binding snapshot rather than the pre-install set
+
 ## 8. Non-Goals for v1
 
 The current skill system deliberately does **not** attempt to support:
@@ -305,8 +344,10 @@ The current skill system deliberately does **not** attempt to support:
 - custom non-blocking skill tools
 - skill-defined protocol mutations
 - skill-specific FSM transitions
-- runtime install or uninstall from within agent dialogue
+- runtime uninstall from within agent dialogue
+- runtime in-place skill modification or upgrade
 - remote registries or marketplace semantics
+- installation directly from arbitrary documentation URLs
 - relevance-based lazy skill activation
 
 These may be explored later, but they are intentionally excluded from the minimal design.
@@ -321,4 +362,5 @@ These may be explored later, but they are intentionally excluded from the minima
 
 ## Change Log
 
+- **v1.1 (2026-04-13)**: Extended the skill system from startup-only loading to turn-boundary hot install. Added a shared capability-provider model, the built-in blocking `installSkill` tool for local skill-package directories, next-turn visibility semantics, and persisted binding refresh after successful runtime installation.
 - **v1.0 (2026-04-12)**: Introduced the initial installable-skill design. Skills are modeled as runtime capability bundles that contribute prompt appendix plus blocking tools, defaulting to L1/L2 injection only. Added namespaced skill tools, structured local-command runners, proposal-vote compatibility, and persisted skill binding checks for cold-start recovery.

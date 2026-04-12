@@ -3,12 +3,11 @@
 
 import { cwd } from "node:process";
 import * as readline from "node:readline";
-import { LocalSkillLoader } from "../../adapters/skills/local-skill-loader.js";
+import { LocalSkillRuntime } from "../../adapters/skills/local-skill-runtime.js";
 import { createSession } from "../../application/runtime.js";
 import { createPiAiLlmClient } from "../../adapters/llm/pi-ai-client.js";
 import { SqliteSessionPersistence } from "../../adapters/storage/sqlite/sqlite-session-persistence.js";
 import { LocalNodeToolExecutor } from "../../adapters/tools/local-node-tool-executor.js";
-import { createCapabilityBundle } from "../../core/skills.js";
 import type { SystemEvent } from "../../core/types.js";
 import { readCliConfig } from "./env.js";
 import { printBanner, printInterrupted, printQueuedUserMessage, printStartupInfo, printTerminating, renderEvent } from "./renderer.js";
@@ -31,13 +30,12 @@ export async function main(): Promise<void> {
   printStartupInfo(config.provider, config.modelName, config.baseUrl, config.level);
 
   const runDirectory = cwd();
-  const installedSkills = new LocalSkillLoader({ runDirectory }).loadInstalledSkills();
-  const capabilities = createCapabilityBundle(installedSkills);
+  const capabilityProvider = new LocalSkillRuntime({ runDirectory });
 
   const session = createSession({
     llmClient,
-    toolExecutor: new LocalNodeToolExecutor(capabilities),
-    capabilities,
+    toolExecutor: new LocalNodeToolExecutor(capabilityProvider, capabilityProvider),
+    capabilityProvider,
     level: config.level,
     persistence: new SqliteSessionPersistence({ runDirectory }),
     onSystemEvent: (event: SystemEvent) => {

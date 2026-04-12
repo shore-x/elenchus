@@ -103,6 +103,10 @@ export class LocalSkillLoader {
     this.skillsRoot = join(options.runDirectory, options.skillsDirectoryName ?? "skills");
   }
 
+  getSkillsRoot(): string {
+    return this.skillsRoot;
+  }
+
   loadInstalledSkills(): InstalledSkill[] {
     if (!existsSync(this.skillsRoot)) {
       return [];
@@ -111,7 +115,11 @@ export class LocalSkillLoader {
     return readdirSync(this.skillsRoot)
       .map((entry) => join(this.skillsRoot, entry))
       .filter((entryPath) => statSync(entryPath).isDirectory())
-      .map((skillDir) => this.loadSkill(skillDir));
+      .map((skillDir) => this.loadSkillFromDirectory(skillDir));
+  }
+
+  loadSkillFromDirectory(skillDir: string): InstalledSkill {
+    return this.loadSkill(skillDir);
   }
 
   private loadSkill(skillDir: string): InstalledSkill {
