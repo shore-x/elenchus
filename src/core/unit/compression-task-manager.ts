@@ -3,7 +3,7 @@
 // Owns the active compression task slot, reminder threshold checks, recent-raw window boundary,
 // and limited retry handling for asynchronous Memory Snapshot refreshes.
 
-import type { ConversationMessage, MemorySnapshot } from "../types.js";
+import type { ActiveCompressionTaskSnapshot, CompressionManagerSnapshot, ConversationMessage, MemorySnapshot } from "../types.js";
 
 const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
@@ -68,6 +68,21 @@ export interface ActiveCompressionTask {
   startedAt: number;
 }
 
+function toActiveCompressionTaskSnapshot(task: ActiveCompressionTask | null): ActiveCompressionTaskSnapshot | null {
+  if (!task) {
+    return null;
+  }
+
+  return {
+    id: task.id,
+    requirements: task.requirements,
+    sourceMessageCount: task.sourceMessages.length,
+    attemptNumber: task.attemptNumber,
+    maxAttempts: task.maxAttempts,
+    startedAt: task.startedAt,
+  };
+}
+
 export class CompressionTaskManager {
   private activeTask: ActiveCompressionTask | null = null;
   private memorySnapshot: MemorySnapshot | null = null;
@@ -110,6 +125,35 @@ export class CompressionTaskManager {
   shouldShowReminder(visibleMessages: readonly ConversationMessage[]): boolean {
     return !this.hasActiveTask()
       && this.estimateRecentRawChars(visibleMessages) >= this.reminderThresholdChars;
+  }
+
+  exportSnapshot(): CompressionManagerSnapshot {
+    return {
+      activeTask: toActiveCompressionTaskSnapshot(this.activeTask),
+      memorySnapshot: this.memorySnapshot ? { ...this.memorySnapshot } : null,
+      recentRawStartIndex: this.recentRawStartIndex,
+      reminderThresholdChars: this.reminderThresholdChars,
+      recentRawTargetChars: this.recentRawTargetChars,
+      maxRetries: this.maxRetries,
+    };
+  }
+
+  loadSnapshot(snapshot: CompressionManagerSnapshot): void {
+    this.memorySnapshot = snapshot.memorySnapshot ? { ...snapshot.memorySnapshot } : null;
+    this.recentRawStartIndex = snapshot.recentRawStartIndex;
+    this.reminderThresholdChars = snapshot.reminderThresholdChars;
+    this.recentRawTargetChars = snapshot.recentRawTargetChars;
+    this.maxRetries = snapshot.maxRetries;
+    this.activeTask = snapshot.activeTask
+      ? {
+        id: snapshot.activeTask.id,
+        requirements: snapshot.activeTask.requirements,
+        sourceMessages: [],
+        attemptNumber: snapshot.activeTask.attemptNumber,
+        maxAttempts: snapshot.activeTask.maxAttempts,
+        startedAt: snapshot.activeTask.startedAt,
+      }
+      : null;
   }
 
   startTask(requirements: string, sourceMessages: readonly ConversationMessage[]):

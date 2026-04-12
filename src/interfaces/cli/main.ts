@@ -1,9 +1,11 @@
 // Elenchus - CLI Main
 // CLI is now a presentation adapter over the application session API.
 
+import { cwd } from "node:process";
 import * as readline from "node:readline";
 import { createSession } from "../../application/runtime.js";
 import { createPiAiLlmClient } from "../../adapters/llm/pi-ai-client.js";
+import { FileSystemSessionPersistence } from "../../adapters/storage/fs/file-system-session-persistence.js";
 import { LocalNodeToolExecutor } from "../../adapters/tools/local-node-tool-executor.js";
 import type { SystemEvent } from "../../core/types.js";
 import { readCliConfig } from "./env.js";
@@ -30,6 +32,7 @@ export async function main(): Promise<void> {
     llmClient,
     toolExecutor: new LocalNodeToolExecutor(),
     level: config.level,
+    persistence: new FileSystemSessionPersistence({ runDirectory: cwd() }),
     onSystemEvent: (event: SystemEvent) => {
       renderEvent(event, config.verbose);
     },
@@ -47,7 +50,7 @@ export async function main(): Promise<void> {
 
     if (trimmed.toLowerCase() === "exit") {
       printTerminating();
-      session.terminate();
+      session.close();
       rl.close();
       return;
     }
@@ -62,8 +65,8 @@ export async function main(): Promise<void> {
 
   process.on("SIGINT", () => {
     printInterrupted();
-    session.terminate();
-    process.exit(0);
+    session.close();
+    rl.close();
   });
 
   process.stdin.resume();

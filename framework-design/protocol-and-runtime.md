@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
 date: 2026-04-12
-version: 3.2
+version: 3.3
 ---
 
 # Protocol and Runtime
@@ -23,6 +23,7 @@ This document defines the framework's action protocol and runtime execution beha
 - control-plane termination semantics
 
 It does not define layer assignment or tool availability tables in detail; those live in [hierarchy-and-layers.md](./hierarchy-and-layers.md) and [state-machine-and-tools.md](./state-machine-and-tools.md).
+Current filesystem-backed persistence and recovery use the run-directory-local `.elenchus/` folder as the storage root for resumable session state.
 
 ## Relevant Overview Sections
 
@@ -175,7 +176,19 @@ This preserves a clean separation between:
 - **communication**: shared reasoning facts
 - **control**: authoritative runtime operations such as forced termination
 
-## 10. Related Detailed Documents
+## 10. Cold-Start Recovery Boundary
+
+Cold-start recovery should restore a unit to a safe continuation boundary rather than pretend that an interrupted runtime can resume from the middle of an in-flight turn or environment action.
+
+The current recovery rule is:
+
+- persisted `turn-a`, `turn-b`, and `executing` normalize to `idle`
+- interrupted compression work is not resumed mid-flight; the active marker is cleared and recovery fact(s) are written into shared history
+- persisted sleep deadlines may still be honored if they remain in the future; elapsed deadlines are converted into recovery facts and the unit becomes eligible to deliberate again
+
+This keeps recovery semantically honest while still preserving durable history and context.
+
+## 11. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
 - Compression model: [context-compression.md](./context-compression.md)
@@ -186,6 +199,7 @@ This preserves a clean separation between:
 
 ## Change Log
 
+- **v3.3 (2026-04-12)**: Added the cold-start recovery boundary. Documented that resumable session state is stored under the run-directory-local `.elenchus/` folder, and clarified that persisted `turn-a` / `turn-b` / `executing` normalize to `idle` rather than resuming mid-turn or mid-execution.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the non-blocking runtime model and documented the approved child remount contract: a new child `upward-message` must reliably and atomically remount that child into the parent's visible child set, accompanied by a light runtime broadcast. External new messages do not remount old children.
 - **v3.1 (2026-04-12)**: Reframed `report` and `yield` as one upward communication family rather than exceptional escalation paths. Clarified that `yield` is a general upward handoff that may request more information before pausing, while `report` is a routine coordination move used at key decision points when local progress can continue.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed action protocol and runtime semantics while the overview remains the canonical entry point and index.

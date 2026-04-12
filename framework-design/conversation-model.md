@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Conversation Model"
 date: 2026-04-12
-version: 3.0
+version: 3.1
 ---
 
 # Conversation Model
@@ -75,6 +75,8 @@ It must support at least the following responsibilities:
 - **Persistence readiness**: keep a model that can later be serialized, reloaded, or rebuilt
 
 The ledger stores **facts**, not the final agent-visible rendering. Rendering belongs to the projection layer.
+
+In the current implementation, ledger-backed session recovery is rooted in the run-directory-local `.elenchus/` folder. Cold-start recovery may rebuild the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly rehydrating every historical ledger record into active runtime memory, but the ledger remains the durable fact authority underneath that working set.
 
 ## 4. Minimum Semantic Requirements for Messages
 
@@ -217,4 +219,5 @@ should remain third-person and explicitly name `Agent A` or `Agent B` when relev
 
 ## Change Log
 
+- **v3.1 (2026-04-12)**: Clarified the persistence relationship between `ConversationLedger` and startup working-set reconstruction. The ledger remains the durable fact authority, while cold-start may reconstruct the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly loading all historical runtime state.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed communication and projection semantics while the overview remains the canonical entry point and index.

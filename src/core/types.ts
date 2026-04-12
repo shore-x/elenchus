@@ -148,11 +148,49 @@ export interface MemorySnapshot {
   createdAt: number;
 }
 
+export interface ActiveCompressionTaskSnapshot {
+  id: string;
+  requirements: string;
+  sourceMessageCount: number;
+  attemptNumber: number;
+  maxAttempts: number;
+  startedAt: number;
+}
+
+export interface CompressionManagerSnapshot {
+  activeTask: ActiveCompressionTaskSnapshot | null;
+  memorySnapshot: MemorySnapshot | null;
+  recentRawStartIndex: number;
+  reminderThresholdChars: number;
+  recentRawTargetChars: number;
+  maxRetries: number;
+}
+
 export interface CommittedStep {
   toolName: string;
   proposedStep: string;
   proposedBy: AgentId;
   committedAt: number;
+}
+
+export interface PersistedChildSnapshot {
+  childId: string;
+  mounted: boolean;
+  snapshot: DeliberationUnitSnapshot;
+}
+
+export interface DeliberationUnitSnapshot {
+  unitId: string;
+  level: ToolLevel;
+  path: number[];
+  state: UnitState;
+  turnCounter: number;
+  childCounter: number;
+  ledger: ConversationLedgerSnapshot;
+  compression: CompressionManagerSnapshot;
+  commitLog: CommittedStep[];
+  children: PersistedChildSnapshot[];
+  sleepDeadlineMs: number | null;
 }
 
 export interface ChildCommitView {

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Hierarchy and Layers"
 date: 2026-04-12
-version: 3.3
+version: 3.4
 ---
 
 # Hierarchy and Layers
@@ -109,6 +109,8 @@ For complex work, the parent may gradually form multiple delegated workstreams a
 
 The parent may also choose to **unmount** an `idle` child unit. Unmounting means that the child disappears from the parent agent's current visible context and no longer consumes parent context budget, while the program still preserves the parent-child affiliation. If that child later emits a new `upward-message`, it should automatically remount into the parent's visible child set.
 
+Cold-start recovery intentionally uses a narrower rule than runtime visibility management: unmounted children remain preserved in durable storage, but they are not restored into the active runtime graph on startup. Recovery only rematerializes the mounted child subtree that should continue active coordination after restart.
+
 ## 6. No Special Lifecycle Policy for Children
 
 The framework should not hardcode whether a child is one-shot, reusable, or long-lived.
@@ -203,6 +205,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v3.4 (2026-04-12)**: Added restart-time child recovery semantics. Unmounted children remain on disk as durable history, but cold-start recovery rebuilds only the mounted active child subtree rather than reviving every historically affiliated child.
 - **v3.3 (2026-04-12)**: Added child unmount/remount semantics. A parent may unmount an `idle` child so it disappears from the parent agent's current visible context while parent-child affiliation remains in the program. New upward communication from that child automatically remounts it into the parent's visible child set.
 - **v3.2 (2026-04-12)**: Added explicit parent-child routing guidance: parent units may gradually build multiple child workstreams across turns, and should decide whether new information belongs in an existing child workflow via `sendToChild` or should instead motivate a new child unit when the line of work is sufficiently separate.
 - **v3.1 (2026-04-12)**: Clarified that `spawnChild` provides an initial brief rather than a one-shot full-context transfer. Parent-child collaboration is now explicitly described as iterative: children should use `report` at key coordination points and may use `yield` to request more information when local context is insufficient.
