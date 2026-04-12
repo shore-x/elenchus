@@ -12,6 +12,7 @@
 // Cognitive Style: epistemic strategy (evidence evaluation + reasoning organization).
 // Compression uses a separate fixed prompt to refresh a Memory Snapshot from ledger-derived context.
 
+import type { CapabilityBundle } from "./skills.js";
 import type { AgentId, ToolLevel } from "./types.js";
 
 const GUIDELINE_HEADER = `## Elenchus Deliberation Unit
@@ -205,8 +206,11 @@ Your job is to write a natural-language task-state snapshot for future turns.
 - Write for continued work, not for archival display.
 - Return only the Memory Snapshot text.`;
 
-export function buildSystemPrompt(agentId: AgentId, _level: ToolLevel): string {
-  return buildGuideline() + buildLayerOrientation(_level) + COGNITIVE_STYLES[agentId];
+export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, capabilities?: CapabilityBundle): string {
+  return buildGuideline()
+    + buildLayerOrientation(level)
+    + COGNITIVE_STYLES[agentId]
+    + (capabilities?.buildSkillPromptAppendix(level) ?? "");
 }
 
 export function buildCompressionSystemPrompt(): string {

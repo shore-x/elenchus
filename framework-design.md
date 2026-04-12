@@ -27,6 +27,7 @@ version: 3.4
 | [`framework-design/protocol-and-runtime.md`](./framework-design/protocol-and-runtime.md) | 协议与运行时专题 | proposal-vote、阻塞/非阻塞、副作用落账、向上通信、控制平面 |
 | [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
+| [`framework-design/skill-system.md`](./framework-design/skill-system.md) | Skill系统专题 | installable skills、L1/L2注入规则、skill tool注册与执行、持久化绑定 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -167,6 +168,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - 共享协作协议
 - Agent A / Agent B 的认知风格差异
 - 当前可用工具列表
+- 当前层级可见的 capability appendix（例如安装后的 skill 指导）
 
 同时，框架采用 **无状态Agent + 外部化知识** 模型：知识不应沉淀为某个实例不可替代的隐藏积累，而应通过父层注入与外部资源传递。
 `spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文应通过 `report`、`yield` 与 `sendToChild` 在父子之间持续流动。
@@ -227,13 +229,16 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
 - **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
-- **Environment**：`bash`、`readFile`、`writeFile`
+- **Environment**：`bash`、`readFile`、`writeFile`，以及安装后的 blocking skill tools
 
 可用性规则保持简单：
 
 - 子Agent管理工具仅非叶子层可用
 - 环境工具仅非纯协调层可用
 - 协议工具所有层级都可用（其中部分工具按状态条件注入）
+- 安装后的 skill 默认仅向 `L1` / `L2` 注入；skill tool 仍是 proposal-producing blocking tools，必须经另一侧 agent 批准后才进入 `Executing`
+
+installable skill 的正式模型见 [`framework-design/skill-system.md`](./framework-design/skill-system.md)。如果该专题文档中的 skill 注入规则、tool registry、执行模型或持久化绑定发生变化，也需回看本总纲中的第四章与第五章摘要是否仍然准确。
 
 ### 5.4 本章相关核心原则
 

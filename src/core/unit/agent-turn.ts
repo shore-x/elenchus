@@ -5,8 +5,9 @@
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
 import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
+import type { CapabilityBundle } from "../skills.js";
 import { type AgentId, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
-import { buildToolList, type ElenchusTool } from "../tools.js";
+import { type ElenchusTool } from "../tools.js";
 
 const DISPLAY_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
@@ -30,12 +31,14 @@ export class AgentTurn {
   private systemPrompt: string;
   private llmClient: LlmClient;
   private level: ToolLevel;
+  private capabilities: CapabilityBundle;
 
-  constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0") {
+  constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0", capabilities: CapabilityBundle) {
     this.selfId = selfId;
     this.systemPrompt = systemPrompt;
     this.llmClient = llmClient;
     this.level = level;
+    this.capabilities = capabilities;
   }
 
   async execute(
@@ -43,7 +46,7 @@ export class AgentTurn {
     hasPendingFromOther: boolean,
     hasChildren: boolean = false,
   ): Promise<TurnResult> {
-    const tools = buildToolList(hasPendingFromOther, this.level, hasChildren);
+    const tools = this.capabilities.getToolsForTurn(hasPendingFromOther, this.level, hasChildren);
 
     const context: LlmContext = {
       systemPrompt: this.systemPrompt,

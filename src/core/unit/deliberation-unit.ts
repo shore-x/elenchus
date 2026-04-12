@@ -9,13 +9,13 @@
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
 import { AgentTurn } from "./agent-turn.js";
+import { CapabilityBundle, createCapabilityBundle } from "../skills.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
 import { ConversationLedger } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
 import { buildCompressionSystemPrompt, buildSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
 import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
-import { isBlockingTool, isNonBlockingTool } from "../tools.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
@@ -25,6 +25,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
+  capabilities?: CapabilityBundle;
   level?: ToolLevel;
   path?: number[];
   unitId?: string;
@@ -44,6 +45,7 @@ export class DeliberationUnit {
   private level: ToolLevel;
   private llmClient: LlmClient;
   private toolExecutor: ToolExecutor;
+  private capabilities: CapabilityBundle;
   private turnCounter = 0;
   private onSystemEvent: OnSystemEvent;
   private scope: UnitScope;
@@ -66,12 +68,13 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
+    this.capabilities = options.capabilities ?? createCapabilityBundle();
     this.unitId = options.unitId ?? DeliberationUnit.buildDefaultUnitId(options.path ?? []);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level), this.llmClient, this.level);
-    this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level), this.llmClient, this.level);
+    this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level, this.capabilities), this.llmClient, this.level, this.capabilities);
+    this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level, this.capabilities), this.llmClient, this.level, this.capabilities);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -104,6 +107,11 @@ export class DeliberationUnit {
 
   getUnitId(): string {
     return this.unitId;
+  }
+
+  appendSystemNotice(content: string): void {
+    this.ledger.appendSystemMessage(content, this.buildDeferredVisibilityMeta());
+    this.notifyDurableStateChange();
   }
 
   getCommittedSteps(limit: number = DeliberationUnit.CHILD_COMMIT_VIEW_LIMIT): readonly CommittedStep[] {
@@ -350,6 +358,7 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
+      capabilities: this.capabilities,
       level: childLevel,
       path: childPath,
       unitId,
@@ -604,6 +613,8 @@ export class DeliberationUnit {
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
 
+          const resolvedTool = this.capabilities.resolveTool(toolName);
+
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;
             this.emitUpwardMessage("yield", yieldContent);
@@ -618,7 +629,7 @@ export class DeliberationUnit {
             return;
           }
 
-          if (isBlockingTool(toolName)) {
+          if (resolvedTool?.behavior === "blocking") {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
@@ -639,7 +650,7 @@ export class DeliberationUnit {
             continue;
           }
 
-          if (isNonBlockingTool(toolName)) {
+          if (resolvedTool?.behavior === "nonblocking") {
             this.executeNonBlockingTool(approvedProposal);
           }
         } else {

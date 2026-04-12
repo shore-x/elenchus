@@ -2,12 +2,10 @@
 // These ports isolate the core deliberation protocol from concrete LLM SDKs,
 // tool execution environments, and future presentation layers.
 
-import type { TObject } from "@sinclair/typebox";
-
 export interface LlmToolDefinition {
   name: string;
   description: string;
-  parameters: TObject;
+  parameters: Record<string, unknown>;
 }
 
 export type LlmTextBlock = {

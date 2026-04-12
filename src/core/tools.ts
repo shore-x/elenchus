@@ -7,15 +7,26 @@
 // while their difference is whether the unit pauses afterward.
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote.
 
-import { Type, type TObject } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ToolLevel } from "./types.js";
+
+export type ToolCategory = "protocol" | "environment" | "child-management";
+export type ToolBehavior = "vote" | "blocking" | "nonblocking" | "pause";
 
 export interface ElenchusTool {
   name: string;
   description: string;
-  parameters: TObject;
-  category: "protocol" | "environment" | "child-management";
+  parameters: Record<string, unknown>;
+  category: ToolCategory;
+  behavior: ToolBehavior;
+  appliesToLevels: readonly ToolLevel[];
+  requiresChildren?: boolean;
+  requiresPendingProposal?: boolean;
 }
+
+const NON_LEAF_LEVELS: readonly ToolLevel[] = ["L0", "L1"];
+const EXECUTION_LEVELS: readonly ToolLevel[] = ["L1", "L2"];
+const ALL_LEVELS: readonly ToolLevel[] = ["L0", "L1", "L2"];
 
 const proposedStepSchema = Type.String({
   description:
@@ -36,6 +47,8 @@ export const yieldTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "protocol",
+  behavior: "pause",
+  appliesToLevels: ALL_LEVELS,
 };
 
 export const reportTool: ElenchusTool = {
@@ -52,6 +65,8 @@ export const reportTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "protocol",
+  behavior: "nonblocking",
+  appliesToLevels: ALL_LEVELS,
 };
 
 export const compressContextTool: ElenchusTool = {
@@ -69,6 +84,8 @@ export const compressContextTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "protocol",
+  behavior: "nonblocking",
+  appliesToLevels: ALL_LEVELS,
 };
 
 export const voteTool: ElenchusTool = {
@@ -85,6 +102,9 @@ export const voteTool: ElenchusTool = {
     }),
   }),
   category: "protocol",
+  behavior: "vote",
+  appliesToLevels: ALL_LEVELS,
+  requiresPendingProposal: true,
 };
 
 export const bashTool: ElenchusTool = {
@@ -100,6 +120,8 @@ export const bashTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "environment",
+  behavior: "blocking",
+  appliesToLevels: EXECUTION_LEVELS,
 };
 
 export const readFileTool: ElenchusTool = {
@@ -114,6 +136,8 @@ export const readFileTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "environment",
+  behavior: "blocking",
+  appliesToLevels: EXECUTION_LEVELS,
 };
 
 export const writeFileTool: ElenchusTool = {
@@ -132,6 +156,8 @@ export const writeFileTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "environment",
+  behavior: "blocking",
+  appliesToLevels: EXECUTION_LEVELS,
 };
 
 export const spawnChildTool: ElenchusTool = {
@@ -150,6 +176,8 @@ export const spawnChildTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "child-management",
+  behavior: "nonblocking",
+  appliesToLevels: NON_LEAF_LEVELS,
 };
 
 export const sendToChildTool: ElenchusTool = {
@@ -169,6 +197,9 @@ export const sendToChildTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "child-management",
+  behavior: "nonblocking",
+  appliesToLevels: NON_LEAF_LEVELS,
+  requiresChildren: true,
 };
 
 export const unmountChildTool: ElenchusTool = {
@@ -185,6 +216,9 @@ export const unmountChildTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "child-management",
+  behavior: "nonblocking",
+  appliesToLevels: NON_LEAF_LEVELS,
+  requiresChildren: true,
 };
 
 export const sleepTool: ElenchusTool = {
@@ -202,42 +236,62 @@ export const sleepTool: ElenchusTool = {
     proposedStep: proposedStepSchema,
   }),
   category: "child-management",
+  behavior: "pause",
+  appliesToLevels: NON_LEAF_LEVELS,
 };
 
-const ENV_TOOLS: ElenchusTool[] = [bashTool, readFileTool, writeFileTool];
+const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
+  yieldTool,
+  reportTool,
+  compressContextTool,
+  voteTool,
+  bashTool,
+  readFileTool,
+  writeFileTool,
+  spawnChildTool,
+  sendToChildTool,
+  unmountChildTool,
+  sleepTool,
+];
+
+export function getBuiltInToolRegistry(): ReadonlyMap<string, ElenchusTool> {
+  return new Map(BUILT_IN_TOOLS.map((tool) => [tool.name, tool]));
+}
+
+export function getBuiltInTools(): readonly ElenchusTool[] {
+  return BUILT_IN_TOOLS;
+}
+
+export function getBuiltInToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {
+  return BUILT_IN_TOOLS.filter((tool) => {
+    if (!tool.appliesToLevels.includes(level)) {
+      return false;
+    }
+    if (tool.requiresChildren && !hasChildren) {
+      return false;
+    }
+    if (tool.requiresPendingProposal && !hasPendingProposal) {
+      return false;
+    }
+    if (tool.behavior === "vote" && !hasPendingProposal) {
+      return false;
+    }
+    return true;
+  });
+}
 
 export function isBlockingTool(toolName: string): boolean {
-  return ENV_TOOLS.some((t) => t.name === toolName);
+  return getBuiltInToolRegistry().get(toolName)?.behavior === "blocking";
 }
 
 export function isNonBlockingTool(toolName: string): boolean {
-  return toolName === "report"
-    || toolName === "spawnChild"
-    || toolName === "sendToChild"
-    || toolName === "unmountChild"
-    || toolName === "compressContext";
+  return getBuiltInToolRegistry().get(toolName)?.behavior === "nonblocking";
 }
 
 export function isT8Tool(toolName: string): boolean {
-  return toolName === "yield" || toolName === "sleep";
+  return getBuiltInToolRegistry().get(toolName)?.behavior === "pause";
 }
 
 export function buildToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {
-  const tools: ElenchusTool[] = [yieldTool, reportTool, compressContextTool];
-
-  if (level !== "L2") {
-    tools.push(spawnChildTool, sleepTool);
-    if (hasChildren) {
-      tools.push(sendToChildTool, unmountChildTool);
-    }
-  }
-
-  if (level !== "L0") {
-    tools.push(...ENV_TOOLS);
-  }
-
-  if (hasPendingProposal) {
-    tools.push(voteTool);
-  }
-  return tools;
+  return getBuiltInToolList(hasPendingProposal, level, hasChildren);
 }

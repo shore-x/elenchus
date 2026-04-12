@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type { SessionPersistenceAdapter } from "../../../application/session-persistence.js";
+import type { SkillBindingRecord } from "../../../core/skills.js";
 import type {
   AgentId,
   CommittedStep,
@@ -21,7 +22,7 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS: AgentId[] = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "2";
+const CURRENT_SCHEMA_VERSION = "3";
 
 interface SqliteSessionPersistenceOptions {
   runDirectory: string;
@@ -90,6 +91,14 @@ interface CompressionStateRow {
   reminder_threshold_chars: number;
   recent_raw_target_chars: number;
   max_retries: number;
+}
+
+interface SkillBindingRow {
+  skill_id: string;
+  version: string;
+  content_hash: string;
+  source_path: string;
+  applies_to_layers: string;
 }
 
 function parseJson<T>(value: string): T {
@@ -208,6 +217,29 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     return this.loadUnitSnapshot(sessionRow.root_unit_id);
   }
 
+  loadSkillBindings(): SkillBindingRecord[] | null {
+    const rows = this.db
+      .prepare(`
+        SELECT skill_id, version, content_hash, source_path, applies_to_layers
+        FROM session_skill_bindings
+        WHERE session_id = ?
+        ORDER BY skill_id ASC
+      `)
+      .all(DEFAULT_SESSION_ID) as SkillBindingRow[];
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return rows.map((row) => ({
+      skillId: row.skill_id,
+      version: row.version,
+      contentHash: row.content_hash,
+      sourcePath: row.source_path,
+      appliesToLevels: parseJson<SkillBindingRecord["appliesToLevels"]>(row.applies_to_layers),
+    }));
+  }
+
   saveSnapshot(snapshot: DeliberationUnitSnapshot): void {
     const now = Date.now();
     const write = this.db.transaction((rootSnapshot: DeliberationUnitSnapshot) => {
@@ -232,6 +264,30 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     write(snapshot);
   }
 
+  saveSkillBindings(bindings: readonly SkillBindingRecord[]): void {
+    this.db.prepare(`DELETE FROM session_skill_bindings WHERE session_id = ?`).run(DEFAULT_SESSION_ID);
+    if (bindings.length === 0) {
+      return;
+    }
+
+    const insertBinding = this.db.prepare(`
+      INSERT INTO session_skill_bindings (
+        session_id, skill_id, version, content_hash, source_path, applies_to_layers
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const binding of bindings) {
+      insertBinding.run(
+        DEFAULT_SESSION_ID,
+        binding.skillId,
+        binding.version,
+        binding.contentHash,
+        binding.sourcePath,
+        JSON.stringify(binding.appliesToLevels),
+      );
+    }
+  }
+
   private initializeSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS schema_meta (
@@ -253,6 +309,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
 
   private rebuildSchema(): void {
     this.db.exec(`
+      DROP TABLE IF EXISTS session_skill_bindings;
       DROP TABLE IF EXISTS unit_compression_state;
       DROP TABLE IF EXISTS unit_memory_state;
       DROP TABLE IF EXISTS committed_steps;
@@ -279,6 +336,16 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         last_recovered_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS session_skill_bindings (
+        session_id TEXT NOT NULL,
+        skill_id TEXT NOT NULL,
+        version TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        applies_to_layers TEXT NOT NULL,
+        PRIMARY KEY(session_id, skill_id)
       );
 
       CREATE TABLE IF NOT EXISTS units (
