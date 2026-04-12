@@ -2,7 +2,7 @@
 // Three-layer tool allocation (§4.3):
 //   - Child management (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
 //   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
-//   - Protocol tools (Yield, Vote) → all layers
+//   - Protocol tools (Yield, Vote, CompressContext) → all layers
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote.
 
 import { Type, type TObject } from "@sinclair/typebox";
@@ -30,6 +30,23 @@ export const yieldTool: ElenchusTool = {
   parameters: Type.Object({
     content: Type.String({
       description: "Current conclusions: a clear summary of what has been established so far.",
+    }),
+    proposedStep: proposedStepSchema,
+  }),
+  category: "protocol",
+};
+
+export const compressContextTool: ElenchusTool = {
+  name: "compressContext",
+  description:
+    "Propose to start an asynchronous context compression task that refreshes the unit's memory snapshot. " +
+    "This is a PROPOSAL — the other agent must vote APPROVE before it starts. " +
+    "Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. " +
+    "Provide preservation requirements describing what this compression should especially retain. " +
+    "If a compression task is already active, a duplicate approved call will fail at runtime.",
+  parameters: Type.Object({
+    requirements: Type.String({
+      description: "What this compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -158,7 +175,7 @@ export function isBlockingTool(toolName: string): boolean {
 }
 
 export function isNonBlockingTool(toolName: string): boolean {
-  return toolName === "spawnChild" || toolName === "sendToChild";
+  return toolName === "spawnChild" || toolName === "sendToChild" || toolName === "compressContext";
 }
 
 export function isT8Tool(toolName: string): boolean {
@@ -166,7 +183,7 @@ export function isT8Tool(toolName: string): boolean {
 }
 
 export function buildToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {
-  const tools: ElenchusTool[] = [yieldTool];
+  const tools: ElenchusTool[] = [yieldTool, compressContextTool];
 
   if (level !== "L2") {
     tools.push(spawnChildTool, sleepTool);

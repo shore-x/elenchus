@@ -7,6 +7,7 @@
 // Guideline: architecture, collaboration protocol, context grounding principle,
 // and deliberation pacing across multiple open questions without urgency pressure.
 // Cognitive Style: epistemic strategy (evidence evaluation + reasoning organization).
+// Compression uses a separate fixed prompt to refresh a Memory Snapshot from ledger-derived context.
 
 import type { AgentId, ToolLevel } from "./types.js";
 
@@ -44,14 +45,15 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 - Parent messages appear as [Parent]: ...
 - Shared public facts appear as [Public Fact][...]
 - Current-turn control instructions appear as [Directive]
-- Non-real-time child summaries appear as [Context Snapshot]`;
+- Memory snapshots and non-real-time child summaries appear as [Context Snapshot]
+- Context-pressure reminders appear as [Context Reminder]`;
 
 const GUIDELINE_TOOLS = `
 
 ## Tools
 The tools available in the current turn fall into three categories:
 
-- **Protocol tools** (all layers): **yield** (deliver conclusions and pause), **vote** (evaluate partner's proposal).
+- **Protocol tools** (all layers): **yield** (deliver conclusions and pause), **compressContext** (refresh the memory snapshot), **vote** (evaluate partner's proposal).
 - **Child management tools** (if available): **spawnChild** (create a child agent unit), **sendToChild** (send follow-up to an idle child), **sleep** (pause with timeout while waiting for child results).
 - **Environment tools** (if available): **bash**, **readFile**, **writeFile** — direct interaction with the environment.
 
@@ -59,6 +61,9 @@ All tool calls except **vote** are proposals that require your partner's APPROVE
 Raw assistant and tool-call traces are not carried forward as private chat history across turns. Each turn is grounded in shared context projected from public facts such as proposals, votes, tool results, child reports, and recorded protocol rejections.
 
 ### Key Behaviors
+- A [Context Snapshot] memory snapshot is compressed from earlier conversation history; treat it as reference context rather than verbatim transcript.
+- A [Context Reminder] means recent raw context has grown large enough that compression is worth considering, but it is not an instruction to compress immediately.
+- Use **compressContext** mainly when a [Context Reminder] is present or when the unit has a strong reason to refresh its memory snapshot.
 - If you need external data or actions but have no environment tools, use **spawnChild** to delegate.
 - Child agent results arrive asynchronously as [Public Fact][Child Report] broadcasts. Use **sleep** to pause while waiting.
 - Tool execution results appear as [Public Fact][Tool Result] broadcasts.
@@ -116,6 +121,25 @@ const COGNITIVE_STYLES: Record<AgentId, string> = {
   "agent-b": AGENT_B_STYLE,
 };
 
+const COMPRESSION_SYSTEM_PROMPT = `## Elenchus Context Compression
+You are refreshing a unit-level Memory Snapshot for an Elenchus deliberation unit.
+
+Your job is to write a natural-language task-state snapshot for future turns.
+
+## Output Requirements
+- Write a single Memory Snapshot in natural language.
+- The snapshot may be weakly structured, but it must not become a rigid schema or template dump.
+- Prioritize task state over chat narration.
+- Preserve unresolved issues, disagreements, constraints, and pending obligations when they still matter.
+- Preserve uncertainty and confidence explicitly. Do not flatten tentative or conditional judgments into certainty.
+- Respect the supplied preservation requirements, but remain a neutral organizer rather than taking a side in unresolved disputes.
+- Write for continued work, not for archival display.
+- Return only the Memory Snapshot text.`;
+
 export function buildSystemPrompt(agentId: AgentId, _level: ToolLevel): string {
   return buildGuideline() + COGNITIVE_STYLES[agentId];
+}
+
+export function buildCompressionSystemPrompt(): string {
+  return COMPRESSION_SYSTEM_PROMPT;
 }

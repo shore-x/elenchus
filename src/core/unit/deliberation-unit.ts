@@ -2,11 +2,14 @@
 // The core FSM (5-state: idle/turn-a/turn-b/executing/terminated) that drives dual-agent turn alternation.
 // This core unit now depends on abstract ports for LLM completion and tool execution,
 // allowing CLI and future UI layers to share the same runtime without inheriting Node-specific details.
+// Unit-level context compression is managed here via a separate CompressionTaskManager,
+// while agent-visible context remains a turn-scoped projection from ConversationLedger.
 
 import { AgentTurn } from "./agent-turn.js";
+import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
 import { ConversationLedger } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
-import { buildSystemPrompt } from "../prompts.js";
+import { buildCompressionSystemPrompt, buildSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
 import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
 import { isBlockingTool, isNonBlockingTool } from "../tools.js";
@@ -28,6 +31,7 @@ export class DeliberationUnit {
   private state: UnitState = "idle";
   private ledger: ConversationLedger;
   private projector: ConversationProjector;
+  private compressionManager: CompressionTaskManager;
   private agentA: AgentTurn;
   private agentB: AgentTurn;
   private loopRunning = false;
@@ -45,6 +49,7 @@ export class DeliberationUnit {
   private commitLog: CommittedStep[] = [];
   private static readonly MAX_EMPTY_TURNS = 4;
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
+  private static readonly COMPRESSION_MAX_TOKENS = 4096;
 
   constructor(options: DeliberationUnitOptions) {
     this.level = options.level ?? "L0";
@@ -52,6 +57,7 @@ export class DeliberationUnit {
     this.toolExecutor = options.toolExecutor;
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
+    this.compressionManager = new CompressionTaskManager();
     this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level), this.llmClient, this.level);
     this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level), this.llmClient, this.level);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
@@ -138,8 +144,24 @@ export class DeliberationUnit {
     pendingProposal: PendingProposal | null,
     childCommitViews: readonly ChildCommitView[],
   ): LlmMessage[] {
-    const messages = this.projector.projectVisibleMessages(visibleMessages);
+    const messages: LlmMessage[] = [];
+    const memorySnapshot = this.compressionManager.getMemorySnapshot();
+    const recentRawMessages = this.compressionManager.getRecentRawMessages(visibleMessages);
+
+    if (memorySnapshot) {
+      messages.push(this.projector.buildMemorySnapshotMessage(memorySnapshot));
+    }
+
+    messages.push(...this.projector.projectVisibleMessages(recentRawMessages));
     messages.push(this.projector.buildNewlyVisibleMessageOverlay(agentId, newlyVisibleMessages));
+
+    if (this.compressionManager.shouldShowReminder(visibleMessages)) {
+      messages.push(this.projector.buildCompressionReminderOverlay(
+        agentId,
+        this.compressionManager.estimateRecentRawChars(visibleMessages),
+        this.compressionManager.getReminderThresholdChars(),
+      ));
+    }
 
     const childCommitViewMessage = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
     if (childCommitViewMessage) {
@@ -153,6 +175,74 @@ export class DeliberationUnit {
     }
 
     return messages;
+  }
+
+  private buildCompressionTaskStartMessage(task: ActiveCompressionTask): string {
+    const requirementsPreview = task.requirements.length > 160
+      ? `${task.requirements.slice(0, 160)}...`
+      : task.requirements;
+
+    return `A context compression task (${task.id}) started to refresh the unit's memory snapshot. Preservation priorities: ${requirementsPreview || "none specified"}`;
+  }
+
+  private buildCompressionTaskFailureMessage(task: ActiveCompressionTask, error: unknown): string {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `The context compression task (${task.id}) failed after ${task.attemptNumber} attempt(s): ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
+  }
+
+  private buildCompressionRequestMessage(task: ActiveCompressionTask): LlmMessage {
+    const renderedHistory = this.projector
+      .projectVisibleMessages(task.sourceMessages)
+      .map((message) => message.content)
+      .join("\n\n");
+
+    return {
+      role: "user",
+      content:
+        `[Compression Task]\n` +
+        `Preservation requirements:\n---\n${task.requirements || "No extra preservation requirements were provided."}\n---\n\n` +
+        `Compress the following conversation history into a refreshed Memory Snapshot:\n\n` +
+        `${renderedHistory || "No visible conversation history is available."}`,
+      timestamp: Date.now(),
+    };
+  }
+
+  private async executeCompressionTask(task: ActiveCompressionTask): Promise<void> {
+    try {
+      const response = await this.llmClient.complete({
+        systemPrompt: buildCompressionSystemPrompt(),
+        messages: [this.buildCompressionRequestMessage(task)],
+        tools: [],
+      }, { maxTokens: DeliberationUnit.COMPRESSION_MAX_TOKENS });
+
+      const content = response.content
+        .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
+        .map((block) => block.text)
+        .join("")
+        .trim();
+
+      if (!content) {
+        throw new Error("The compression LLM returned an empty memory snapshot.");
+      }
+
+      this.compressionManager.registerSuccess(content);
+    } catch (error) {
+      const failure = this.compressionManager.registerFailure();
+      if (failure.shouldRetry) {
+        this.emit({
+          type: "warning",
+          scope: this.scope,
+          message: `Context compression task ${failure.task.id} failed on attempt ${failure.task.attemptNumber - 1}. Retrying automatically once more.`,
+        });
+        void this.executeCompressionTask(failure.task);
+        return;
+      }
+
+      const failureMessage = this.buildCompressionTaskFailureMessage(task, error);
+      this.ledger.appendSystemMessage(failureMessage, this.buildDeferredVisibilityMeta());
+      this.emit({ type: "warning", scope: this.scope, message: failureMessage });
+      this.wakeIfIdle();
+    }
   }
 
   private async runLoop(): Promise<void> {
@@ -319,6 +409,20 @@ export class DeliberationUnit {
 
   private executeNonBlockingTool(proposal: PendingProposal): void {
     const { toolName, args } = proposal;
+
+    if (toolName === "compressContext") {
+      const requirements = String(args.requirements ?? "");
+      const started = this.compressionManager.startTask(requirements, this.ledger.readAll());
+      if (!started.ok) {
+        this.ledger.appendSystemMessage(started.error, this.buildDeferredVisibilityMeta());
+        this.emit({ type: "warning", scope: this.scope, message: started.error });
+        return;
+      }
+
+      this.ledger.appendSystemMessage(this.buildCompressionTaskStartMessage(started.task), this.buildDeferredVisibilityMeta());
+      void this.executeCompressionTask(started.task);
+      return;
+    }
 
     if (toolName === "spawnChild") {
       const task = args.task as string;

@@ -6,6 +6,8 @@
 //   - Protocol tools (Yield, Vote) → all layers
 // User messages are async — they can arrive at any time and are processed at the next turn boundary (P4).
 // Agent-visible context is reconstructed per turn from ConversationLedger, not cached inside AgentTurn.
+// Unit-level context compression is projected as Memory Snapshot + Recent Raw Window,
+// while compression task lifecycle is managed separately from ConversationLedger history.
 
 export type AgentId = "agent-a" | "agent-b";
 export type MessageSource = "user" | AgentId | "system";
@@ -126,6 +128,13 @@ export interface ConversationLedgerSnapshot {
 export interface AgentVisibleSnapshot {
   visibleMessages: ConversationMessage[];
   newlyVisibleMessages: ConversationMessage[];
+}
+
+export interface MemorySnapshot {
+  content: string;
+  sourceMessageCount: number;
+  requirements: string;
+  createdAt: number;
 }
 
 export interface CommittedStep {

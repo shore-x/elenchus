@@ -1,9 +1,9 @@
 // Elenchus - ConversationProjector
 // Projects a turn-scoped visible snapshot from ConversationLedger into LLM-facing messages.
-// Current phase is projection-only: no history folding or compression.
+// Derived context views can include Memory Snapshot + Recent Raw Window without mutating ledger history.
 // Private overlays remain third-person and explicitly name Agent A or Agent B.
 
-import type { AgentId, ChildCommitView, ConversationMessage, PendingProposal, ProposalCall } from "./types.js";
+import type { AgentId, ChildCommitView, ConversationMessage, MemorySnapshot, PendingProposal, ProposalCall } from "./types.js";
 import type { LlmMessage } from "./ports.js";
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -29,6 +29,8 @@ function renderProposalDetail(proposal: ProposalCall): string {
   switch (proposal.toolName) {
     case "yield":
       return `The proposed content is:\n\n---\n${proposal.args.content}\n---`;
+    case "compressContext":
+      return `Preservation requirements:\n---\n${String(proposal.args.requirements)}\n---`;
     case "bash":
       return `Command: \`${proposal.args.command}\``;
     case "readFile":
@@ -163,6 +165,18 @@ export class ConversationProjector {
       .map((message) => renderConversationMessage(message));
   }
 
+  buildMemorySnapshotMessage(snapshot: MemorySnapshot): LlmMessage {
+    return {
+      role: "user",
+      content:
+        `[Context Snapshot][Memory Snapshot]\n` +
+        `The following Memory Snapshot was compressed from earlier conversation history. ` +
+        `Treat it as reference context rather than verbatim transcript. Some recent raw messages may overlap with it.\n\n` +
+        `${snapshot.content}`,
+      timestamp: snapshot.createdAt,
+    };
+  }
+
   buildNewlyVisibleMessageOverlay(agentId: AgentId, messages: readonly ConversationMessage[]): LlmMessage {
     const agentName = getDisplayName(agentId);
     const count = messages.length;
@@ -182,6 +196,18 @@ export class ConversationProjector {
     return {
       role: "user",
       content: lines.join("\n"),
+      timestamp: Date.now(),
+    };
+  }
+
+  buildCompressionReminderOverlay(agentId: AgentId, estimatedChars: number, thresholdChars: number): LlmMessage {
+    const agentName = getDisplayName(agentId);
+    return {
+      role: "user",
+      content:
+        `[Context Reminder]\n` +
+        `The recent raw context visible to ${agentName} is estimated at about ${estimatedChars} characters, above the reminder threshold of about ${thresholdChars} characters. ` +
+        `Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
       timestamp: Date.now(),
     };
   }

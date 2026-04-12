@@ -26,7 +26,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 };
 
 const CHILD_TOOLS = new Set(["spawnChild", "sendToChild"]);
-const FRAMEWORK_TOOLS = new Set(["yield", "sleep", "vote"]);
+const FRAMEWORK_TOOLS = new Set(["yield", "sleep", "vote", "compressContext"]);
 
 function formatToolArgs(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {
@@ -38,6 +38,8 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
       return `${args.path} (${String(args.content).length} chars)`;
     case "yield":
       return String(args.content);
+    case "compressContext":
+      return String(args.requirements);
     case "sleep":
       return `timeout: ${args.timeoutMs}ms`;
     case "spawnChild": {
@@ -138,7 +140,7 @@ export function renderEvent(event: SystemEvent, verbose: number): void {
       } else if (isEnvTool(event.toolName)) {
         process.stdout.write(`${C.magenta}[Env Proposal] ${label} ${AGENT_NAMES[event.agent]} → ${event.toolName}: ${detail}${C.reset}\n`);
       } else {
-        process.stdout.write(`${C.gray}[Proposal] ${label} ${AGENT_NAMES[event.agent]} → yield: ${detail}${C.reset}\n`);
+        process.stdout.write(`${C.gray}[Proposal] ${label} ${AGENT_NAMES[event.agent]} → ${event.toolName}: ${detail}${C.reset}\n`);
       }
       break;
     }
