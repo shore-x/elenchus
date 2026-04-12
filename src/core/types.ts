@@ -11,8 +11,9 @@
 
 export type AgentId = "agent-a" | "agent-b";
 export type MessageSource = "user" | AgentId | "system";
-export type ConversationAuthor = AgentId | "parent" | "system";
+export type ConversationAuthor = AgentId | "incoming" | "system" | "unit";
 export type ProposalStatus = "pending" | "approved" | "rejected" | "superseded";
+export type UpwardDeliveryMode = "report" | "yield";
 
 export interface ProposalCall {
   toolName: string;
@@ -48,9 +49,10 @@ export interface LedgerMessageMeta {
 export interface ConversationMessageBase extends LedgerMessageMeta {
   id: string;
   kind:
-    | "parent_message"
+    | "incoming_message"
     | "agent_message"
     | "system_message"
+    | "upward_message"
     | "proposal_message"
     | "vote_message"
     | "tool_result_message"
@@ -59,9 +61,9 @@ export interface ConversationMessageBase extends LedgerMessageMeta {
   timestamp: number;
 }
 
-export interface ParentMessage extends ConversationMessageBase {
-  kind: "parent_message";
-  authoredBy: "parent";
+export interface IncomingMessage extends ConversationMessageBase {
+  kind: "incoming_message";
+  authoredBy: "incoming";
   content: string;
 }
 
@@ -74,6 +76,13 @@ export interface AgentMessage extends ConversationMessageBase {
 export interface SystemMessage extends ConversationMessageBase {
   kind: "system_message";
   authoredBy: "system";
+  content: string;
+}
+
+export interface UpwardMessage extends ConversationMessageBase {
+  kind: "upward_message";
+  authoredBy: "unit";
+  deliveryMode: UpwardDeliveryMode;
   content: string;
 }
 
@@ -108,13 +117,15 @@ export interface ChildReportMessage extends ConversationMessageBase {
   kind: "child_report_message";
   authoredBy: "system";
   childId: string;
+  deliveryMode: UpwardDeliveryMode;
   content: string;
 }
 
 export type ConversationMessage =
-  | ParentMessage
+  | IncomingMessage
   | AgentMessage
   | SystemMessage
+  | UpwardMessage
   | ProposalMessage
   | VoteMessage
   | ToolResultMessage
@@ -186,7 +197,7 @@ export type SystemEvent =
   | { type: "agent-message"; scope: UnitScope; turn: number; agent: AgentId; content: string }
   | { type: "proposal"; scope: UnitScope; agent: AgentId; toolName: string; args: Record<string, unknown> }
   | { type: "vote"; scope: UnitScope; voter: AgentId; proposer: AgentId; toolName: string; approve: boolean; reason: string }
-  | { type: "report"; scope: UnitScope; content: string }
+  | { type: "upward-message"; scope: UnitScope; deliveryMode: UpwardDeliveryMode; content: string }
   | { type: "state-transition"; scope: UnitScope; from: UnitState; to: UnitState }
   | { type: "tool-executing"; scope: UnitScope; toolName: string; args: Record<string, unknown> }
   | { type: "tool-result"; scope: UnitScope; toolName: string; success: boolean; output: string; durationMs: number }

@@ -9,7 +9,7 @@ import type { LlmMessage } from "./ports.js";
 const DISPLAY_NAMES: Record<string, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
-  parent: "Parent",
+  incoming: "Incoming Message",
   system: "System",
 };
 
@@ -29,6 +29,8 @@ function renderProposalDetail(proposal: ProposalCall): string {
   switch (proposal.toolName) {
     case "yield":
       return `The proposed content is:\n\n---\n${proposal.args.content}\n---`;
+    case "report":
+      return `The proposed upward message is:\n\n---\n${proposal.args.content}\n---`;
     case "compressContext":
       return `Preservation requirements:\n---\n${String(proposal.args.requirements)}\n---`;
     case "bash":
@@ -103,12 +105,25 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     };
   }
 
+  if (message.kind === "upward_message") {
+    return {
+      role: "user",
+      content:
+        `[Public Fact][Upward Message]\n` +
+        `Delivery mode: ${message.deliveryMode}\n` +
+        `Content:\n${message.content}`,
+      timestamp: message.timestamp,
+    };
+  }
+
   if (message.kind === "child_report_message") {
     return {
       role: "user",
       content:
         `[Public Fact][Child Report]\n` +
-        `Report from ${message.childId}:\n${message.content}`,
+        `Child: ${message.childId}\n` +
+        `Delivery mode: ${message.deliveryMode}\n` +
+        `Content:\n${message.content}`,
       timestamp: message.timestamp,
     };
   }
@@ -132,8 +147,8 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
 }
 
 function describeNewlyVisibleMessage(message: ConversationMessage): string {
-  if (message.kind === "parent_message") {
-    return `Parent message newly visible in this turn: ${truncatePreview(message.content)}`;
+  if (message.kind === "incoming_message") {
+    return `Incoming message newly visible in this turn: ${truncatePreview(message.content)}`;
   }
 
   if (message.kind === "agent_message") {
@@ -152,8 +167,12 @@ function describeNewlyVisibleMessage(message: ConversationMessage): string {
     return `Tool result newly visible in this turn for ${message.toolName} on proposal ${message.proposalId}: success=${message.success ? "true" : "false"}`;
   }
 
+  if (message.kind === "upward_message") {
+    return `Upward message newly visible in this turn via ${message.deliveryMode}: ${truncatePreview(message.content)}`;
+  }
+
   if (message.kind === "child_report_message") {
-    return `Child report newly visible in this turn from ${message.childId}: ${truncatePreview(message.content)}`;
+    return `Child report newly visible in this turn from ${message.childId} via ${message.deliveryMode}: ${truncatePreview(message.content)}`;
   }
 
   return `Unit runtime broadcast newly visible in this turn: ${truncatePreview(message.content)}`;
@@ -187,6 +206,7 @@ export class ConversationProjector {
 
     if (count === 0) {
       lines.push(`${agentName} has no newly visible messages in this turn.`);
+      lines.push(`The absence of newly visible messages does not by itself mean the task is complete, blocked, or ready to pause.`);
     } else {
       for (const message of messages) {
         lines.push(`- ${describeNewlyVisibleMessage(message)}`);

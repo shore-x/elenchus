@@ -11,7 +11,7 @@ import { ConversationLedger } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
 import { buildCompressionSystemPrompt, buildSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
-import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
+import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
 import { isBlockingTool, isNonBlockingTool } from "../tools.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
@@ -68,7 +68,7 @@ export class DeliberationUnit {
   }
 
   injectUserMessage(content: string): void {
-    this.ledger.appendParentMessage(content, this.buildDeferredVisibilityMeta());
+    this.ledger.appendIncomingMessage(content, this.buildDeferredVisibilityMeta());
 
     if (this.state === "idle" && !this.loopRunning) {
       this.transition(this.state, "turn-a");
@@ -207,6 +207,15 @@ export class DeliberationUnit {
     };
   }
 
+  private emitUpwardMessage(deliveryMode: UpwardDeliveryMode, content: string): void {
+    this.ledger.appendUpwardMessage({
+      deliveryMode,
+      content,
+      ...this.buildDeferredVisibilityMeta(),
+    });
+    this.emit({ type: "upward-message", scope: this.scope, deliveryMode, content });
+  }
+
   private async executeCompressionTask(task: ActiveCompressionTask): Promise<void> {
     try {
       const response = await this.llmClient.complete({
@@ -338,7 +347,7 @@ export class DeliberationUnit {
 
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;
-            this.emit({ type: "report", scope: this.scope, content: yieldContent });
+            this.emitUpwardMessage("yield", yieldContent);
             this.transition(this.state, "idle");
             return;
           }
@@ -410,6 +419,12 @@ export class DeliberationUnit {
   private executeNonBlockingTool(proposal: PendingProposal): void {
     const { toolName, args } = proposal;
 
+    if (toolName === "report") {
+      const content = String(args.content ?? "");
+      this.emitUpwardMessage("report", content);
+      return;
+    }
+
     if (toolName === "compressContext") {
       const requirements = String(args.requirements ?? "");
       const started = this.compressionManager.startTask(requirements, this.ledger.readAll());
@@ -438,9 +453,10 @@ export class DeliberationUnit {
         level: childLevel,
         path: childPath,
         onSystemEvent: (event: SystemEvent) => {
-          if (event.type === "report" && this.sameScope(event.scope, childScope)) {
+          if (event.type === "upward-message" && this.sameScope(event.scope, childScope)) {
             this.ledger.appendChildReportMessage({
               childId,
+              deliveryMode: event.deliveryMode,
               content: event.content,
               ...this.buildDeferredVisibilityMeta(),
             });

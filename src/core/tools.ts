@@ -23,13 +23,29 @@ const proposedStepSchema = Type.String({
 export const yieldTool: ElenchusTool = {
   name: "yield",
   description:
-    "Propose to deliver current conclusions and pause the deliberation. " +
+    "Propose to deliver an upward handoff and pause the deliberation. " +
     "This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. " +
     "The unit returns to Idle and can be woken by new messages. " +
-    "Use this when the discussion has converged or when waiting for async results (e.g. child agent reports).",
+    "Use this when the unit should hand off the current stage to the upper layer and stop proactive local progress.",
   parameters: Type.Object({
     content: Type.String({
-      description: "Current conclusions: a clear summary of what has been established so far.",
+      description: "The upward handoff content: a clear summary of the current stage's conclusions, judgments, questions, or recommended next step.",
+    }),
+    proposedStep: proposedStepSchema,
+  }),
+  category: "protocol",
+};
+
+export const reportTool: ElenchusTool = {
+  name: "report",
+  description:
+    "Propose to send an upward coordination message without pausing the deliberation. " +
+    "This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. " +
+    "After approval, the unit continues into later turns rather than returning to Idle. " +
+    "Use this when upper-layer visibility would improve coordination but the unit should keep working.",
+  parameters: Type.Object({
+    content: Type.String({
+      description: "The upward coordination message: progress, a risk, a local finding, or a request for additional information that the upper layer should know now.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -120,9 +136,9 @@ export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
     "Propose to create a new child agent unit to execute a specific task. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "The child unit works independently; results arrive asynchronously as a [Public Fact][Child Report] broadcast when it yields. " +
+    "The child unit works independently; upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
     "The unit runtime automatically determines the child's capabilities based on the current layer. " +
-    "You must provide proposedStep to describe how delegating this work advances the parent task.",
+    "You must provide proposedStep to describe how delegating this work advances the unit's task.",
   parameters: Type.Object({
     task: Type.String({
       description: "A clear, specific description of the task for the child agent unit to accomplish. Include all necessary context.",
@@ -135,9 +151,9 @@ export const spawnChildTool: ElenchusTool = {
 export const sendToChildTool: ElenchusTool = {
   name: "sendToChild",
   description:
-    "Propose to send a follow-up message to an existing child agent unit that has stopped (reported). This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "The child will resume with the new message and can perform additional work. " +
-    "Use this when a child's report is incomplete or you need it to do more work. " +
+    "Propose to send a follow-up message to an existing child agent unit. This is a PROPOSAL — the other agent must vote APPROVE. " +
+    "If the child unit is idle, it can resume with the new message; if it is still active, the message will be queued and become available to that child as it continues work. " +
+    "Use this when delegated work should receive additional context, constraints, corrections, clarifications, or redirection. " +
     "You must provide proposedStep to describe how this follow-up advances the task.",
   parameters: Type.Object({
     childId: Type.String({
@@ -154,10 +170,10 @@ export const sendToChildTool: ElenchusTool = {
 export const sleepTool: ElenchusTool = {
   name: "sleep",
   description:
-    "Propose to pause the deliberation and enter Idle without reporting to the parent. This is a PROPOSAL — the other agent must vote APPROVE. " +
+    "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. " +
     "You must specify an explicit timeout. If no child agent reports before the timeout, " +
     "a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. " +
-    "Use this when waiting for child agent results. " +
+    "Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. " +
     "You must provide proposedStep to describe why this wait advances the task.",
   parameters: Type.Object({
     timeoutMs: Type.Number({
@@ -175,7 +191,7 @@ export function isBlockingTool(toolName: string): boolean {
 }
 
 export function isNonBlockingTool(toolName: string): boolean {
-  return toolName === "spawnChild" || toolName === "sendToChild" || toolName === "compressContext";
+  return toolName === "report" || toolName === "spawnChild" || toolName === "sendToChild" || toolName === "compressContext";
 }
 
 export function isT8Tool(toolName: string): boolean {
@@ -183,7 +199,7 @@ export function isT8Tool(toolName: string): boolean {
 }
 
 export function buildToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {
-  const tools: ElenchusTool[] = [yieldTool, compressContextTool];
+  const tools: ElenchusTool[] = [yieldTool, reportTool, compressContextTool];
 
   if (level !== "L2") {
     tools.push(spawnChildTool, sleepTool);

@@ -26,7 +26,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 };
 
 const CHILD_TOOLS = new Set(["spawnChild", "sendToChild"]);
-const FRAMEWORK_TOOLS = new Set(["yield", "sleep", "vote", "compressContext"]);
+const FRAMEWORK_TOOLS = new Set(["yield", "report", "sleep", "vote", "compressContext"]);
 
 function formatToolArgs(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {
@@ -37,6 +37,8 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
     case "writeFile":
       return `${args.path} (${String(args.content).length} chars)`;
     case "yield":
+      return String(args.content);
+    case "report":
       return String(args.content);
     case "compressContext":
       return String(args.requirements);
@@ -157,8 +159,8 @@ export function renderEvent(event: SystemEvent, verbose: number): void {
       }
       break;
     }
-    case "report":
-      process.stdout.write(`\n${C.green}[Report] ${formatScopeLabel(event.scope)} ${event.content}${C.reset}\n`);
+    case "upward-message":
+      process.stdout.write(`\n${C.green}[Upward ${event.deliveryMode === "yield" ? "Yield" : "Report"}] ${formatScopeLabel(event.scope)} ${event.content}${C.reset}\n`);
       break;
     case "state-transition":
       if (verbose >= 2) {

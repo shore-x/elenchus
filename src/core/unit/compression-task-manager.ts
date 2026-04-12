@@ -18,10 +18,12 @@ function generateCompressionTaskId(): string {
 
 function estimateMessageChars(message: ConversationMessage): number {
   switch (message.kind) {
-    case "parent_message":
+    case "incoming_message":
     case "agent_message":
     case "system_message":
       return message.content.length + 32;
+    case "upward_message":
+      return message.content.length + 48;
     case "proposal_message":
       return message.toolName.length + message.proposedStep.length + JSON.stringify(message.args).length + 64;
     case "vote_message":
@@ -29,7 +31,7 @@ function estimateMessageChars(message: ConversationMessage): number {
     case "tool_result_message":
       return message.toolName.length + message.output.length + 64;
     case "child_report_message":
-      return message.childId.length + message.content.length + 48;
+      return message.childId.length + message.content.length + 64;
   }
 }
 

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-12
-version: 2.1
+version: 2.2
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -121,6 +121,16 @@ ConversationLedger不再是传统意义上的"消息总线"，而是**Agent Unit
 
 因此，所谓"用户消息"只是在顶层投影中的一种命名便利；在底层语义上，它与"父Agent发来的消息"完全同构。
 
+#### 2.2.4 方向命名：`incoming` 与 `upward`
+
+在引入向上汇报但不暂停的`Report`之后，消息方向需要显式命名，否则“来自上层”与“发往上层”会在术语上相互污染。相对于当前Agent Unit，框架应固定采用两组方向术语：
+
+*   **`incoming_message`**：从当前unit外部进入本unit、并被写入ConversationLedger的消息。对L0而言，它通常来自人类输入；对L1/L2而言，它来自父层。
+*   **`upward_message`**：由当前unit向上层发送、同时作为本unit内部公共事实被记录的一条结构化消息。其`deliveryMode`至少区分`"report" | "yield"`。
+*   **`upstream_message`不应作为消息类型命名**，因为它既可能被理解为“来自更上游的消息”，也可能被理解为“发往上游的消息”，方向上存在内在歧义。
+
+> **原则 P26（方向命名显式化）**：相对于当前Agent Unit，收到的消息统一使用`incoming`命名，向上发出的消息统一使用`upward`命名；不得使用方向歧义的`upstream_message`作为结构化消息类型。
+
 ### 2.3 消息的时序
 
 **追问**：ConversationLedger是异步写入的——新消息可能随时到达。Agent在生成过程中是否应看到新消息？
@@ -155,13 +165,15 @@ ConversationLedger不再是传统意义上的"消息总线"，而是**Agent Unit
 
 为了避免“system message”成为混杂概念，ConversationProjector面对的消息应当在语义上分成两类，而不是全部压成同一种“系统消息”：
 
-*   **公共事实广播（Public Fact Broadcast）**：进入ConversationLedger，并投影为两个agent共享的历史。`parent_message`、`agent_message`、`proposal_message`、`vote_message`、`tool_result_message`、`child_report_message`以及一部分由Unit Runtime产生的广播都属于此类。
+*   **公共事实广播（Public Fact Broadcast）**：进入ConversationLedger，并投影为两个agent共享的历史。`incoming_message`、`agent_message`、`upward_message`、`proposal_message`、`vote_message`、`tool_result_message`、带`deliveryMode`的`child_report_message`以及一部分由Unit Runtime产生的广播都属于此类。
 *   **私有控制指令（Directive Overlay）**：只在当前轮临时注入给当前agent，用于说明此轮的动作约束，例如“Agent B必须对Agent A的待决proposal调用`vote`”。这类信息不写入ConversationLedger，也不构成共享历史。
 
 这一定义意味着：
 
 *   `proposal_message`和`vote_message`不是“系统消息”，而是agent-authored的公共事实
+*   `upward_message`不是“系统消息”，而是当前Agent Unit经proposal-vote批准后对上层发出的一条结构化公共事实记录
 *   `tool_result_message`不是“系统提示”，而是由Unit Runtime产生的公共事实
+*   `child_report_message`用于父层记录来自子unit的异步向上通信；它必须携带`deliveryMode: "report" | "yield"`，以区分“继续执行中的更新”与“带暂停的交付”
 *   `system_message`只是由Unit Runtime产生的公共事实的**保底容器**，仅在尚无更专门结构类型时使用
 *   不再引入任何“私有确认消息”概念；在双agent协议中，真正有语义价值的是共享事实与当前轮控制指令，而不是额外的私有确认记录
 *   私有overlay虽然只注入给当前执行的agent，但措辞仍必须与公共广播保持同一原则：**使用第三人称并显式写出`Agent A`或`Agent B`，不得使用第二人称**
@@ -246,9 +258,9 @@ Memory Snapshot的状态关注面应采取如下取向：
 
 ### 3.3 非阻塞式工具的执行流程
 
-当一个Agent提议执行非阻塞式工具（如SpawnChild）且被对方APPROVE后：工具在后台启动，Unit Runtime将“任务已启动”这一事件作为公共事实广播写入ConversationLedger，状态机正常轮转。异步结果到达时再写入ConversationLedger，下一轮次可见。若Agent单元已Idle，则这些消息可作为触发消息唤醒。
+当一个Agent提议执行非阻塞式工具（如SpawnChild、Report、CompressContext）且被对方APPROVE后：其副作用立即生效，但状态机不进入Executing，而是正常轮转。对于后台任务类工具，Unit Runtime会将“任务已启动”这一事件作为公共事实广播写入ConversationLedger，异步结果到达时再写入ConversationLedger；对于向上通信类工具，Unit Runtime会在当前unit的ConversationLedger中写入结构化`upward_message`，并同时向上层发出`upward-message`事件。若Agent单元已Idle，则这些异步到达的事实可作为触发消息唤醒。
 
-“任务已启动”与最终结果的区分仍借鉴分布式系统的经典模式：前者表示后台动作已经被接受并开始执行，后者表示该动作的异步产出已经返回。但这两者在本框架中都属于**公共事实广播**，而不是额外的私有确认消息。
+“任务已启动”与最终结果的区分仍借鉴分布式系统的经典模式：前者表示后台动作已经被接受并开始执行，后者表示该动作的异步产出已经返回。对于`Report`这类向上通信工具，则不存在“后台任务开始/结束”的二阶段语义，而是一次性产生一条本地`upward_message`并对上层发出对应的`upward-message`事件。但无论是哪一种非阻塞副作用，它们在本框架中都属于**公共事实广播**，而不是额外的私有确认消息。
 
 在这一类非阻塞工具中，还应纳入一种专门的**上下文压缩任务工具**。它的语义边界应当刻意保持收敛：该工具提议的不是“最终摘要文本”，也不是“压缩器的完整配置”，而只是**本次压缩任务的保留重点声明**。也就是说，agent通过该工具表达的是：“如果现在生成新的Memory Snapshot，本轮最希望优先保留哪些信息。”
 
@@ -331,9 +343,9 @@ Memory Snapshot的状态关注面应采取如下取向：
 *   **L1（规划+执行层）**：由L0创建，是系统的主力工作层。同时拥有环境工具（Bash、ReadFile、WriteFile）和子Agent管理工具（SpawnChild、SendToChild、Sleep）。简单任务自行执行；复杂任务分解后创建L2子Agent委派执行，通过Sleep暂停等待结果返回后校验。
 *   **L2（执行层）**：由L1创建，拥有环境工具，是叶子节点——不能创建子Agent，因此没有子Agent管理工具。
 
-所有父子关系遵循完全相同的协议（P9）：父通过SpawnChild创建子，通过SendToChild向子发送后续消息，通过terminate()强制终止子；子通过Yield向父上报结论。**框架不对任何层级施加特殊的生命周期约束**——子Agent是被反复唤醒、还是作为一次性任务使用，由父Agent自主决定（P2）。框架不预设任何子Agent使用策略。
+所有父子关系遵循完全相同的协议（P9）：父通过SpawnChild创建子，通过SendToChild向子发送后续消息，通过terminate()强制终止子；子通过Report或Yield向父发送向上消息。对父层而言，这些来自子层的异步上报统一记录为带`deliveryMode`的`child_report_message`。**框架不对任何层级施加特殊的生命周期约束**——子Agent是被反复唤醒、还是作为一次性任务使用，由父Agent自主决定（P2）。框架不预设任何子Agent使用策略。
 
-每层可同时运行多个子Agent（因SpawnChild是非阻塞的），各子Agent的Yield结果异步到达父Agent的ConversationLedger。
+每层可同时运行多个子Agent（因SpawnChild是非阻塞的），各子Agent的Report/Yield产生的向上消息异步到达父Agent的ConversationLedger。
 
 三层覆盖了完整的任务处理链路：**理解意图（L0）→ 规划与校验（L1）→ 原子执行（L2）**。
 
@@ -341,7 +353,7 @@ Memory Snapshot的状态关注面应采取如下取向：
 
 *   **子Agent管理工具**（SpawnChild、SendToChild、Sleep）→ 非叶子节点（L0、L1）
 *   **环境工具**（Bash、ReadFile、WriteFile）→ 非纯协调节点（L1、L2）
-*   **协议工具**（Yield、Vote）→ 所有层级
+*   **协议工具**（Yield、Report、Vote）→ 所有层级
 
 #### 4.3.1 Prompt同构与行为涌现
 
@@ -381,37 +393,47 @@ Memory Snapshot的状态关注面应采取如下取向：
 
 > **设计决策**：采用"无状态计算 + 外部化知识"的AI原生协作模型，而非"有状态专家 + 路由调度"的人类协作模型。知识系统的具体设计留待后续演进，当前通过SpawnChild的task参数实现最小可用的知识注入。
 
-### 4.4 Sleep：等待异步结果的暂停机制
+### 4.4 Yield / Report / Sleep：向上通信与暂停的语义分离
 
-**追问**：当Agent单元创建子Agent后需要等待结果返回。当前的Yield会向父Agent上报结论，但此时可能并无结论可报——它只是在等待子任务完成。如何让Agent单元暂停而不上报？
+**追问**：当前的Yield同时承担两层含义——一方面它向上层发送消息，另一方面它让当前unit进入Idle。Sleep又表达了“仅暂停不上报”。那么“向上汇报但继续执行”的语义位置应如何表达？
 
-**前提14**：从FSM角度，Yield和"仅暂停"的目标状态相同（→ Idle），区别仅在于是否向父Agent的ConversationLedger写入结论消息。这不构成状态层面的差异（P5），但构成**意图层面**的差异——一个是"交付"，一个是"等待"。
+**前提14**：相对于当前Agent Unit，协调动作可以分解为两个相互独立的维度：**是否向上层发送消息**，以及**当前unit是否暂停主动推进**。
 
-**前提15**：对LLM而言，工具名本身传达语义。将两种不同意图合并为一个工具的参数变体，会增加LLM的决策认知负担。
+**前提15**：Yield已经占据“向上发送 + 暂停”，Sleep占据“不发送 + 暂停”。若缺少“向上发送 + 继续执行”的专门语义，agent只能在不精确的工具之间勉强折中。
 
-**推论10**：应引入独立的**Sleep**工具，与Yield在FSM层面共享T8转换，但语义不同：Sleep不向父Agent写入任何消息，仅使自身进入Idle状态。
+**前提16**：对LLM而言，工具名本身就是最直接的意图提示。若将“交还控制权”“继续执行中的协调更新”“纯等待”这三种不同意图折叠到同一工具的参数变体，会增加决策认知负担并模糊控制权边界。
+
+**推论10**：应将**Yield / Report / Sleep**定义为三个独立工具，分别覆盖三种不同的协调语义：
+
+*   **Yield** = 向上交付 + 暂停。用于当前unit应将阶段性结论、问题或判断交给上层，并停止本地主动推进。
+*   **Report** = 向上协调 + 继续。用于让上层及时看到某个进展、风险、局部发现或信息请求，但当前unit仍有值得继续推进的工作。
+*   **Sleep** = 仅暂停。用于等待本身是当前最好动作，且此刻没有必要立即向上发送消息。
+
+这一定义同时意味着：**继续工作本身仍是默认基线动作**。Agent无需在每个阶段都在Yield、Report、Sleep之间三选一；只有当需要产生“向上通信”或“主动暂停”这类额外协调副作用时，才应调用这些工具。
+
+从运行时副作用看，Yield与Report都应在当前unit的ConversationLedger中写入一条结构化`upward_message`，并携带`deliveryMode: "yield" | "report"`。二者的区别不在“是否发出消息”，而在于是否暂停当前unit：
+
+*   **Yield**：写入本地`upward_message`，向上层发出`upward-message`事件，然后触发T8进入Idle。
+*   **Report**：写入本地`upward_message`，向上层发出`upward-message`事件，但不触发T8，而是按普通非阻塞工具路径继续轮转。
+*   **Sleep**：不写入`upward_message`，仅触发T8进入Idle。
+
+这种“本地记录 + 向上发出”的双重语义是必要的：如果Report批准后当前unit继续执行，那么它必须在后续轮次中看见“我们刚刚已经向上发送了什么”，否则Agent会失去连续的任务状态感知。
 
 **追问**：如果子Agent失败或长时间不返回，Sleep的Agent单元会永远休眠。如何保证活性（liveness）？
 
-**前提16**：分布式系统中，任何等待异步结果的操作都应设置超时，否则单点故障会级联为系统性挂起。
+**前提17**：分布式系统中，任何等待异步结果的操作都应设置超时，否则单点故障会级联为系统性挂起。
 
 **推论11**：Sleep必须携带显式的超时时间（`timeoutMs`），由Agent在每次调用时指定，不提供默认值。超时触发时，框架向ConversationLedger写入超时消息并唤醒Agent单元，由Agent自行决定后续处理（重试、上报失败等）。
 
 Sleep的超时机制与现有架构完全兼容——超时只是另一个写入ConversationLedger的事件源：
 
 1.  Sleep被APPROVE → T8 → Idle，同时启动定时器
-2.  情况A：子Agent在超时前Yield → 结果写入ConversationLedger → `wakeIfIdle()`唤醒父Agent → 清除定时器
+2.  情况A：子Agent在超时前发出Report或Yield → 父层记录为带相应`deliveryMode`的`child_report_message` → `wakeIfIdle()`唤醒父Agent → 清除定时器
 3.  情况B：超时触发 → 超时消息写入ConversationLedger → `wakeIfIdle()`唤醒父Agent
-
-两种情况下Agent的唤醒路径相同（T1: Idle → TurnA），agents在轮次开始时统一处理所有新消息。
-
-> **设计决策**：Sleep和Yield在FSM层面是同一个操作（T8: → Idle），区别仅在副作用。Sleep = 仅暂停 + 超时保护；Yield = 上报结论 + 暂停。
 
 ### 4.5 Commit Log：已提交任务推进步骤的外部化记录
 
 > 本节记录当前收敛下来的方案：父层当前只观察**已提交的任务推进记录**，而不观察子Agent的实时活动流。实时活动可见性的设计留待后续演进。
-
-**追问**：父Agent需要了解子Agent单元最近在做什么，以便做协调和判断。但如果为获取这类信息而专门发消息或触发子Agent回复，会额外消耗轮次。与此同时，若直接暴露实时活动，又会把尚未达成共识的反复讨论暴露给上层，打破当前系统对"正式行动"与"未决思考"的区分。如何在不引入实时活动通道的前提下，让父层看到子单元已经正式承诺推进过哪些步骤？
 
 **推论15**：应将可见性收敛到**commit语义**。也就是说，父层当前看到的不是子Agent正在想什么，而是子Agent单元最近**通过共识机制正式接受了哪些任务推进步骤**。这些步骤构成一个外部化的历史序列，可供上层理解该单元的大致推进轨迹。
 
@@ -512,7 +534,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 
 ## 第五章 状态模型：综合推导
 
-本章回答挑战5，将前四章的推导综合为一个完整的状态机。
+本章将前四章的推导综合为一个完整的状态机。
 
 ### 5.1 最小状态区分
 
@@ -522,14 +544,14 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 
 *   Agent A的轮次与Agent B的轮次行为不同（“当前轮到谁”决定调用哪个Agent生成回复）→ 拆分为**TurnA**和**TurnB**
 *   等待不同类型阻塞式工具（bash、文件读写）的行为相同（阻塞等待结果）→ 合并为**Executing**
-*   初始化等待与Yield后等待唤醒的行为相同（等待触发消息→TurnA）→ 合并为**Idle**
+*   初始化等待与Yield/Sleep后等待唤醒的行为相同（等待触发消息→TurnA）→ 合并为**Idle**
 *   被终止是不可恢复的终态，与Idle行为本质不同 → 拆分为**Terminated**
 
 ### 5.2 五状态有限状态机
 
 | 状态 | 含义 |
 | :------ | :------ |
-| **Idle** | 等待触发消息（首次启动或Yield后），上下文已持久化，可被唤醒 |
+| **Idle** | 等待触发消息（首次启动或Yield/Sleep后），上下文已持久化，可被唤醒 |
 | **TurnA** | Agent A 的轮次：生成回复、表决、可提出新提议 |
 | **TurnB** | Agent B 的轮次：同上 |
 | **Executing** | 阻塞等待阻塞式工具执行结果，无Agent活跃 |
@@ -551,12 +573,14 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | T8 | TurnA/TurnB | Yield或Sleep提议被通过 | Idle |
 | T9 | 非Terminated | 父Agent发出强制终止 | Terminated |
 
-对于非阻塞式提议被APPROVE的情况：工具在后台启动，由Unit Runtime产生的公共事实广播写入ConversationLedger，状态机正常轮转（T2/T4），不进入Executing。
+对于非阻塞式提议被APPROVE的情况（如SpawnChild、SendToChild、Report、CompressContext）：工具副作用在后台或运行时立即生效，由Unit Runtime产生的公共事实广播写入ConversationLedger，状态机正常轮转（T2/T4），不进入Executing。
 
 注：T8由两种工具触发，副作用不同（§4.4）：
 
-*   **Yield**：向父Agent的ConversationLedger写入结论消息，然后进入Idle。
+*   **Yield**：在当前unit写入`upward_message(deliveryMode = "yield")`，向上层发出`upward-message`事件，然后进入Idle。
 *   **Sleep**：不写入任何消息，仅进入Idle。启动超时定时器，超时时写入由Unit Runtime产生的超时公共事实广播并唤醒（T1）。
+
+ `Report`不触发T8：它会在当前unit写入`upward_message(deliveryMode = "report")`并向上层发出`upward-message`事件，但随后按T2/T4继续轮转。
 
 ### 5.4 轮次内部协议
 
@@ -583,15 +607,16 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 
 | 工具 | 类别 | 说明 |
 | :------ | :------ | :------ |
-| **Yield** | protocol | 向父Agent交付当前结论并回到Idle（T8）。构成提议，需对方投票通过。消息体为非结构化文本。作为proposal-producing tool，调用时需附带`proposedStep`，描述"交付当前结论会如何推进父层任务"。 |
+| **Yield** | protocol | 向上层交付阶段性结论、判断或问题，并回到Idle（T8）。构成提议，需对方投票通过。批准后在本地写入`upward_message(deliveryMode = "yield")`，同时向上层发出`upward-message`事件。消息体为非结构化文本。作为proposal-producing tool，调用时需附带`proposedStep`，描述"这次向上交付并暂停会如何推进任务"。 |
+| **Report** | protocol | 向上层发送协调性更新，但当前unit继续执行。构成提议，需对方投票通过。批准后在本地写入`upward_message(deliveryMode = "report")`，同时向上层发出`upward-message`事件，但不进入Idle。适用于需要提升上层可见性但仍有必要继续本地推进的场景。作为proposal-producing tool，调用时需附带`proposedStep`，描述"此次向上更新会如何改善协调"。 |
 
 **子Agent管理工具**：
 
 | 工具 | 类别 | 可用层级 | 说明 |
 | :------ | :------ | :--------- | :------ |
 | **SpawnChild** | child-management | L0, L1 | 创建并启动子Agent单元。子单元独立工作，结果异步到达父Agent的ConversationLedger。Agent无需知道子单元的具体层级——Unit Runtime根据当前层级自动决定子单元的工具集。作为proposal-producing tool，调用时需附带`proposedStep`，描述"创建该子单元会如何推进当前任务"。 |
-| **SendToChild** | child-management | L0, L1（条件） | 向已Idle的子Agent发送消息并唤醒。仅在已创建子Agent时可见。作为proposal-producing tool，调用时需附带`proposedStep`，描述"向该子单元发送此消息会如何推进当前任务"。 |
-| **Sleep** | child-management | L0, L1 | 暂停当前Agent单元并进入Idle（T8），不向父Agent上报。必须指定显式超时时间（`timeoutMs`，无默认值）。用于等待子Agent异步结果返回。超时时由Unit Runtime写入超时公共事实广播并唤醒（见§4.4）。作为proposal-producing tool，调用时需附带`proposedStep`，描述"此次等待对任务推进的意义"。 |
+| **SendToChild** | child-management | L0, L1（条件） | 向已存在的子Agent发送后续消息。若子单元当前处于Idle，可立即恢复；若仍在运行，则消息被排队并在其后续工作中可见。仅在已创建子Agent时可见。作为proposal-producing tool，调用时需附带`proposedStep`，描述"向该子单元发送此消息会如何推进当前任务"。 |
+| **Sleep** | child-management | L0, L1 | 暂停当前Agent单元并进入Idle（T8），不向上层发送消息。必须指定显式超时时间（`timeoutMs`，无默认值）。用于等待本身是当前最好动作的场景；超时时由Unit Runtime写入超时公共事实广播并唤醒（见§4.4）。作为proposal-producing tool，调用时需附带`proposedStep`，描述"此次等待对任务推进的意义"。 |
 
 **环境工具（阻塞式）**：
 
@@ -607,6 +632,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | :------ | :---- | :---- | :----- |
 | Vote | ✓（条件） | ✓（条件） | ✓（条件） |
 | Yield | ✓ | ✓ | ✓ |
+| Report | ✓ | ✓ | ✓ |
 | SpawnChild | ✓ | ✓ | ✗ |
 | SendToChild | ✓（条件） | ✓（条件） | ✗ |
 | Sleep | ✓ | ✓ | ✗ |
@@ -614,7 +640,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | ReadFile | ✗ | ✓ | ✓ |
 | WriteFile | ✗ | ✓ | ✓ |
 
-规则简述：子Agent管理工具（SpawnChild、SendToChild、Sleep）仅非叶子节点可用；环境工具仅非纯协调节点可用；Yield和Vote所有层级可用。L0永远不进入Executing。
+规则简述：子Agent管理工具（SpawnChild、SendToChild、Sleep）仅非叶子节点可用；环境工具仅非纯协调节点可用；Yield、Report和Vote所有层级可用。L0永远不进入Executing。
 
 ---
 
@@ -634,6 +660,22 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | P8 | 阻塞性由操作对象决定 | §3.1 |
 | P9 | 层级同构 | §4.3 |
 | P10 | 无状态Agent | §4.3.2 |
+| P11 | 公共事实完整性优先于当前压缩 | §2.2.2 |
+| P12 | 公共事实广播与控制指令分离 | §2.3.2 |
+| P13 | 异步Unit Runtime事件也属于公共事实 | §3.3 |
+| P14 | 每轮统一投影视图 | §2.3.2 |
+| P15 | 新消息边界显式化 | §2.3.2 |
+| P16 | 受众显式性 | §2.3.2 |
+| P17 | 压缩属于投影层派生视图 | §2.3.4 |
+| P18 | 双层上下文视图 | §2.3.4 |
+| P19 | 弱结构化自然语言快照 | §2.3.4 |
+| P20 | 注入契约的信息性优先 | §2.3.4 |
+| P21 | 压缩任务工具的语义收敛 | §3.3 |
+| P22 | 压缩提醒是柔性的状态提示 | §2.3.4 |
+| P23 | 压缩提醒受活动任务抑制 | §2.3.4 |
+| P24 | 单unit单活动压缩任务 | §3.3 |
+| P25 | 有限重试后回到deliberation | §3.3 |
+| P26 | 方向命名显式化 | §2.2.4 |
 
 ## 附录B 术语表
 
@@ -642,15 +684,19 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | Agent单元（Agent Unit） | 由两个Agent组成的最小协作执行单位，也是一个状态机实例 |
 | ConversationLedger | 每个Agent单元的结构化聊天事实账本。保存完整消息历史、轮次可见性信息、受控状态更新所需元数据，并为未来持久化预留空间 |
 | ConversationProjector | 从ConversationLedger生成agent可见聊天视图的投影层；负责结构化消息到agent可见视图的转换、本轮控制提示与newly visible边界的overlay注入。未来可承载压缩策略，但当前阶段不执行历史折叠与压缩 |
-| 上层消息（Parent Message） | 来自父层的一条消息。对L0而言，人类输入只是来自`L-1`父层的上层消息；与L1/L2收到父Agent消息在概念上同构 |
+| 进入消息（Incoming Message） | 相对于当前Agent Unit，从外部或上层进入本unit并写入ConversationLedger的一条结构化消息。对L0而言，人类输入只是来自`L-1`父层的进入消息；与L1/L2收到父Agent消息在概念上同构 |
+| 向上消息（Upward Message） | 由当前Agent Unit向上层发送、同时作为本unit内部公共事实被记录的一条结构化消息。其`deliveryMode`至少区分`report`与`yield` |
+| 向上消息事件（upward-message event） | Unit Runtime向上层发出的运行时事件，承载一条经proposal-vote批准的向上消息。父层可将其记录为带`deliveryMode`的`child_report_message` |
 | 触发消息（Trigger Message） | 使Agent单元从Idle状态转入TurnA的消息 |
 | turnAuthored | 某条消息在哪一轮中被创建 |
 | visibleFromTurn | 某条消息从哪一轮开始对其他agent可见 |
 | 提议（Proposal） | Agent通过工具调用提出的需要对方表决的动作请求 |
 | 表决（Vote） | 对对方提议的APPROVE或REJECT判定 |
 | 待决提议（Pending Proposal） | 已提出但尚未被表决的提议 |
-| Yield | 默认工具，Agent单元向父Agent交付当前结论并回到Idle状态 |
-| Sleep | 子Agent管理工具（非叶子节点），Agent单元暂停进入Idle但不向父Agent上报，携带显式超时 |
+| Yield | protocol工具，Agent单元向上层交付阶段性结论、判断或问题，并回到Idle状态 |
+| Report | protocol工具，Agent单元向上层发送协调性更新，但不暂停本地执行 |
+| Sleep | 子Agent管理工具（非叶子节点），Agent单元暂停进入Idle但不向上层发送消息，携带显式超时 |
+| deliveryMode | 与向上通信相关的模式字段，至少区分`report`与`yield`，用于表达“继续执行中的更新”与“带暂停的交付” |
 | Unit Runtime公共事实广播 | 由Unit Runtime写入ConversationLedger并进入共享历史的运行时事实，如子单元启动、超时、投递失败或排队等事件 |
 | 阻塞式工具 | 对环境的原子操作，执行时Agent单元进入Executing状态 |
 | 非阻塞式工具 | 对其他Agent单元的操作，后台执行，结果异步到达 |
@@ -664,6 +710,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 
 **版本历史**：
 
+*   v2.2 (2026-04-12)：引入Yield / Report / Sleep三分语义：向上交付 + 暂停、向上协调 + 继续、仅暂停。新增方向命名规则——使用`incoming`表示收到的消息，使用`upward`表示发往上层的消息，并明确弃用方向歧义的`upstream_message`。文档中补充结构化`upward_message`、运行时`upward-message`事件，以及带`deliveryMode`的`child_report_message`语义；同步更新FSM、工具表、术语表与原则索引。
 *   v2.1 (2026-04-12)：统一术语分层——保留`framework`用于Elenchus整体设计语境，将运行时产生的共享广播与条件注入语义统一收敛为`Unit Runtime`，将Yield/Vote统一标记为`protocol`工具，将SpawnChild/SendToChild/Sleep与Bash/ReadFile/WriteFile分别统一为`child-management`与`environment`类别。同步修正P1/P4对turn上下文的表述为“完整可见快照 + newly visible边界overlay”，并移除已过时的ACK术语。
 *   v1.9 (2026-04-11)：通信模型重构——以ConversationLedger取代MessageBus作为unit级结构化聊天事实账本；明确消息体可为非结构化文本但消息封套必须结构化；新增`turnAuthored`/`visibleFromTurn`轮次语义、ConversationProjector投影层、proposal受控状态更新，以及"顶层用户是L-1父层"的分形输入表述。同步更新术语与相关流程描述。
 *   v1.8 (2026-04-11)：将§4.5从"实时活动可见性探索"收敛为当前阶段的Commit Log方案。引入`proposedStep`、`committedStep`、`commitLog`三层命名；明确仅proposal-producing tools需要携带`proposedStep`，其语义是"动作对任务推进的意义"；规定`APPROVE`即写入、执行失败不回滚；明确`commitLog`归属于Agent Unit且不等于success history。同步更新工具说明与术语表。

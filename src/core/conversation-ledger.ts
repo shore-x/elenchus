@@ -1,4 +1,4 @@
-import { type AgentId, type AgentVisibleSnapshot, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type VoteMessage } from "./types.js";
+import { type AgentId, type AgentVisibleSnapshot, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type UpwardMessage, type VoteMessage } from "./types.js";
 
 let nextConversationMessageId = 0;
 
@@ -13,11 +13,11 @@ export class ConversationLedger {
     "agent-b": 0,
   };
 
-  appendParentMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
+  appendIncomingMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
     const message: ConversationMessage = {
       id: generateConversationMessageId(),
-      kind: "parent_message",
-      authoredBy: "parent",
+      kind: "incoming_message",
+      authoredBy: "incoming",
       content,
       timestamp: Date.now(),
       turnAuthored: meta.turnAuthored,
@@ -25,6 +25,21 @@ export class ConversationLedger {
     };
     this.messages.push(message);
     return message;
+  }
+
+  appendUpwardMessage(message: Omit<UpwardMessage, "id" | "kind" | "timestamp" | "authoredBy">): UpwardMessage {
+    const entry: UpwardMessage = {
+      id: generateConversationMessageId(),
+      kind: "upward_message",
+      authoredBy: "unit",
+      deliveryMode: message.deliveryMode,
+      content: message.content,
+      timestamp: Date.now(),
+      turnAuthored: message.turnAuthored,
+      visibleFromTurn: message.visibleFromTurn,
+    };
+    this.messages.push(entry);
+    return entry;
   }
 
   appendAgentMessage(agent: AgentId, content: string, meta: LedgerMessageMeta): ConversationMessage {
@@ -103,6 +118,7 @@ export class ConversationLedger {
       kind: "child_report_message",
       authoredBy: "system",
       childId: report.childId,
+      deliveryMode: report.deliveryMode,
       content: report.content,
       timestamp: Date.now(),
       turnAuthored: report.turnAuthored,
