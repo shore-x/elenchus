@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - State Machine and Tools"
 date: 2026-04-12
-version: 3.0
+version: 3.1
 ---
 
 # State Machine and Tools
@@ -69,6 +69,8 @@ Additional notes:
 - approved non-blocking proposals continue along normal turn rotation rather than entering `Executing`
 - `yield` and `sleep` both trigger T8 but have different side effects
 - `report` never triggers T8
+- `yield` should be read as an upward handoff plus pause, not only as a completion signal
+- `report` should be read as routine upward coordination at key moments, not as a minor exception path
 
 ## 4. Turn-Internal Output Protocol
 
@@ -138,6 +140,7 @@ Rules in summary:
 - writes `upward_message(deliveryMode = "yield")`
 - emits `upward-message`
 - pauses the unit into `Idle`
+- appropriate whenever the unit should hand initiative upward and wait, including stage completion, information gaps, and requests for upper-layer judgment
 
 ### 7.2 `report`
 
@@ -145,18 +148,14 @@ Rules in summary:
 - writes `upward_message(deliveryMode = "report")`
 - emits `upward-message`
 - continues the turn loop
+- appropriate for key decision points, material findings, risks, and other coordination moments when upper-layer visibility matters but local progress can still continue
 
 ### 7.3 `sleep`
 
 - proposal-producing
 - pauses without upward messaging
 - requires explicit `timeoutMs`
-
-### 7.4 `compressContext`
-
-- proposal-producing
-- starts an asynchronous compression task
-- carries preservation requirements rather than a finished summary
+- reserved for pure waiting rather than upward coordination
 
 ## 8. Related Detailed Documents
 
@@ -169,4 +168,5 @@ Rules in summary:
 
 ## Change Log
 
+- **v3.1 (2026-04-12)**: Updated tool-surface notes to reflect the semantic rewrite of `report` and `yield`. `yield` is now documented as a general upward handoff-and-pause move, including requests for more information, while `report` is documented as routine upward coordination at key moments rather than a special-case escalation path.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed FSM and tool-surface semantics while the overview remains the canonical entry point and index.

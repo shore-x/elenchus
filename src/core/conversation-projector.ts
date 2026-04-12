@@ -28,9 +28,9 @@ function truncatePreview(content: string, maxLength: number = 120): string {
 function renderProposalDetail(proposal: ProposalCall): string {
   switch (proposal.toolName) {
     case "yield":
-      return `The proposed content is:\n\n---\n${proposal.args.content}\n---`;
+      return `The proposed upward handoff content is:\n\n---\n${proposal.args.content}\n---`;
     case "report":
-      return `The proposed upward message is:\n\n---\n${proposal.args.content}\n---`;
+      return `The proposed upward coordination message is:\n\n---\n${proposal.args.content}\n---`;
     case "compressContext":
       return `Preservation requirements:\n---\n${String(proposal.args.requirements)}\n---`;
     case "bash":
@@ -110,7 +110,7 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
       role: "user",
       content:
         `[Public Fact][Upward Message]\n` +
-        `Delivery mode: ${message.deliveryMode}\n` +
+        `Delivery mode: ${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}\n` +
         `Content:\n${message.content}`,
       timestamp: message.timestamp,
     };

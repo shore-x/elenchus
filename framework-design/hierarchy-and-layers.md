@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Hierarchy and Layers"
 date: 2026-04-12
-version: 3.0
+version: 3.2
 ---
 
 # Hierarchy and Layers
@@ -96,12 +96,16 @@ Together these layers cover the full chain:
 
 Parent and child interact through the same core concepts already used elsewhere in the framework:
 
-- parent creates child via `spawnChild`
-- parent sends follow-up context via `sendToChild`
+- parent creates child via `spawnChild`, which provides an initial task brief rather than a guarantee that all relevant context has already been transferred
+- parent sends follow-up context, clarifications, constraints, and redirection via `sendToChild`
 - child sends upward coordination through `report` or `yield`
 - parent may forcibly terminate a child through the control plane
 
 Multiple children may exist concurrently. Because child spawning is non-blocking, upward child reports can arrive asynchronously at the parent ledger.
+
+Parent-child collaboration should therefore be understood as iterative rather than one-shot. A child should use `report` routinely at key decision points, material findings, risks, and coordination moments when the parent may benefit from early visibility. A child should also use `yield` when it lacks enough information to continue effectively and wants the parent to provide more context before work resumes.
+
+For complex work, the parent may gradually form multiple delegated workstreams across turns rather than forcing every subproblem into a single child unit. When new information arrives, the parent should judge whether it belongs inside an existing child workflow and should be sent through `sendToChild`, or whether it opens a distinct enough line of work that a new child unit would provide clearer separation and better coordination.
 
 ## 6. No Special Lifecycle Policy for Children
 
@@ -141,7 +145,7 @@ That means:
 - knowledge should be injected or externalized rather than accumulated as irreplaceable hidden history
 - the parent naturally acts as a knowledge curator when spawning children
 
-At the current stage, `spawnChild(task)` is the minimal knowledge injection mechanism.
+At the current stage, `spawnChild(task)` is the minimal knowledge injection mechanism. It should be treated as an initial brief, not as proof that the child already has all necessary context. The framework therefore relies on continued natural-language exchange through `report`, `yield`, and `sendToChild` whenever context needs to keep flowing across the layer boundary.
 
 ## 9. Commit Log as Parent-Visible Progress Boundary
 
@@ -195,4 +199,6 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v3.2 (2026-04-12)**: Added explicit parent-child routing guidance: parent units may gradually build multiple child workstreams across turns, and should decide whether new information belongs in an existing child workflow via `sendToChild` or should instead motivate a new child unit when the line of work is sufficiently separate.
+- **v3.1 (2026-04-12)**: Clarified that `spawnChild` provides an initial brief rather than a one-shot full-context transfer. Parent-child collaboration is now explicitly described as iterative: children should use `report` at key coordination points and may use `yield` to request more information when local context is insufficient.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed layer, delegation, knowledge-model, and commit-log semantics while the overview remains the canonical entry point and index.

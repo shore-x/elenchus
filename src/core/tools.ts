@@ -2,7 +2,9 @@
 // Three-layer tool allocation (§4.3):
 //   - Child management (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
 //   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
-//   - Protocol tools (Yield, Vote, CompressContext) → all layers
+//   - Protocol tools (Yield, Report, Vote, CompressContext) → all layers
+// Yield and Report form the same upward-communication family: both send a shared upward message,
+// while their difference is whether the unit pauses afterward.
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote.
 
 import { Type, type TObject } from "@sinclair/typebox";
@@ -23,13 +25,13 @@ const proposedStepSchema = Type.String({
 export const yieldTool: ElenchusTool = {
   name: "yield",
   description:
-    "Propose to deliver an upward handoff and pause the deliberation. " +
+    "Propose to send an upward communication message and pause the deliberation. " +
     "This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. " +
-    "The unit returns to Idle and can be woken by new messages. " +
-    "Use this when the unit should hand off the current stage to the upper layer and stop proactive local progress.",
+    "After approval, the unit returns to Idle and can be woken by new messages. " +
+    "Use this when the unit should hand initiative upward and wait, including stage completion, requests for upper-layer judgment, or cases where the unit lacks enough information to continue effectively.",
   parameters: Type.Object({
     content: Type.String({
-      description: "The upward handoff content: a clear summary of the current stage's conclusions, judgments, questions, or recommended next step.",
+      description: "The upward handoff content: a clear summary, judgment, question, request for more information, or recommended next step that the upper layer should receive before this unit pauses.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -42,10 +44,10 @@ export const reportTool: ElenchusTool = {
     "Propose to send an upward coordination message without pausing the deliberation. " +
     "This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. " +
     "After approval, the unit continues into later turns rather than returning to Idle. " +
-    "Use this when upper-layer visibility would improve coordination but the unit should keep working.",
+    "Use this at key decision points, material findings, risks, or other coordination moments when upper-layer visibility would improve coordination but the unit should keep working.",
   parameters: Type.Object({
     content: Type.String({
-      description: "The upward coordination message: progress, a risk, a local finding, or a request for additional information that the upper layer should know now.",
+      description: "The upward coordination message: a key finding, decision point, risk, partial conclusion, or request for additional information that the upper layer should know now.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -135,13 +137,15 @@ export const writeFileTool: ElenchusTool = {
 export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
-    "Propose to create a new child agent unit to execute a specific task. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "The child unit works independently; upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
-    "The unit runtime automatically determines the child's capabilities based on the current layer. " +
+    "Create a child agent unit for a delegated task. " +
+    "The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
+    "Child creation follows the fixed layer hierarchy: from L0, spawnChild creates an L1 child; from L1, it creates an L2 child. " +
+    "A child may have direct capabilities that are not available in the current layer. " +
+    "Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. " +
     "You must provide proposedStep to describe how delegating this work advances the unit's task.",
   parameters: Type.Object({
     task: Type.String({
-      description: "A clear, specific description of the task for the child agent unit to accomplish. Include all necessary context.",
+      description: "A clear, specific initial brief for the child agent unit to accomplish. Include the context already known to be important, but this does not imply that later clarification or additional context will be unnecessary.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -153,7 +157,7 @@ export const sendToChildTool: ElenchusTool = {
   description:
     "Propose to send a follow-up message to an existing child agent unit. This is a PROPOSAL — the other agent must vote APPROVE. " +
     "If the child unit is idle, it can resume with the new message; if it is still active, the message will be queued and become available to that child as it continues work. " +
-    "Use this when delegated work should receive additional context, constraints, corrections, clarifications, or redirection. " +
+    "Use this when delegated work should receive additional context, constraints, corrections, clarifications, redirection, or a response to the child's earlier report or yield. " +
     "You must provide proposedStep to describe how this follow-up advances the task.",
   parameters: Type.Object({
     childId: Type.String({

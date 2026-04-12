@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
 date: 2026-04-12
-version: 3.0
+version: 3.1
 ---
 
 # Protocol and Runtime
@@ -107,13 +107,12 @@ These should be visible through the same shared context model rather than privat
 
 ## 7. Upward Communication Semantics
 
-The framework distinguishes three coordination moves that might otherwise be conflated:
+The framework separates two coordination dimensions that might otherwise be conflated:
 
-- **yield** = send upward and pause
-- **report** = send upward and continue
-- **sleep** = pause without sending upward
+- whether the unit sends an upward communication message
+- whether the unit pauses after doing so
 
-This decomposition matters because upward communication and pausing are independent coordination dimensions.
+This decomposition matters because upward communication and pausing are independent coordination dimensions. `report` and `yield` therefore belong to the same upward communication family. Their difference is not "light" versus "heavy" reporting, nor normal versus exceptional control flow. Their difference is whether the unit retains local initiative after sending the message.
 
 ### 7.1 Yield
 
@@ -123,6 +122,8 @@ This decomposition matters because upward communication and pausing are independ
 - emit an `upward-message` runtime event to the upper layer
 - enter `Idle`
 
+`yield` should be understood as an upward communication plus an explicit handoff of initiative. It is appropriate not only for stage completion, but also when the unit lacks enough information to continue efficiently, needs upper-layer judgment before proceeding, or wants to pause until the upper layer replies with more context.
+
 ### 7.2 Report
 
 `report` means:
@@ -130,6 +131,8 @@ This decomposition matters because upward communication and pausing are independ
 - write a local `upward_message` with `deliveryMode: "report"`
 - emit an `upward-message` runtime event to the upper layer
 - continue normal turn progression rather than pausing
+
+`report` should be understood as routine coordination rather than a minor side note. It is the default upward move when upper-layer visibility would improve coordination at a key decision point, but the unit still has worthwhile local work it can continue.
 
 ### 7.3 Sleep
 
@@ -139,7 +142,9 @@ This decomposition matters because upward communication and pausing are independ
 - pause the unit into `Idle`
 - rely on wake-up triggers such as timeout or new incoming facts
 
-A key benefit of locally recording both `yield` and `report` as `upward_message` is that later turns can still see what has already been sent upward.
+So `sleep` is the pure waiting move, while `yield` is the waiting-after-communication move.
+
+A key benefit of locally recording both `yield` and `report` as `upward_message` is that later turns can still see what has already been sent upward. This matters especially when parent-child collaboration is iterative and context must keep flowing in both directions rather than being assumed complete at child spawn time.
 
 ## 8. Compression as a Non-Blocking Runtime Action
 
@@ -178,4 +183,5 @@ This preserves a clean separation between:
 
 ## Change Log
 
+- **v3.1 (2026-04-12)**: Reframed `report` and `yield` as one upward communication family rather than exceptional escalation paths. Clarified that `yield` is a general upward handoff that may request more information before pausing, while `report` is a routine coordination move used at key decision points when local progress can continue.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed action protocol and runtime semantics while the overview remains the canonical entry point and index.
