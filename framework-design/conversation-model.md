@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Conversation Model"
 date: 2026-04-12
-version: 3.1
+version: 3.3
 ---
 
 # Conversation Model
@@ -76,7 +76,7 @@ It must support at least the following responsibilities:
 
 The ledger stores **facts**, not the final agent-visible rendering. Rendering belongs to the projection layer.
 
-In the current implementation, ledger-backed session recovery is rooted in the run-directory-local `.elenchus/` folder. Cold-start recovery may rebuild the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly rehydrating every historical ledger record into active runtime memory, but the ledger remains the durable fact authority underneath that working set.
+In the current implementation, ledger-backed session recovery is rooted in the run-directory-local SQLite database `.elenchus/state.db`. Cold-start recovery may rebuild the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly rehydrating every historical ledger record into active runtime memory, but the ledger remains the durable fact authority underneath that working set and the database retains the full durable history. The current SQLite schema does not rely on database foreign keys to preserve the unit graph; instead, the application-layer persistence logic preserves graph integrity through explicit save ordering and recovery semantics.
 
 ## 4. Minimum Semantic Requirements for Messages
 
@@ -219,5 +219,7 @@ should remain third-person and explicitly name `Agent A` or `Agent B` when relev
 
 ## Change Log
 
+- **v3.3 (2026-04-12)**: Added the implementation boundary for SQLite-backed persistence. The durable store remains authoritative, but unit-graph integrity is maintained by the application-layer persistence logic rather than DB-level foreign keys.
+- **v3.2 (2026-04-12)**: Updated the persistence note to reflect the SQLite-backed durable store in `.elenchus/state.db`. The ledger remains the durable fact authority, while cold-start reconstructs only the next working context rather than eagerly loading the full durable history into runtime memory.
 - **v3.1 (2026-04-12)**: Clarified the persistence relationship between `ConversationLedger` and startup working-set reconstruction. The ledger remains the durable fact authority, while cold-start may reconstruct the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly loading all historical runtime state.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed communication and projection semantics while the overview remains the canonical entry point and index.

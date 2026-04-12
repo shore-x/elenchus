@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
 date: 2026-04-12
-version: 3.3
+version: 3.5
 ---
 
 # Protocol and Runtime
@@ -23,7 +23,7 @@ This document defines the framework's action protocol and runtime execution beha
 - control-plane termination semantics
 
 It does not define layer assignment or tool availability tables in detail; those live in [hierarchy-and-layers.md](./hierarchy-and-layers.md) and [state-machine-and-tools.md](./state-machine-and-tools.md).
-Current filesystem-backed persistence and recovery use the run-directory-local `.elenchus/` folder as the storage root for resumable session state.
+Current persistence and recovery use the run-directory-local SQLite database `.elenchus/state.db` as the storage root for resumable session state. The current SQLite schema is versioned explicitly, and during the present rapid-iteration phase a schema-version mismatch rebuilds the local database instead of attempting compatibility migration.
 
 ## Relevant Overview Sections
 
@@ -199,6 +199,8 @@ This keeps recovery semantically honest while still preserving durable history a
 
 ## Change Log
 
+- **v3.5 (2026-04-12)**: Added the schema-version boundary for SQLite persistence. During the current rapid-iteration phase, a schema mismatch causes the local `.elenchus/state.db` store to be rebuilt rather than migrated in place.
+- **v3.4 (2026-04-12)**: Updated the persistence implementation note from filesystem snapshots to SQLite-backed durable storage in `.elenchus/state.db`. Clarified that SQLite retains the full durable history while cold-start recovery rebuilds only the next working set.
 - **v3.3 (2026-04-12)**: Added the cold-start recovery boundary. Documented that resumable session state is stored under the run-directory-local `.elenchus/` folder, and clarified that persisted `turn-a` / `turn-b` / `executing` normalize to `idle` rather than resuming mid-turn or mid-execution.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the non-blocking runtime model and documented the approved child remount contract: a new child `upward-message` must reliably and atomically remount that child into the parent's visible child set, accompanied by a light runtime broadcast. External new messages do not remount old children.
 - **v3.1 (2026-04-12)**: Reframed `report` and `yield` as one upward communication family rather than exceptional escalation paths. Clarified that `yield` is a general upward handoff that may request more information before pausing, while `report` is a routine coordination move used at key decision points when local progress can continue.

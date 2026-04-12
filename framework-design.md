@@ -132,7 +132,7 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 
 父层对失控子单元的强制终止属于**控制平面**操作，而非一条普通聊天消息。这一点保证“协作消息”和“强制控制”在语义上不混杂。
 
-当前实现还引入了面向冷启动的恢复边界：运行目录下的 `.elenchus/` 保存可恢复的 session 快照。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
+当前实现还引入了面向冷启动的恢复边界：运行目录下的 `.elenchus/state.db` 保存可恢复的 session 持久化状态。SQLite 中保留全量 durable history，而冷启动恢复只重建继续 deliberation 所需的工作集。当前 schema 明确不依赖数据库外键维护 unit graph 完整性；关系一致性由应用层持久化逻辑与“先保存 unit、后保存 relation”的写入顺序保证。当前 schema 通过 `schema_meta` 中的显式版本号管理；在快速演进阶段，如版本不匹配则直接重建本地数据库，而不承诺旧库兼容迁移。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
 
 ### 3.5 本章相关核心原则
 
@@ -287,7 +287,9 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 | Directive Overlay | 仅在当前轮临时注入给当前 agent 的控制提示，不进入共享历史 |
 | Memory Snapshot | 对既有聊天历史进行压缩后得到的弱结构化自然语言任务状态快照 |
 | Recent Raw Window | 最近一段未压缩原始上下文窗口，用于保留局部连续性与近期细节 |
-| `.elenchus` 运行目录 | 当前文件系统持久化后端在运行目录下使用的状态目录，用于保存可恢复 session 的快照与恢复入口 |
+| `.elenchus` 运行目录 | 当前嵌入式 SQLite 持久化后端在运行目录下使用的状态目录；默认数据库文件为 `.elenchus/state.db` |
+| Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
+| 开发期重建（Development-time Rebuild） | 当前 SQLite schema 在快速演进阶段采取的版本升级策略：schema 不匹配时直接重建本地数据库，而不是执行兼容迁移 |
 | CompressionTaskManager | 管理 unit 级压缩任务生命周期的运行时组件，负责活动任务状态、重复抑制与有限重试 |
 | 提议（Proposal） | Agent 通过工具调用提出的、需要另一侧表决的动作请求 |
 | 表决（Vote） | 对待决 proposal 的 APPROVE 或 REJECT 判定 |
@@ -298,6 +300,8 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 ## 版本历史
 
+- **v3.6 (2026-04-12)**：补充 SQLite 持久化的实现边界：当前 schema 不依赖数据库外键维护 unit graph，而由应用层持久化逻辑与保存顺序保证关系一致性；同时记录 `schema_meta` 版本号与开发期“版本不匹配即重建本地数据库”的策略。
+- **v3.5 (2026-04-12)**：将持久化实现从文件系统整份快照收敛为嵌入式 SQLite。当前默认数据库文件为 `.elenchus/state.db`；数据库保留全量 durable history，而冷启动恢复只按需重建 working set。既有冷启动归一化与“unmounted child 保留但默认不恢复”语义保持不变。
 - **v3.4 (2026-04-12)**：在总纲中加入文件系统持久化与冷启动恢复高层摘要。明确当前实现将可恢复 session 状态保存在运行目录下的 `.elenchus/` 中；`Memory Snapshot + Recent Raw Window` 同时承担启动工作集角色；冷启动时 `TurnA` / `TurnB` / `Executing` 统一归一化到 `Idle`；已解除挂载的 child 仍保留于磁盘，但默认不恢复进 active runtime graph。
 - **v3.3 (2026-04-12)**：在总纲中补充 child **解除挂载 / 自动重新挂载** 语义：父层可对 `idle` child 执行解除挂载，使其从父 agent 可见上下文中消失但保留程序中的父子从属关系；重新挂载仅由新的 `upward-message` 触发，并以轻量 runtime 广播提示可见性恢复。同步将 `unmountChild` 纳入 child-management 工具摘要与术语表。
 - **v3.2 (2026-04-12)**：在层级结构高层摘要中补充多 child 渐进式拆解与“新消息路由”原则：复杂任务可跨 turn 逐步形成多个 delegated workstream；新信息若与既有 child workflow 实质相关，可考虑通过 `sendToChild` 纳入原工作流，否则可考虑生成新的 child。

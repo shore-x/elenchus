@@ -5,7 +5,7 @@ import { cwd } from "node:process";
 import * as readline from "node:readline";
 import { createSession } from "../../application/runtime.js";
 import { createPiAiLlmClient } from "../../adapters/llm/pi-ai-client.js";
-import { FileSystemSessionPersistence } from "../../adapters/storage/fs/file-system-session-persistence.js";
+import { SqliteSessionPersistence } from "../../adapters/storage/sqlite/sqlite-session-persistence.js";
 import { LocalNodeToolExecutor } from "../../adapters/tools/local-node-tool-executor.js";
 import type { SystemEvent } from "../../core/types.js";
 import { readCliConfig } from "./env.js";
@@ -32,7 +32,7 @@ export async function main(): Promise<void> {
     llmClient,
     toolExecutor: new LocalNodeToolExecutor(),
     level: config.level,
-    persistence: new FileSystemSessionPersistence({ runDirectory: cwd() }),
+    persistence: new SqliteSessionPersistence({ runDirectory: cwd() }),
     onSystemEvent: (event: SystemEvent) => {
       renderEvent(event, config.verbose);
     },

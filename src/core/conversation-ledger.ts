@@ -8,10 +8,17 @@ function generateConversationMessageId(): string {
 
 export class ConversationLedger {
   private messages: ConversationMessage[] = [];
+  private sequenceStart = 1;
+  private totalMessages = 0;
   private cursors: Record<AgentId, number> = {
     "agent-a": 0,
     "agent-b": 0,
   };
+
+  private appendMessage(message: ConversationMessage): void {
+    this.messages.push(message);
+    this.totalMessages += 1;
+  }
 
   appendIncomingMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
     const message: ConversationMessage = {
@@ -23,7 +30,7 @@ export class ConversationLedger {
       turnAuthored: meta.turnAuthored,
       visibleFromTurn: meta.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -38,7 +45,7 @@ export class ConversationLedger {
       turnAuthored: message.turnAuthored,
       visibleFromTurn: message.visibleFromTurn,
     };
-    this.messages.push(entry);
+    this.appendMessage(entry);
     return entry;
   }
 
@@ -52,7 +59,7 @@ export class ConversationLedger {
       turnAuthored: meta.turnAuthored,
       visibleFromTurn: meta.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -74,7 +81,7 @@ export class ConversationLedger {
       visibleFromTurn: proposal.visibleFromTurn,
       status: "pending",
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -90,7 +97,7 @@ export class ConversationLedger {
       turnAuthored: vote.turnAuthored,
       visibleFromTurn: vote.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -108,7 +115,7 @@ export class ConversationLedger {
       turnAuthored: result.turnAuthored,
       visibleFromTurn: result.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -124,7 +131,7 @@ export class ConversationLedger {
       turnAuthored: report.turnAuthored,
       visibleFromTurn: report.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -138,7 +145,7 @@ export class ConversationLedger {
       turnAuthored: meta.turnAuthored,
       visibleFromTurn: meta.visibleFromTurn,
     };
-    this.messages.push(message);
+    this.appendMessage(message);
     return message;
   }
 
@@ -229,12 +236,16 @@ export class ConversationLedger {
 
   exportSnapshot(): ConversationLedgerSnapshot {
     return {
+      sequenceStart: this.sequenceStart,
+      totalMessages: this.totalMessages,
       messages: this.messages.map((message) => ({ ...message })),
       cursors: { ...this.cursors },
     };
   }
 
   loadSnapshot(snapshot: ConversationLedgerSnapshot): void {
+    this.sequenceStart = snapshot.sequenceStart;
+    this.totalMessages = snapshot.totalMessages;
     this.messages = snapshot.messages.map((message) => ({ ...message }));
     this.cursors = { ...snapshot.cursors };
   }

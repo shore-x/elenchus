@@ -132,6 +132,8 @@ export type ConversationMessage =
   | ChildReportMessage;
 
 export interface ConversationLedgerSnapshot {
+  sequenceStart: number;
+  totalMessages: number;
   messages: ConversationMessage[];
   cursors: Record<AgentId, number>;
 }

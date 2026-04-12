@@ -48,6 +48,7 @@ export class DeliberationSession {
   close(): void {
     this.unit.close();
     this.persist();
+    this.persistence?.close?.();
   }
 
   sendUserMessage(content: string): void {
