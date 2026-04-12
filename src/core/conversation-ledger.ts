@@ -1,4 +1,4 @@
-import { type AgentId, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type VoteMessage } from "./types.js";
+import { type AgentId, type AgentVisibleSnapshot, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type VoteMessage } from "./types.js";
 
 let nextConversationMessageId = 0;
 
@@ -126,33 +126,31 @@ export class ConversationLedger {
     return message;
   }
 
-  readNewForAgent(agent: AgentId, turn: number): ConversationMessage[] {
+  readVisibleSnapshotForAgent(agent: AgentId, turn: number): AgentVisibleSnapshot {
+    const visibleEnd = this.findVisibleEndIndex(turn);
     const start = this.cursors[agent];
-    let end = start;
+    const snapshot: AgentVisibleSnapshot = {
+      visibleMessages: this.messages.slice(0, visibleEnd),
+      newlyVisibleMessages: this.messages.slice(start, visibleEnd),
+    };
+    this.cursors[agent] = visibleEnd;
+    return snapshot;
+  }
 
-    while (end < this.messages.length && this.messages[end].visibleFromTurn <= turn) {
-      end++;
-    }
-
-    const unread = this.messages.slice(start, end);
-    this.cursors[agent] = end;
-    return unread;
+  readNewForAgent(agent: AgentId, turn: number): ConversationMessage[] {
+    return this.readVisibleSnapshotForAgent(agent, turn).newlyVisibleMessages;
   }
 
   peekNewForAgent(agent: AgentId, turn: number): ConversationMessage[] {
     const start = this.cursors[agent];
-    let end = start;
-
-    while (end < this.messages.length && this.messages[end].visibleFromTurn <= turn) {
-      end++;
-    }
+    const end = this.findVisibleEndIndex(turn);
 
     return this.messages.slice(start, end);
   }
 
   hasNewMessages(agent: AgentId, turn: number): boolean {
     const start = this.cursors[agent];
-    return start < this.messages.length && this.messages[start].visibleFromTurn <= turn;
+    return start < this.findVisibleEndIndex(turn);
   }
 
   getProposalById(proposalId: string): ProposalMessage | undefined {
@@ -252,5 +250,13 @@ export class ConversationLedger {
 
     proposal.status = status;
     return proposal;
+  }
+
+  private findVisibleEndIndex(turn: number): number {
+    let end = 0;
+    while (end < this.messages.length && this.messages[end].visibleFromTurn <= turn) {
+      end++;
+    }
+    return end;
   }
 }

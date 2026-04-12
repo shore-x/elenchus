@@ -2,7 +2,7 @@
 // Three-layer tool allocation (§4.3):
 //   - Child management (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
 //   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
-//   - Framework tools (Yield, Vote) → all layers
+//   - Protocol tools (Yield, Vote) → all layers
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote.
 
 import { Type, type TObject } from "@sinclair/typebox";
@@ -12,7 +12,7 @@ export interface ElenchusTool {
   name: string;
   description: string;
   parameters: TObject;
-  category: "framework" | "blocking" | "nonblocking";
+  category: "protocol" | "environment" | "child-management";
 }
 
 const proposedStepSchema = Type.String({
@@ -33,7 +33,7 @@ export const yieldTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "framework",
+  category: "protocol",
 };
 
 export const voteTool: ElenchusTool = {
@@ -49,7 +49,7 @@ export const voteTool: ElenchusTool = {
       description: "Reason for your vote. If rejecting, explain what needs to change.",
     }),
   }),
-  category: "framework",
+  category: "protocol",
 };
 
 export const bashTool: ElenchusTool = {
@@ -64,7 +64,7 @@ export const bashTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "blocking",
+  category: "environment",
 };
 
 export const readFileTool: ElenchusTool = {
@@ -78,7 +78,7 @@ export const readFileTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "blocking",
+  category: "environment",
 };
 
 export const writeFileTool: ElenchusTool = {
@@ -96,15 +96,15 @@ export const writeFileTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "blocking",
+  category: "environment",
 };
 
 export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
     "Propose to create a new child agent unit to execute a specific task. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "The child unit works independently; results arrive asynchronously as a [System] message when it yields. " +
-    "The framework automatically determines the child's capabilities based on the current layer. " +
+    "The child unit works independently; results arrive asynchronously as a [Public Fact][Child Report] broadcast when it yields. " +
+    "The unit runtime automatically determines the child's capabilities based on the current layer. " +
     "You must provide proposedStep to describe how delegating this work advances the parent task.",
   parameters: Type.Object({
     task: Type.String({
@@ -112,7 +112,7 @@ export const spawnChildTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "nonblocking",
+  category: "child-management",
 };
 
 export const sendToChildTool: ElenchusTool = {
@@ -131,7 +131,7 @@ export const sendToChildTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "nonblocking",
+  category: "child-management",
 };
 
 export const sleepTool: ElenchusTool = {
@@ -139,7 +139,7 @@ export const sleepTool: ElenchusTool = {
   description:
     "Propose to pause the deliberation and enter Idle without reporting to the parent. This is a PROPOSAL — the other agent must vote APPROVE. " +
     "You must specify an explicit timeout. If no child agent reports before the timeout, " +
-    "the framework writes a timeout system message and wakes the unit. " +
+    "a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. " +
     "Use this when waiting for child agent results. " +
     "You must provide proposedStep to describe why this wait advances the task.",
   parameters: Type.Object({
@@ -148,7 +148,7 @@ export const sleepTool: ElenchusTool = {
     }),
     proposedStep: proposedStepSchema,
   }),
-  category: "framework",
+  category: "child-management",
 };
 
 const ENV_TOOLS: ElenchusTool[] = [bashTool, readFileTool, writeFileTool];

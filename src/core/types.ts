@@ -3,8 +3,9 @@
 // All layers share the same FSM and protocol (P9). Differences are only in injected tool sets:
 //   - Child management tools (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
 //   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
-//   - Framework tools (Yield, Vote) → all layers
+//   - Protocol tools (Yield, Vote) → all layers
 // User messages are async — they can arrive at any time and are processed at the next turn boundary (P4).
+// Agent-visible context is reconstructed per turn from ConversationLedger, not cached inside AgentTurn.
 
 export type AgentId = "agent-a" | "agent-b";
 export type MessageSource = "user" | AgentId | "system";
@@ -22,14 +23,14 @@ export interface VoteCall {
   reason: string;
 }
 
-export type FrameworkBroadcastCode =
+export type UnitRuntimeBroadcastCode =
   | "malformed_multiple_tool_calls"
   | "tool_not_available"
   | "proposal_missing_proposed_step"
   | "vote_arguments_invalid";
 
-export interface FrameworkBroadcast {
-  code: FrameworkBroadcastCode;
+export interface UnitRuntimeBroadcast {
+  code: UnitRuntimeBroadcastCode;
   content: string;
 }
 
@@ -122,6 +123,11 @@ export interface ConversationLedgerSnapshot {
   cursors: Record<AgentId, number>;
 }
 
+export interface AgentVisibleSnapshot {
+  visibleMessages: ConversationMessage[];
+  newlyVisibleMessages: ConversationMessage[];
+}
+
 export interface CommittedStep {
   toolName: string;
   proposedStep: string;
@@ -161,7 +167,7 @@ export interface TurnResult {
   reply: string;
   stopReason: string;
   action?: TurnAction;
-  frameworkBroadcasts?: FrameworkBroadcast[];
+  unitRuntimeBroadcasts?: UnitRuntimeBroadcast[];
 }
 
 // Structured event system — replaces untyped string callbacks.

@@ -1,3 +1,8 @@
+// Elenchus - ConversationProjector
+// Projects a turn-scoped visible snapshot from ConversationLedger into LLM-facing messages.
+// Current phase is projection-only: no history folding or compression.
+// Private overlays remain third-person and explicitly name Agent A or Agent B.
+
 import type { AgentId, ChildCommitView, ConversationMessage, PendingProposal, ProposalCall } from "./types.js";
 import type { LlmMessage } from "./ports.js";
 
@@ -10,6 +15,14 @@ const DISPLAY_NAMES: Record<string, string> = {
 
 function getDisplayName(author: string): string {
   return DISPLAY_NAMES[author] ?? author;
+}
+
+function truncatePreview(content: string, maxLength: number = 120): string {
+  const trimmed = content.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 3)}...`;
 }
 
 function renderProposalDetail(proposal: ProposalCall): string {
@@ -66,11 +79,7 @@ function renderVoteMessage(message: Extract<ConversationMessage, { kind: "vote_m
   };
 }
 
-function renderConversationMessage(message: ConversationMessage, selfId: AgentId): LlmMessage | null {
-  if (message.kind === "agent_message" && message.authoredBy === selfId) {
-    return null;
-  }
-
+function renderConversationMessage(message: ConversationMessage): LlmMessage {
   if (message.kind === "proposal_message") {
     return renderProposalMessage(message);
   }
@@ -84,7 +93,7 @@ function renderConversationMessage(message: ConversationMessage, selfId: AgentId
       role: "user",
       content:
         `[Public Fact][Tool Result]\n` +
-        `Framework recorded the result of ${message.toolName} for proposal ${message.proposalId}.\n` +
+        `Tool result for ${message.toolName} on proposal ${message.proposalId}:\n` +
         `Success: ${message.success ? "true" : "false"}\n` +
         `Duration: ${message.durationMs}ms\n` +
         `Output:\n${message.output}`,
@@ -97,8 +106,7 @@ function renderConversationMessage(message: ConversationMessage, selfId: AgentId
       role: "user",
       content:
         `[Public Fact][Child Report]\n` +
-        `Framework received a report from ${message.childId}.\n` +
-        `Content:\n${message.content}`,
+        `Report from ${message.childId}:\n${message.content}`,
       timestamp: message.timestamp,
     };
   }
@@ -106,7 +114,7 @@ function renderConversationMessage(message: ConversationMessage, selfId: AgentId
   if (message.kind === "system_message") {
     return {
       role: "user",
-      content: `[Public Fact][Framework]\n${message.content}`,
+      content: `[Public Fact][Unit Runtime]\n${message.content}`,
       timestamp: message.timestamp,
     };
   }
@@ -121,11 +129,61 @@ function renderConversationMessage(message: ConversationMessage, selfId: AgentId
   };
 }
 
+function describeNewlyVisibleMessage(message: ConversationMessage): string {
+  if (message.kind === "parent_message") {
+    return `Parent message newly visible in this turn: ${truncatePreview(message.content)}`;
+  }
+
+  if (message.kind === "agent_message") {
+    return `Message from ${getDisplayName(message.authoredBy)} newly visible in this turn: ${truncatePreview(message.content)}`;
+  }
+
+  if (message.kind === "proposal_message") {
+    return `Proposal from ${getDisplayName(message.authoredBy)} newly visible in this turn via ${message.toolName}: ${message.proposedStep}`;
+  }
+
+  if (message.kind === "vote_message") {
+    return `Vote from ${getDisplayName(message.authoredBy)} newly visible in this turn on proposal ${message.proposalId}: ${message.approve ? "APPROVE" : "REJECT"}`;
+  }
+
+  if (message.kind === "tool_result_message") {
+    return `Tool result newly visible in this turn for ${message.toolName} on proposal ${message.proposalId}: success=${message.success ? "true" : "false"}`;
+  }
+
+  if (message.kind === "child_report_message") {
+    return `Child report newly visible in this turn from ${message.childId}: ${truncatePreview(message.content)}`;
+  }
+
+  return `Unit runtime broadcast newly visible in this turn: ${truncatePreview(message.content)}`;
+}
+
 export class ConversationProjector {
-  projectNewMessages(messages: readonly ConversationMessage[], selfId: AgentId): LlmMessage[] {
+  projectVisibleMessages(messages: readonly ConversationMessage[]): LlmMessage[] {
     return messages
-      .map((message) => renderConversationMessage(message, selfId))
-      .filter((message): message is LlmMessage => message !== null);
+      .map((message) => renderConversationMessage(message));
+  }
+
+  buildNewlyVisibleMessageOverlay(agentId: AgentId, messages: readonly ConversationMessage[]): LlmMessage {
+    const agentName = getDisplayName(agentId);
+    const count = messages.length;
+    const lines = [
+      "[Directive]",
+      `${agentName} has ${count} newly visible message${count === 1 ? "" : "s"} in this turn. ${agentName} should interpret and respond to these new items in the context of the existing shared conversation history.`,
+    ];
+
+    if (count === 0) {
+      lines.push(`${agentName} has no newly visible messages in this turn.`);
+    } else {
+      for (const message of messages) {
+        lines.push(`- ${describeNewlyVisibleMessage(message)}`);
+      }
+    }
+
+    return {
+      role: "user",
+      content: lines.join("\n"),
+      timestamp: Date.now(),
+    };
   }
 
   buildProposalNotification(proposal: PendingProposal, proposerName: string, voterName: string): LlmMessage {
@@ -134,18 +192,20 @@ export class ConversationProjector {
       content:
         `[Directive]\n` +
         `${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.\n` +
-        `Allowed action: call the **vote** tool with APPROVE or REJECT and a reason.`,
+        `${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.`,
       timestamp: Date.now(),
     };
   }
 
-  buildChildCommitViewMessage(childCommitViews: readonly ChildCommitView[]): LlmMessage | null {
+  buildChildCommitViewMessage(agentId: AgentId, childCommitViews: readonly ChildCommitView[]): LlmMessage | null {
     if (childCommitViews.length === 0) {
       return null;
     }
 
+    const agentName = getDisplayName(agentId);
     const lines = [
-      "[Context Snapshot]: Child unit commit log snapshot (accepted steps only; not real-time activity):",
+      "[Context Snapshot]",
+      `The following child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`,
     ];
 
     for (const view of childCommitViews) {

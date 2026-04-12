@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
-date: 2026-04-08
-version: 2.0
+date: 2026-04-12
+version: 2.1
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -83,7 +83,7 @@ version: 2.0
 
 **推论2**：所有对某个Agent Unit可见的输入和内部动作都应统一视为同一类对象——**结构化消息（Message）**——写入该unit的**ConversationLedger**。顶层人类输入在概念上只是来自`L-1`父层的一条上层消息；L1/L2收到父Agent的消息与之完全同构。Agent无需围绕"用户"建立任何特权概念。
 
-> **原则 P1（统一消息模型）**：所有对Agent Unit可见的事实在内部都是同一类对象（Message），统一写入ConversationLedger。轮次开始时，框架从ConversationLedger中投影出当前agent可见的新消息纳入上下文。
+> **原则 P1（统一消息模型）**：所有对Agent Unit可见的事实在内部都是同一类对象（Message），统一写入ConversationLedger。每轮开始时，应基于ConversationLedger为当前agent重新投影该turn的完整可见快照；其中本轮newly visible的部分由overlay显式标出。
 
 #### 2.2.1 ConversationLedger：unit级结构化聊天事实账本
 
@@ -104,7 +104,7 @@ ConversationLedger不再是传统意义上的"消息总线"，而是**Agent Unit
 *   每条消息都有稳定的**身份标识**，可被后续消息引用
 *   会经历生命周期变化的消息（最典型是proposal）必须可被**受控回写状态**
 *   `proposal_message`必须保存**完整提议详情**——至少包括`toolName`、`proposedStep`以及`args`的完整内容；在当前阶段不得为了上下文长度而先行截断或摘要化
-*   `system_message`不是所有“看起来像系统提示”的文本容器；`proposal`、`vote`、`tool_result`都应有各自独立的结构化类型，`system_message`只用于承载缺少专门结构类型的framework-authored公共事实广播
+*   `system_message`不是所有“看起来像系统提示”的文本容器；`proposal`、`vote`、`tool_result`都应有各自独立的结构化类型，`system_message`只用于承载缺少专门结构类型的、由Unit Runtime产生的公共事实广播
 *   消息体可以包含非结构化文本，但消息本身必须是结构化对象
 
 由此得到一个关键边界：**当前轮控制提示不属于ConversationLedger中的历史事实**。例如“Agent B现在必须对某个待决proposal进行表决”这类提示只属于本轮控制上下文，不写入账本；真正进入账本的是面向两个agent共享的公共事实广播。
@@ -129,23 +129,25 @@ ConversationLedger不再是传统意义上的"消息总线"，而是**Agent Unit
 
 **前提5**：正在推理的Agent不应被中途打断，这会破坏推理连贯性。
 
-**推论3**：需要一个确定性的"读取边界"。每轮开始时框架从ConversationLedger中确定新消息并纳入上下文，轮次进行中到达的消息只能被下一轮处理。为了让这一边界可追溯，每条消息至少需要记录两个轮次字段：
+**推论3**：需要一个确定性的"读取边界"。每轮开始时，应基于ConversationLedger为当前agent构造该turn时点的完整可见快照，并用overlay显式标出本轮新近可见的部分；轮次进行中到达的消息只能被下一轮处理。为了让这一边界可追溯，每条消息至少需要记录两个轮次字段：
 
 *   **`turnAuthored`**：该消息是在第几轮中产生的
 *   **`visibleFromTurn`**：该消息从第几轮开始可被其他agent看到
 
-> **原则 P4（轮次可见性边界）**：消息异步写入ConversationLedger并持久化。每轮开始时框架根据`visibleFromTurn`从ConversationLedger中确定新消息纳入上下文；轮次中到达的消息只能被下一轮处理。
+> **原则 P4（轮次可见性边界）**：消息异步写入ConversationLedger并持久化。每轮开始时，应根据`visibleFromTurn`为当前agent构造该turn时点的完整可见快照；轮次中到达的消息只能被下一轮处理。本轮新近可见消息的边界由overlay显式标出。
 
 #### 2.3.1 事实层与视图层分离：ConversationProjector
 
-ConversationLedger保存的是完整事实，但agent真正看到的是一份**投影视图**。因此需要一个独立的**ConversationProjector**负责：
+ ConversationLedger保存的是完整事实，但agent真正看到的是一份**投影视图**。因此需要一个独立的**ConversationProjector**负责：
 
-*   从ConversationLedger中过滤当前agent可见的消息
+*   在每轮开始时，从ConversationLedger中计算当前agent在该turn时点可见的**完整统一快照**
 *   将结构化消息转换为**面向两个agent的第三方共享广播视角**聊天记录
-*   在未来接入历史压缩时保持语义等价；但在当前阶段不得通过截断proposal详情来换取上下文长度
-*   为本轮额外注入极简的私有控制提示（如某个agent当前必须对某个待决proposal调用`vote`）
+*   在未来接入历史压缩时保持语义等价；但在当前阶段**只做投影，不做历史折叠与压缩**，也不得通过截断proposal详情来换取上下文长度
+*   为本轮额外注入极简的私有overlay，用于标记**本轮新可见消息的边界**以及当前轮的动作约束（如某个agent当前必须对某个待决proposal调用`vote`）
 
-其中最后一项必须特别强调：**控制提示属于投影层overlay，不属于ConversationLedger中的历史事实。** 它只是当前轮的动作约束，不承担共享历史记录职责。
+其中最后一项必须特别强调：**控制提示属于投影层overlay，不属于ConversationLedger中的历史事实。** 它只是当前轮的动作约束与注意力提示，不承担共享历史记录职责。
+
+当前阶段的最小实现策略也应在这里固定下来：**AgentTurn不再持有一份跨轮累积的`messages`缓存。** 每次调用都应以ConversationLedger在该turn时点的可见快照为准，经ConversationProjector重新投影后形成上下文。这样可以保证agent看到的是当前轮的统一视图，而不是旧投影与新增量混合而成的半陈旧上下文。
 
 公共广播消息的措辞也必须满足一个额外约束：**它们是“说给两个agent同时听的”广播，而不是对当前agent的私聊提示。** 因此公共广播应一律使用第三人称、显式主体，避免使用第二人称“你/please/现在请你”等容易制造受众歧义的表达。
 
@@ -153,17 +155,24 @@ ConversationLedger保存的是完整事实，但agent真正看到的是一份**�
 
 为了避免“system message”成为混杂概念，ConversationProjector面对的消息应当在语义上分成两类，而不是全部压成同一种“系统消息”：
 
-*   **公共事实广播（Public Fact Broadcast）**：进入ConversationLedger，并投影为两个agent共享的历史。`parent_message`、`agent_message`、`proposal_message`、`vote_message`、`tool_result_message`、`child_report_message`以及一部分framework-authored广播都属于此类。
+*   **公共事实广播（Public Fact Broadcast）**：进入ConversationLedger，并投影为两个agent共享的历史。`parent_message`、`agent_message`、`proposal_message`、`vote_message`、`tool_result_message`、`child_report_message`以及一部分由Unit Runtime产生的广播都属于此类。
 *   **私有控制指令（Directive Overlay）**：只在当前轮临时注入给当前agent，用于说明此轮的动作约束，例如“Agent B必须对Agent A的待决proposal调用`vote`”。这类信息不写入ConversationLedger，也不构成共享历史。
 
 这一定义意味着：
 
 *   `proposal_message`和`vote_message`不是“系统消息”，而是agent-authored的公共事实
-*   `tool_result_message`不是“系统提示”，而是framework产生的公共事实
-*   `system_message`只是framework-authored公共事实的**保底容器**，仅在尚无更专门结构类型时使用
+*   `tool_result_message`不是“系统提示”，而是由Unit Runtime产生的公共事实
+*   `system_message`只是由Unit Runtime产生的公共事实的**保底容器**，仅在尚无更专门结构类型时使用
 *   不再引入任何“私有确认消息”概念；在双agent协议中，真正有语义价值的是共享事实与当前轮控制指令，而不是额外的私有确认记录
+*   私有overlay虽然只注入给当前执行的agent，但措辞仍必须与公共广播保持同一原则：**使用第三人称并显式写出`Agent A`或`Agent B`，不得使用第二人称**
 
 > **原则 P12（公共事实广播与控制指令分离）**：所有对后续双agent协作推理有持续意义的共享信息都必须作为公共事实广播进入ConversationLedger；只有当前轮的动作约束才允许作为私有overlay存在。
+
+> **原则 P14（每轮统一投影视图）**：在当前阶段，每次Agent执行都必须基于ConversationLedger在该turn时点的完整可见快照重新投影上下文；AgentTurn不得依赖跨轮持久化的本地消息缓存。
+
+> **原则 P15（新消息边界显式化）**：ConversationProjector应通过turn-local overlay明确标记本轮新近可见的消息边界，提示当前执行的`Agent A`或`Agent B`优先关注这些新信息。
+
+> **原则 P16（受众显式性）**：无论是公共事实广播还是私有overlay，只要进入双agent推理上下文，其措辞都必须使用第三人称并显式标注`Agent A`或`Agent B`，避免第二人称导致的受众歧义。
 
 ### 2.4 决策机制：谁有权行动？
 
@@ -187,11 +196,11 @@ ConversationLedger保存的是完整事实，但agent真正看到的是一份**�
 
 ### 3.3 非阻塞式工具的执行流程
 
-当一个Agent提议执行非阻塞式工具（如SpawnChild）且被对方APPROVE后：工具在后台启动，框架将“任务已启动”这一事件作为**framework-authored公共事实广播**写入ConversationLedger，状态机正常轮转。异步结果到达时再写入ConversationLedger，下一轮次可见。若Agent单元已Idle，则这些消息可作为触发消息唤醒。
+当一个Agent提议执行非阻塞式工具（如SpawnChild）且被对方APPROVE后：工具在后台启动，Unit Runtime将“任务已启动”这一事件作为公共事实广播写入ConversationLedger，状态机正常轮转。异步结果到达时再写入ConversationLedger，下一轮次可见。若Agent单元已Idle，则这些消息可作为触发消息唤醒。
 
 “任务已启动”与最终结果的区分仍借鉴分布式系统的经典模式：前者表示后台动作已经被接受并开始执行，后者表示该动作的异步产出已经返回。但这两者在本框架中都属于**公共事实广播**，而不是额外的私有确认消息。
 
-> **原则 P13（异步框架事件也属于公共事实）**：只要某个framework事件会影响后续双agent协作推理，它就应被写入ConversationLedger并以第三人称公共广播形式呈现，而不是作为面向单个agent的私有提示。
+> **原则 P13（异步Unit Runtime事件也属于公共事实）**：只要某个Unit Runtime事件会影响后续双agent协作推理，它就应被写入ConversationLedger并以第三人称公共广播形式呈现，而不是作为面向单个agent的私有提示。
 
 ### 3.4 控制与通信的分离
 
@@ -247,7 +256,7 @@ ConversationLedger保存的是完整事实，但agent真正看到的是一份**�
 
 *   **子Agent管理工具**（SpawnChild、SendToChild、Sleep）→ 非叶子节点（L0、L1）
 *   **环境工具**（Bash、ReadFile、WriteFile）→ 非纯协调节点（L1、L2）
-*   **框架工具**（Yield、Vote）→ 所有层级
+*   **协议工具**（Yield、Vote）→ 所有层级
 
 #### 4.3.1 Prompt同构与行为涌现
 
@@ -457,56 +466,55 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | T8 | TurnA/TurnB | Yield或Sleep提议被通过 | Idle |
 | T9 | 非Terminated | 父Agent发出强制终止 | Terminated |
 
-对于非阻塞式提议被APPROVE的情况：工具在后台启动，ACK写入ConversationLedger，状态机正常轮转（T2/T4），不进入Executing。
+对于非阻塞式提议被APPROVE的情况：工具在后台启动，由Unit Runtime产生的公共事实广播写入ConversationLedger，状态机正常轮转（T2/T4），不进入Executing。
 
 注：T8由两种工具触发，副作用不同（§4.4）：
 
 *   **Yield**：向父Agent的ConversationLedger写入结论消息，然后进入Idle。
-*   **Sleep**：不写入任何消息，仅进入Idle。启动超时定时器，超时时写入超时消息并唤醒（T1）。
+*   **Sleep**：不写入任何消息，仅进入Idle。启动超时定时器，超时时写入由Unit Runtime产生的超时公共事实广播并唤醒（T1）。
 
 ### 5.4 轮次内部协议
 
-每个Agent在其轮次中的输出由框架解析为三部分：
-
+每个Agent在其轮次中的输出由Unit Runtime解析为三部分：
 1.  **回复（Reply）**[必须]：对当前讨论的文本回复
-2.  **表决（Vote）**[条件]：对对方待决提议的APPROVE/REJECT（仅当存在待决提议时由框架注入Vote工具）
+2.  **表决（Vote）**[条件]：对对方待决提议的APPROVE/REJECT（仅当存在待决提议时由Unit Runtime条件注入Vote工具）
 3.  **新提议**[可选]：至多一个非Vote工具调用，自动成为待决提议
 
 关键约束：
 
 *   每轮至多一个待决提议，新提议替换该Agent之前未被表决的提议
-*   Vote由框架条件注入，是唯一不构成提议的工具调用
+*   Vote由Unit Runtime条件注入，是唯一不构成提议的工具调用
 *   提议被REJECT后失效，提议方可在下一轮重新提出
 
 ### 5.5 工具集总结
 
-**框架工具（条件注入）**：
+**协议工具（条件注入）**：
 
 | 工具 | 类别 | 说明 |
 | :------ | :------ | :------ |
-| **Vote** | framework | 对待决提议表决。仅当存在待决提议时由框架注入，不构成新提议。 |
+| **Vote** | protocol | 对待决提议表决。仅当存在待决提议时由Unit Runtime条件注入，不构成新提议。 |
 
-**默认工具（所有层级内置）**：
+**协议工具（所有层级内置）**：
 
 | 工具 | 类别 | 说明 |
 | :------ | :------ | :------ |
-| **Yield** | framework | 向父Agent交付当前结论并回到Idle（T8）。构成提议，需对方投票通过。消息体为非结构化文本。作为proposal-producing tool，调用时需附带`proposedStep`，描述"交付当前结论会如何推进父层任务"。 |
+| **Yield** | protocol | 向父Agent交付当前结论并回到Idle（T8）。构成提议，需对方投票通过。消息体为非结构化文本。作为proposal-producing tool，调用时需附带`proposedStep`，描述"交付当前结论会如何推进父层任务"。 |
 
 **子Agent管理工具**：
 
 | 工具 | 类别 | 可用层级 | 说明 |
 | :------ | :------ | :--------- | :------ |
-| **SpawnChild** | nonblocking | L0, L1 | 创建并启动子Agent单元。子单元独立工作，结果异步到达父Agent的ConversationLedger。Agent无需知道子单元的具体层级——框架根据当前层级自动决定子单元的工具集。作为proposal-producing tool，调用时需附带`proposedStep`，描述"创建该子单元会如何推进当前任务"。 |
-| **SendToChild** | nonblocking | L0, L1（条件） | 向已Idle的子Agent发送消息并唤醒。仅在已创建子Agent时可见。作为proposal-producing tool，调用时需附带`proposedStep`，描述"向该子单元发送此消息会如何推进当前任务"。 |
-| **Sleep** | framework | L0, L1 | 暂停当前Agent单元并进入Idle（T8），不向父Agent上报。必须指定显式超时时间（`timeoutMs`，无默认值）。用于等待子Agent异步结果返回。超时时框架写入超时消息并唤醒（见§4.4）。作为proposal-producing tool，调用时需附带`proposedStep`，描述"此次等待对任务推进的意义"。 |
+| **SpawnChild** | child-management | L0, L1 | 创建并启动子Agent单元。子单元独立工作，结果异步到达父Agent的ConversationLedger。Agent无需知道子单元的具体层级——Unit Runtime根据当前层级自动决定子单元的工具集。作为proposal-producing tool，调用时需附带`proposedStep`，描述"创建该子单元会如何推进当前任务"。 |
+| **SendToChild** | child-management | L0, L1（条件） | 向已Idle的子Agent发送消息并唤醒。仅在已创建子Agent时可见。作为proposal-producing tool，调用时需附带`proposedStep`，描述"向该子单元发送此消息会如何推进当前任务"。 |
+| **Sleep** | child-management | L0, L1 | 暂停当前Agent单元并进入Idle（T8），不向父Agent上报。必须指定显式超时时间（`timeoutMs`，无默认值）。用于等待子Agent异步结果返回。超时时由Unit Runtime写入超时公共事实广播并唤醒（见§4.4）。作为proposal-producing tool，调用时需附带`proposedStep`，描述"此次等待对任务推进的意义"。 |
 
 **环境工具（阻塞式）**：
 
 | 工具 | 类别 | 可用层级 | 说明 |
 | :------ | :------ | :--------- | :------ |
-| **Bash** | blocking | L1, L2 | 执行shell命令。作为proposal-producing tool，调用时需附带`proposedStep`，描述该命令对任务推进的意义，而非仅复述命令本身。 |
-| **ReadFile** | blocking | L1, L2 | 读取文件内容。作为proposal-producing tool，调用时需附带`proposedStep`，描述"读取该文件将帮助确认什么"。 |
-| **WriteFile** | blocking | L1, L2 | 写入文件。作为proposal-producing tool，调用时需附带`proposedStep`，描述"这次写入将如何推进任务"。 |
+| **Bash** | environment | L1, L2 | 执行shell命令。作为proposal-producing tool，调用时需附带`proposedStep`，描述该命令对任务推进的意义，而非仅复述命令本身。 |
+| **ReadFile** | environment | L1, L2 | 读取文件内容。作为proposal-producing tool，调用时需附带`proposedStep`，描述"读取该文件将帮助确认什么"。 |
+| **WriteFile** | environment | L1, L2 | 写入文件。作为proposal-producing tool，调用时需附带`proposedStep`，描述"这次写入将如何推进任务"。 |
 
 **各层级工具集汇总**：
 
@@ -548,7 +556,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | :------ | :------ |
 | Agent单元（Agent Unit） | 由两个Agent组成的最小协作执行单位，也是一个状态机实例 |
 | ConversationLedger | 每个Agent单元的结构化聊天事实账本。保存完整消息历史、轮次可见性信息、受控状态更新所需元数据，并为未来持久化预留空间 |
-| ConversationProjector | 从ConversationLedger生成agent可见聊天视图的投影层；负责过滤、视角转换、历史截断与本轮控制提示的overlay注入 |
+| ConversationProjector | 从ConversationLedger生成agent可见聊天视图的投影层；负责结构化消息到agent可见视图的转换、本轮控制提示与newly visible边界的overlay注入。未来可承载压缩策略，但当前阶段不执行历史折叠与压缩 |
 | 上层消息（Parent Message） | 来自父层的一条消息。对L0而言，人类输入只是来自`L-1`父层的上层消息；与L1/L2收到父Agent消息在概念上同构 |
 | 触发消息（Trigger Message） | 使Agent单元从Idle状态转入TurnA的消息 |
 | turnAuthored | 某条消息在哪一轮中被创建 |
@@ -557,12 +565,12 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 | 表决（Vote） | 对对方提议的APPROVE或REJECT判定 |
 | 待决提议（Pending Proposal） | 已提出但尚未被表决的提议 |
 | Yield | 默认工具，Agent单元向父Agent交付当前结论并回到Idle状态 |
-| Sleep | 框架工具（非叶子节点），Agent单元暂停进入Idle但不向父Agent上报，携带显式超时 |
-| ACK消息 | 非阻塞工具被APPROVE后框架写入ConversationLedger的即时确认消息 |
+| Sleep | 子Agent管理工具（非叶子节点），Agent单元暂停进入Idle但不向父Agent上报，携带显式超时 |
+| Unit Runtime公共事实广播 | 由Unit Runtime写入ConversationLedger并进入共享历史的运行时事实，如子单元启动、超时、投递失败或排队等事件 |
 | 阻塞式工具 | 对环境的原子操作，执行时Agent单元进入Executing状态 |
 | 非阻塞式工具 | 对其他Agent单元的操作，后台执行，结果异步到达 |
 | 强制终止 | 父Agent在代码层面直接终止子Agent单元，绕过协商 |
-| 轮次可见性边界 | 轮次开始时的读取边界，依据ConversationLedger中的`visibleFromTurn`确定哪些消息纳入本次上下文 |
+| 轮次可见性边界 | 轮次开始时的读取边界，依据ConversationLedger中的`visibleFromTurn`为当前agent构造该turn时点的完整可见快照，并将本轮newly visible的部分作为overlay显式标出 |
 | proposedStep | proposal-producing tool call上的短语义字段，表达"该动作对任务推进的意义" |
 | committedStep | 某个proposal被APPROVE后，由其proposedStep固化得到的一条已提交推进记录 |
 | commitLog | 归属于Agent Unit的已提交推进记录序列，表示该单元正式接受过哪些任务推进步骤，而非成功历史 |
@@ -571,6 +579,7 @@ Sleep的超时机制与现有架构完全兼容——超时只是另一个写入
 
 **版本历史**：
 
+*   v2.1 (2026-04-12)：统一术语分层——保留`framework`用于Elenchus整体设计语境，将运行时产生的共享广播与条件注入语义统一收敛为`Unit Runtime`，将Yield/Vote统一标记为`protocol`工具，将SpawnChild/SendToChild/Sleep与Bash/ReadFile/WriteFile分别统一为`child-management`与`environment`类别。同步修正P1/P4对turn上下文的表述为“完整可见快照 + newly visible边界overlay”，并移除已过时的ACK术语。
 *   v1.9 (2026-04-11)：通信模型重构——以ConversationLedger取代MessageBus作为unit级结构化聊天事实账本；明确消息体可为非结构化文本但消息封套必须结构化；新增`turnAuthored`/`visibleFromTurn`轮次语义、ConversationProjector投影层、proposal受控状态更新，以及"顶层用户是L-1父层"的分形输入表述。同步更新术语与相关流程描述。
 *   v1.8 (2026-04-11)：将§4.5从"实时活动可见性探索"收敛为当前阶段的Commit Log方案。引入`proposedStep`、`committedStep`、`commitLog`三层命名；明确仅proposal-producing tools需要携带`proposedStep`，其语义是"动作对任务推进的意义"；规定`APPROVE`即写入、执行失败不回滚；明确`commitLog`归属于Agent Unit且不等于success history。同步更新工具说明与术语表。
 *   v1.7 (2026-04-11)：新增§4.5 被动状态可见性（设计探索）——Signal与State分离的思路，父Agent自动注入子Agent最新活动快照，作为Yield正式通信的粗粒度补充。尚未落地，记录待决设计点。

@@ -5,9 +5,10 @@
 
 import { AgentTurn } from "./agent-turn.js";
 import { ConversationLedger } from "../conversation-ledger.js";
+import { ConversationProjector } from "../conversation-projector.js";
 import { buildSystemPrompt } from "../prompts.js";
-import type { LlmClient, ToolExecutor } from "../ports.js";
-import { type AgentId, type ChildCommitView, type CommittedStep, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
+import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
+import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type SystemEvent, type ToolLevel, type UnitScope, type UnitState } from "../types.js";
 import { isBlockingTool, isNonBlockingTool } from "../tools.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
@@ -26,6 +27,7 @@ export interface DeliberationUnitOptions {
 export class DeliberationUnit {
   private state: UnitState = "idle";
   private ledger: ConversationLedger;
+  private projector: ConversationProjector;
   private agentA: AgentTurn;
   private agentB: AgentTurn;
   private loopRunning = false;
@@ -49,6 +51,7 @@ export class DeliberationUnit {
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
     this.ledger = new ConversationLedger();
+    this.projector = new ConversationProjector();
     this.agentA = new AgentTurn("agent-a", buildSystemPrompt("agent-a", this.level), this.llmClient, this.level);
     this.agentB = new AgentTurn("agent-b", buildSystemPrompt("agent-b", this.level), this.llmClient, this.level);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
@@ -128,6 +131,30 @@ export class DeliberationUnit {
       && left.path.every((segment, index) => segment === right.path[index]);
   }
 
+  private buildTurnMessages(
+    agentId: AgentId,
+    visibleMessages: readonly ConversationMessage[],
+    newlyVisibleMessages: readonly ConversationMessage[],
+    pendingProposal: PendingProposal | null,
+    childCommitViews: readonly ChildCommitView[],
+  ): LlmMessage[] {
+    const messages = this.projector.projectVisibleMessages(visibleMessages);
+    messages.push(this.projector.buildNewlyVisibleMessageOverlay(agentId, newlyVisibleMessages));
+
+    const childCommitViewMessage = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
+    if (childCommitViewMessage) {
+      messages.push(childCommitViewMessage);
+    }
+
+    if (pendingProposal && pendingProposal.proposer !== agentId) {
+      const proposerName = AGENT_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
+      const voterName = AGENT_NAMES[agentId] ?? agentId;
+      messages.push(this.projector.buildProposalNotification(pendingProposal, proposerName, voterName));
+    }
+
+    return messages;
+  }
+
   private async runLoop(): Promise<void> {
     while (this.state === "turn-a" || this.state === "turn-b") {
       const currentAgent: AgentId = this.state === "turn-a" ? "agent-a" : "agent-b";
@@ -135,7 +162,19 @@ export class DeliberationUnit {
       const agentTurn = currentAgent === "agent-a" ? this.agentA : this.agentB;
 
       this.turnCounter++;
-      const newMessages = this.ledger.readNewForAgent(currentAgent, this.turnCounter);
+      const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
+
+      const hasChildren = this.children.size > 0;
+      const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
+      const pendingProposal = this.getPendingProposal();
+      const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
+      const turnMessages = this.buildTurnMessages(
+        currentAgent,
+        visibleSnapshot.visibleMessages,
+        visibleSnapshot.newlyVisibleMessages,
+        pendingProposal,
+        childCommitViews,
+      );
 
       this.emit({
         type: "turn-start",
@@ -143,20 +182,16 @@ export class DeliberationUnit {
         turn: this.turnCounter,
         agent: currentAgent,
         state: this.state,
-        contextSize: agentTurn.getContextSize(),
-        newMessages: newMessages.length,
+        contextSize: turnMessages.length,
+        newMessages: visibleSnapshot.newlyVisibleMessages.length,
       });
 
-      const hasChildren = this.children.size > 0;
-      const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
-      const pendingProposal = this.getPendingProposal();
       let result;
       try {
         result = await agentTurn.execute(
-          newMessages,
-          pendingProposal,
+          turnMessages,
+          hasPendingFromOther,
           hasChildren,
-          childCommitViews,
         );
       } catch (err) {
         this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
@@ -164,7 +199,7 @@ export class DeliberationUnit {
         return;
       }
 
-      const isEmpty = !result.reply?.trim() && !result.action && !(result.frameworkBroadcasts?.length);
+      const isEmpty = !result.reply?.trim() && !result.action && !(result.unitRuntimeBroadcasts?.length);
       if (isEmpty) {
         this.consecutiveEmptyTurns++;
         if (this.consecutiveEmptyTurns >= DeliberationUnit.MAX_EMPTY_TURNS) {
@@ -181,9 +216,9 @@ export class DeliberationUnit {
         this.emit({ type: "agent-message", scope: this.scope, turn: this.turnCounter, agent: currentAgent, content: result.reply });
       }
 
-      if (result.frameworkBroadcasts?.length) {
+      if (result.unitRuntimeBroadcasts?.length) {
         const broadcastMeta = this.buildDeferredVisibilityMeta();
-        for (const broadcast of result.frameworkBroadcasts) {
+        for (const broadcast of result.unitRuntimeBroadcasts) {
           this.ledger.appendSystemMessage(broadcast.content, broadcastMeta);
           this.emit({ type: "warning", scope: this.scope, message: broadcast.content });
         }
@@ -223,7 +258,7 @@ export class DeliberationUnit {
             this.transition(this.state, "idle");
             this.sleepTimer = setTimeout(() => {
               this.sleepTimer = null;
-              this.ledger.appendSystemMessage(`Sleep timeout after ${timeoutMs}ms. No child agent has reported.`, this.buildDeferredVisibilityMeta());
+              this.ledger.appendSystemMessage(`The sleep timeout of ${timeoutMs}ms elapsed before any child unit reported. The unit became eligible to resume deliberation.`, this.buildDeferredVisibilityMeta());
               this.wakeIfIdle();
             }, timeoutMs);
             return;
@@ -314,7 +349,7 @@ export class DeliberationUnit {
       this.children.set(childId, child);
 
       const taskPreview = task.length > 100 ? task.slice(0, 100) + "..." : task;
-      this.ledger.appendSystemMessage(`Child unit ${childId} started with task: ${taskPreview}`, this.buildDeferredVisibilityMeta());
+      this.ledger.appendSystemMessage(`Child unit ${childId} started with the following task: ${taskPreview}`, this.buildDeferredVisibilityMeta());
       this.emit({ type: "child-spawned", scope: childScope, task });
       child.injectUserMessage(task);
     } else if (toolName === "sendToChild") {
@@ -323,17 +358,17 @@ export class DeliberationUnit {
       const child = this.children.get(childId);
 
       if (!child) {
-        this.ledger.appendSystemMessage(`Error: Child ${childId} not found. Available: ${[...this.children.keys()].join(", ") || "none"}`, this.buildDeferredVisibilityMeta());
+        this.ledger.appendSystemMessage(`The message could not be delivered to child unit ${childId} because no such child unit exists. Available child units: ${[...this.children.keys()].join(", ") || "none"}`, this.buildDeferredVisibilityMeta());
         this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not found` });
         return;
       }
 
       if (child.getState() !== "idle") {
-        this.ledger.appendSystemMessage(`Warning: Child ${childId} is in state "${child.getState()}", not idle. Message queued anyway.`, this.buildDeferredVisibilityMeta());
+        this.ledger.appendSystemMessage(`Child unit ${childId} was in state "${child.getState()}" rather than idle. The message was queued for that child unit.`, this.buildDeferredVisibilityMeta());
       }
 
       child.injectUserMessage(message);
-      this.ledger.appendSystemMessage(`Message sent to child ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`, this.buildDeferredVisibilityMeta());
+      this.ledger.appendSystemMessage(`The following message was sent to child unit ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`, this.buildDeferredVisibilityMeta());
       this.emit({ type: "child-message-sent", scope: child.scope, message });
     }
   }

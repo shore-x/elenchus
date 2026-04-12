@@ -1,12 +1,11 @@
 // Elenchus - AgentTurn
 // Executes a single LLM turn for one agent using the abstract LlmClient port.
-// Each agent maintains an independent message history.
-// The other agent's replies and system events are injected as user messages with prefixes.
+// AgentTurn is intentionally stateless with respect to conversation history.
+// The full agent-visible context is projected per turn from ConversationLedger upstream.
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
 import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
-import { ConversationProjector } from "../conversation-projector.js";
-import { type AgentId, type ChildCommitView, type ConversationMessage, type FrameworkBroadcast, type PendingProposal, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type VoteCall } from "../types.js";
+import { type AgentId, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
 import { buildToolList, type ElenchusTool } from "../tools.js";
 
 const DISPLAY_NAMES: Record<AgentId, string> = {
@@ -31,65 +30,29 @@ export class AgentTurn {
   private systemPrompt: string;
   private llmClient: LlmClient;
   private level: ToolLevel;
-  private projector: ConversationProjector;
-  private messages: LlmMessage[] = [];
 
   constructor(selfId: AgentId, systemPrompt: string, llmClient: LlmClient, level: ToolLevel = "L0") {
     this.selfId = selfId;
     this.systemPrompt = systemPrompt;
     this.llmClient = llmClient;
     this.level = level;
-    this.projector = new ConversationProjector();
   }
 
   async execute(
-    newConversationMessages: ConversationMessage[],
-    pendingProposal: PendingProposal | null,
+    messages: LlmMessage[],
+    hasPendingFromOther: boolean,
     hasChildren: boolean = false,
-    childCommitViews: readonly ChildCommitView[] = [],
   ): Promise<TurnResult> {
-    const injected = this.projector.projectNewMessages(newConversationMessages, this.selfId);
-    this.messages.push(...injected);
-
-    if (pendingProposal && pendingProposal.proposer !== this.selfId) {
-      const proposerName = DISPLAY_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
-      const voterName = DISPLAY_NAMES[this.selfId] ?? this.selfId;
-      this.messages.push(this.projector.buildProposalNotification(pendingProposal, proposerName, voterName));
-    }
-
-    const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== this.selfId;
     const tools = buildToolList(hasPendingFromOther, this.level, hasChildren);
-    const childCommitViewMessage = this.projector.buildChildCommitViewMessage(childCommitViews);
 
     const context: LlmContext = {
       systemPrompt: this.systemPrompt,
-      messages: childCommitViewMessage ? [...this.messages, childCommitViewMessage] : this.messages,
+      messages,
       tools: toProviderTools(tools),
     };
 
     const response = await this.llmClient.complete(context, { maxTokens: 8192 });
-    const sanitizedResponse = this.sanitizeAssistantResponse(response);
-    if (sanitizedResponse) {
-      this.messages.push(sanitizedResponse);
-    }
-
     return this.parseTurnResult(response, tools);
-  }
-
-  getContextSize(): number {
-    return this.messages.length;
-  }
-
-  private sanitizeAssistantResponse(response: Awaited<ReturnType<LlmClient["complete"]>>): LlmMessage | null {
-    const textBlocks = response.content.filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text");
-    if (textBlocks.length === 0) {
-      return null;
-    }
-
-    return {
-      ...response,
-      content: textBlocks,
-    };
   }
 
   private parseTurnResult(response: Awaited<ReturnType<LlmClient["complete"]>>, tools: readonly ElenchusTool[]): TurnResult {
@@ -108,10 +71,10 @@ export class AgentTurn {
 
     const agentName = getDisplayName(this.selfId);
     if (toolCalls.length > 1) {
-      result.frameworkBroadcasts = [
-        this.createFrameworkBroadcast(
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
           "malformed_multiple_tool_calls",
-          `Framework rejected ${agentName}'s tool invocation because the response contained multiple tool calls. No proposal or vote was recorded.`,
+          `${agentName}'s tool invocation was rejected because the response contained multiple tool calls. No proposal or vote was recorded.`,
         ),
       ];
       return result;
@@ -120,10 +83,10 @@ export class AgentTurn {
     const [toolCall] = toolCalls;
     const validToolNames = new Set(tools.map((tool) => tool.name));
     if (!validToolNames.has(toolCall.name)) {
-      result.frameworkBroadcasts = [
-        this.createFrameworkBroadcast(
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
           "tool_not_available",
-          `Framework rejected ${agentName}'s tool invocation because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`,
+          `${agentName}'s tool invocation was rejected because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`,
         ),
       ];
       return result;
@@ -132,10 +95,10 @@ export class AgentTurn {
     if (toolCall.name === "vote") {
       const vote = this.parseVoteCall(toolCall.arguments);
       if (!vote) {
-        result.frameworkBroadcasts = [
-          this.createFrameworkBroadcast(
+        result.unitRuntimeBroadcasts = [
+          this.createUnitRuntimeBroadcast(
             "vote_arguments_invalid",
-            `Framework rejected ${agentName}'s vote invocation because the vote arguments were invalid. No vote was recorded.`,
+            `${agentName}'s vote invocation was rejected because the vote arguments were invalid. No vote was recorded.`,
           ),
         ];
         return result;
@@ -147,10 +110,10 @@ export class AgentTurn {
 
     const proposal = this.parseProposalCall(toolCall.name, toolCall.arguments);
     if (!proposal) {
-      result.frameworkBroadcasts = [
-        this.createFrameworkBroadcast(
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
           "proposal_missing_proposed_step",
-          `Framework rejected ${agentName}'s ${toolCall.name} proposal because proposedStep was missing or empty. No proposal was recorded.`,
+          `${agentName}'s ${toolCall.name} proposal was rejected because proposedStep was missing or empty. No proposal was recorded.`,
         ),
       ];
       return result;
@@ -186,7 +149,7 @@ export class AgentTurn {
     };
   }
 
-  private createFrameworkBroadcast(code: FrameworkBroadcast["code"], content: string): FrameworkBroadcast {
+  private createUnitRuntimeBroadcast(code: UnitRuntimeBroadcast["code"], content: string): UnitRuntimeBroadcast {
     return { code, content };
   }
 }
