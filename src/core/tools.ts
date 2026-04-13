@@ -72,14 +72,15 @@ export const reportTool: ElenchusTool = {
 export const compressContextTool: ElenchusTool = {
   name: "compressContext",
   description:
-    "Propose to start an asynchronous context compression task that refreshes the unit's memory snapshot. " +
+    "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. " +
     "This is a PROPOSAL — the other agent must vote APPROVE before it starts. " +
+    "After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. " +
     "Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. " +
     "Provide preservation requirements describing what this compression should especially retain. " +
     "If a compression task is already active, a duplicate approved call will fail at runtime.",
   parameters: Type.Object({
     requirements: Type.String({
-      description: "What this compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away.",
+      description: "What this background compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away. This is a preservation-priority declaration, not an inline summary and not a request to pause for compression.",
     }),
     proposedStep: proposedStepSchema,
   }),

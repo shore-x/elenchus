@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Skill System"
-date: 2026-04-12
-version: 1.0
+date: 2026-04-13
+version: 1.2
 ---
 
 # Skill System
@@ -15,13 +15,14 @@ version: 1.0
 
 This document specifies:
 
-- what an installable skill is in Elenchus
+- what an installable skill is in the current implemented Elenchus v1 model
 - why skills are modeled as capability bundles rather than protocol entities
 - the v1 skill package format
 - layer-specific injection rules
 - how skill tools participate in proposal-vote and blocking execution
 - how runtime hot install refreshes capability snapshots at turn boundaries
 - how skill bindings are persisted and checked on cold start
+- how this current model relates to the longer-term unified knowledge-space direction
 
 It complements the execution semantics in [protocol-and-runtime.md](./protocol-and-runtime.md), the layer model in [hierarchy-and-layers.md](./hierarchy-and-layers.md), and the tool-surface summary in [state-machine-and-tools.md](./state-machine-and-tools.md).
 
@@ -33,9 +34,25 @@ It complements the execution semantics in [protocol-and-runtime.md](./protocol-a
 
 ---
 
+## 0. Current Status and Longer-Term Direction
+
+This document remains the authoritative specification for the **current implemented installable skill v1 model**.
+
+At the same time, the framework is now exploring a longer-term direction in which skill-like guidance and long-term memory may be unified into a broader **knowledge space**.
+
+That longer-term direction currently commits only to the following high-level ideas:
+
+- a small amount of **`Resident Knowledge`** may eventually become part of the default agent-visible knowledge surface
+- deeper external knowledge may be expanded by reference rather than always preloaded in full
+- the framework has **not** yet decided whether `Resident Knowledge` should be configured as one explicit set, one canonical file, or a dynamically assembled resident view over distributed knowledge nodes
+- the framework has **not** yet decided whether the knowledge space should be implemented purely through the file system, even though the current direction remains file-system-friendly and text-centric
+- broader issues such as knowledge growth, drift, decay, cleanup, and conflict handling are deferred to a future **knowledge anti-entropy** design rather than being forced into the current skill v1 document
+
+Nothing in this section overrides the current runtime semantics defined below. It only records that installable skill v1 is now understood as the present implementation state rather than the final conceptual destination.
+
 ## 1. Skill Position in the Architecture
 
-A skill is an **installable capability bundle**. It is not:
+In the current implemented v1 model, a skill is an **installable capability bundle**. It is not:
 
 - a new FSM state
 - a new protocol family
@@ -362,5 +379,6 @@ These may be explored later, but they are intentionally excluded from the minima
 
 ## Change Log
 
+- **v1.2 (2026-04-13)**: Added a status note clarifying that this document remains authoritative for the current implemented installable skill v1 model, while the longer-term direction is shifting toward a unified knowledge space with `Resident Knowledge`, unresolved resident-assembly questions, unresolved storage-substrate questions, and a future knowledge anti-entropy design boundary.
 - **v1.1 (2026-04-13)**: Extended the skill system from startup-only loading to turn-boundary hot install. Added a shared capability-provider model, the built-in blocking `installSkill` tool for local skill-package directories, next-turn visibility semantics, and persisted binding refresh after successful runtime installation.
 - **v1.0 (2026-04-12)**: Introduced the initial installable-skill design. Skills are modeled as runtime capability bundles that contribute prompt appendix plus blocking tools, defaulting to L1/L2 injection only. Added namespaced skill tools, structured local-command runners, proposal-vote compatibility, and persisted skill binding checks for cold-start recovery.

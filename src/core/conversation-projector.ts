@@ -17,14 +17,6 @@ function getDisplayName(author: string): string {
   return DISPLAY_NAMES[author] ?? author;
 }
 
-function truncatePreview(content: string, maxLength: number = 120): string {
-  const trimmed = content.replace(/\s+/g, " ").trim();
-  if (trimmed.length <= maxLength) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, maxLength - 3)}...`;
-}
-
 function renderProposalDetail(proposal: ProposalCall): string {
   switch (proposal.toolName) {
     case "yield":
@@ -148,38 +140,6 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
   };
 }
 
-function describeNewlyVisibleMessage(message: ConversationMessage): string {
-  if (message.kind === "incoming_message") {
-    return `Incoming message newly visible in this turn: ${truncatePreview(message.content)}`;
-  }
-
-  if (message.kind === "agent_message") {
-    return `Message from ${getDisplayName(message.authoredBy)} newly visible in this turn: ${truncatePreview(message.content)}`;
-  }
-
-  if (message.kind === "proposal_message") {
-    return `Proposal from ${getDisplayName(message.authoredBy)} newly visible in this turn via ${message.toolName}: ${message.proposedStep}`;
-  }
-
-  if (message.kind === "vote_message") {
-    return `Vote from ${getDisplayName(message.authoredBy)} newly visible in this turn on proposal ${message.proposalId}: ${message.approve ? "APPROVE" : "REJECT"}`;
-  }
-
-  if (message.kind === "tool_result_message") {
-    return `Tool result newly visible in this turn for ${message.toolName} on proposal ${message.proposalId}: success=${message.success ? "true" : "false"}`;
-  }
-
-  if (message.kind === "upward_message") {
-    return `Upward message newly visible in this turn via ${message.deliveryMode}: ${truncatePreview(message.content)}`;
-  }
-
-  if (message.kind === "child_report_message") {
-    return `Child report newly visible in this turn from ${message.childId} via ${message.deliveryMode}: ${truncatePreview(message.content)}`;
-  }
-
-  return `Unit runtime broadcast newly visible in this turn: ${truncatePreview(message.content)}`;
-}
-
 export class ConversationProjector {
   projectVisibleMessages(messages: readonly ConversationMessage[]): LlmMessage[] {
     return messages
@@ -198,22 +158,17 @@ export class ConversationProjector {
     };
   }
 
-  buildNewlyVisibleMessageOverlay(agentId: AgentId, messages: readonly ConversationMessage[]): LlmMessage {
+  buildNewlyVisibleBoundaryOverlay(agentId: AgentId, count: number): LlmMessage {
     const agentName = getDisplayName(agentId);
-    const count = messages.length;
     const lines = [
-      "[Directive]",
-      `${agentName} has ${count} newly visible message${count === 1 ? "" : "s"} in this turn. ${agentName} should interpret and respond to these new items in the context of the existing shared conversation history.`,
+      "[Context Boundary]",
+      count === 1
+        ? `The message below this marker became newly visible in this turn for ${agentName}.`
+        : `${count} messages below this marker became newly visible in this turn for ${agentName}.`,
+      count === 1
+        ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.`
+        : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`,
     ];
-
-    if (count === 0) {
-      lines.push(`${agentName} has no newly visible messages in this turn.`);
-      lines.push(`The absence of newly visible messages does not by itself mean the task is complete, blocked, or ready to pause.`);
-    } else {
-      for (const message of messages) {
-        lines.push(`- ${describeNewlyVisibleMessage(message)}`);
-      }
-    }
 
     return {
       role: "user",

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Hierarchy and Layers"
-date: 2026-04-12
-version: 3.4
+date: 2026-04-13
+version: 3.5
 ---
 
 # Hierarchy and Layers
@@ -151,6 +151,13 @@ That means:
 - knowledge should be injected or externalized rather than accumulated as irreplaceable hidden history
 - the parent naturally acts as a knowledge curator when spawning children
 
+The longer-term direction is to externalize not only ad hoc task context, but a broader **knowledge space** shared by skill-like guidance and long-term memory.
+
+- a small amount of **`Resident Knowledge`** may eventually become part of the default agent-visible knowledge surface
+- deeper knowledge should remain expandable by reference rather than preloaded in full
+- the framework currently does **not** assume that `Resident Knowledge` must be stored as one canonical file or one explicit set; it may instead emerge from distributed knowledge nodes and a separately assembled resident view
+- the framework also does **not** yet commit to the file system as the only possible implementation substrate, even though the current direction remains file-system-friendly and text-centric
+
 At the current stage, `spawnChild(task)` is the minimal knowledge injection mechanism. It should be treated as an initial brief, not as proof that the child already has all necessary context. The framework therefore relies on continued natural-language exchange through `report`, `yield`, and `sendToChild` whenever context needs to keep flowing across the layer boundary.
 
 ## 9. Commit Log as Parent-Visible Progress Boundary
@@ -205,6 +212,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v3.5 (2026-04-13)**: Extended the externalized-knowledge discussion toward a unified knowledge-space direction. Introduced `Resident Knowledge` as the current term for the small default resident knowledge surface, while explicitly recording that its assembly model and the ultimate storage substrate both remain undecided.
 - **v3.4 (2026-04-12)**: Added restart-time child recovery semantics. Unmounted children remain on disk as durable history, but cold-start recovery rebuilds only the mounted active child subtree rather than reviving every historically affiliated child.
 - **v3.3 (2026-04-12)**: Added child unmount/remount semantics. A parent may unmount an `idle` child so it disappears from the parent agent's current visible context while parent-child affiliation remains in the program. New upward communication from that child automatically remounts it into the parent's visible child set.
 - **v3.2 (2026-04-12)**: Added explicit parent-child routing guidance: parent units may gradually build multiple child workstreams across turns, and should decide whether new information belongs in an existing child workflow via `sendToChild` or should instead motivate a new child unit when the line of work is sufficiently separate.

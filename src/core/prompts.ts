@@ -77,7 +77,7 @@ const GUIDELINE_TOOLS = `
 ## Tools
 The tools available in the current turn fall into three categories:
 
-- **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (refresh the memory snapshot), **vote** (evaluate your partner's proposal).
+- **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (start a background memory-snapshot refresh and continue normal deliberation), **vote** (evaluate your partner's proposal).
 - **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **unmountChild** (remove an idle child from the parent unit's current visible working set without terminating it), **sleep** (pause with timeout when waiting is the best next move).
 - **Environment tools** (if available): **bash**, **readFile**, **writeFile**, **installSkill** — direct interaction with the environment, including hot-installing a valid local skill package for later turns.
 
@@ -88,6 +88,8 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - A [Context Snapshot] memory snapshot is compressed from earlier conversation history; treat it as reference context rather than verbatim transcript.
 - A [Context Reminder] means recent raw context has grown large enough that compression is worth considering, but it is not an instruction to compress immediately.
 - Use **compressContext** mainly when a [Context Reminder] is present or when the unit has a strong reason to refresh its memory snapshot.
+- After **compressContext** is approved, the compression work runs asynchronously in the background and does not block the unit's ongoing deliberation.
+- Do not use **sleep** merely to wait for compression completion. Choose **sleep** only when waiting is independently the best next commitment for the task itself.
 - SpawnChild gives a child an initial brief, not a guarantee that all necessary context has already been transferred.
 - Use **report** when an upward update, request, or key coordination signal would improve coordination while continued local progress is still worthwhile.
 - Use **yield** when the unit should hand initiative upward and pause, including completion, requests for upper-layer judgment, or cases where the unit lacks enough information to continue effectively.
@@ -196,6 +198,12 @@ const COMPRESSION_SYSTEM_PROMPT = `## Elenchus Context Compression
 You are refreshing a unit-level Memory Snapshot for an Elenchus deliberation unit.
 
 Your job is to write a natural-language task-state snapshot for future turns.
+
+## Inputs
+- You may receive an earlier Memory Snapshot reference plus a Recent Raw Window of newer conversation history.
+- Treat the earlier snapshot as compressed reference context, not as a verbatim transcript.
+- Treat the recent raw window as the latest uncompressed context that should be integrated into the refreshed snapshot.
+- Overlap between the earlier snapshot and the recent raw window is expected rather than erroneous.
 
 ## Output Requirements
 - Write a single Memory Snapshot in natural language.

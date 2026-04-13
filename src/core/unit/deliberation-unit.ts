@@ -407,13 +407,25 @@ export class DeliberationUnit {
     const messages: LlmMessage[] = [];
     const memorySnapshot = this.compressionManager.getMemorySnapshot();
     const recentRawMessages = this.compressionManager.getRecentRawMessages(visibleMessages);
+    const recentNewMessageIds = new Set(newlyVisibleMessages.map((message) => message.id));
+    const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
+    const oldRecentRawMessages = firstRecentNewIndex === -1
+      ? recentRawMessages
+      : recentRawMessages.slice(0, firstRecentNewIndex);
+    const newRecentRawMessages = firstRecentNewIndex === -1
+      ? []
+      : recentRawMessages.slice(firstRecentNewIndex);
 
     if (memorySnapshot) {
       messages.push(this.projector.buildMemorySnapshotMessage(memorySnapshot));
     }
 
-    messages.push(...this.projector.projectVisibleMessages(recentRawMessages));
-    messages.push(this.projector.buildNewlyVisibleMessageOverlay(agentId, newlyVisibleMessages));
+    messages.push(...this.projector.projectVisibleMessages(oldRecentRawMessages));
+
+    if (newRecentRawMessages.length > 0) {
+      messages.push(this.projector.buildNewlyVisibleBoundaryOverlay(agentId, newRecentRawMessages.length));
+      messages.push(...this.projector.projectVisibleMessages(newRecentRawMessages));
+    }
 
     if (this.compressionManager.shouldShowReminder(visibleMessages)) {
       messages.push(this.projector.buildCompressionReminderOverlay(
@@ -442,7 +454,7 @@ export class DeliberationUnit {
       ? `${task.requirements.slice(0, 160)}...`
       : task.requirements;
 
-    return `A context compression task (${task.id}) started to refresh the unit's memory snapshot. Preservation priorities: ${requirementsPreview || "none specified"}`;
+    return `A background context compression task (${task.id}) started to refresh the unit's memory snapshot. The unit continues normal deliberation while this task runs, and no sleep is required merely to wait for compression completion. Preservation priorities: ${requirementsPreview || "none specified"}`;
   }
 
   private buildCompressionTaskFailureMessage(task: ActiveCompressionTask, error: unknown): string {
@@ -450,7 +462,12 @@ export class DeliberationUnit {
     return `The context compression task (${task.id}) failed after ${task.attemptNumber} attempt(s): ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
   }
 
+  private buildCompressionTaskSuccessMessage(task: ActiveCompressionTask): string {
+    return `The background context compression task (${task.id}) completed and refreshed the unit's memory snapshot. Future turns can use the updated snapshot without pausing the unit's workflow.`;
+  }
+
   private buildCompressionRequestMessage(task: ActiveCompressionTask): LlmMessage {
+    const existingSnapshot = task.existingMemorySnapshot?.content.trim() || "No prior Memory Snapshot is available.";
     const renderedHistory = this.projector
       .projectVisibleMessages(task.sourceMessages)
       .map((message) => message.content)
@@ -461,8 +478,9 @@ export class DeliberationUnit {
       content:
         `[Compression Task]\n` +
         `Preservation requirements:\n---\n${task.requirements || "No extra preservation requirements were provided."}\n---\n\n` +
-        `Compress the following conversation history into a refreshed Memory Snapshot:\n\n` +
-        `${renderedHistory || "No visible conversation history is available."}`,
+        `Earlier Memory Snapshot reference:\n---\n${existingSnapshot}\n---\n\n` +
+        `Recent Raw Window:\n\n${renderedHistory || "No recent raw conversation history is available."}\n\n` +
+        `Write a refreshed Memory Snapshot that integrates the earlier snapshot reference with the recent raw window. Overlap between them is expected rather than erroneous.`,
       timestamp: Date.now(),
     };
   }
@@ -496,6 +514,7 @@ export class DeliberationUnit {
       }
 
       this.compressionManager.registerSuccess(content);
+      this.ledger.appendSystemMessage(this.buildCompressionTaskSuccessMessage(task), this.buildDeferredVisibilityMeta());
       this.notifyDurableStateChange();
     } catch (error) {
       const failure = this.compressionManager.registerFailure();
@@ -696,7 +715,11 @@ export class DeliberationUnit {
 
     if (toolName === "compressContext") {
       const requirements = String(args.requirements ?? "");
-      const started = this.compressionManager.startTask(requirements, this.ledger.readAll());
+      const started = this.compressionManager.startTask(
+        requirements,
+        this.ledger.readAll(),
+        this.compressionManager.getMemorySnapshot(),
+      );
       if (!started.ok) {
         this.ledger.appendSystemMessage(started.error, this.buildDeferredVisibilityMeta());
         this.notifyDurableStateChange();

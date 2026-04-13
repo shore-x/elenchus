@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Context Compression"
-date: 2026-04-12
-version: 3.0
+date: 2026-04-13
+version: 3.1
 ---
 
 # Context Compression
@@ -184,7 +184,26 @@ Compression is initiated through proposal-vote like other proposal-producing too
 
 See [protocol-and-runtime.md](./protocol-and-runtime.md) for the general runtime treatment of non-blocking actions and public fact broadcasts.
 
-## 10. Related Detailed Documents
+## 10. Future Boundary: Knowledge Anti-Entropy
+
+This document remains intentionally narrow. It defines compression of **conversation context projection** for one agent unit, not full lifecycle governance of the broader future knowledge space.
+
+The framework is now separately recognizing a future **knowledge anti-entropy** problem, which may eventually include topics such as:
+
+- knowledge growth and bloat
+- drift, decay, and stale knowledge cleanup
+- conflict consolidation and correction
+- maintenance of the small `Resident Knowledge` surface
+
+Those questions are important, but they are **not** solved by the current `Memory Snapshot + Recent Raw Window` design alone.
+
+At the current stage:
+
+- this document only commits to compression of agent-visible conversation context derived from `ConversationLedger`
+- it does **not** define the future anti-entropy workflow for the larger knowledge space
+- it does **not** assume that future anti-entropy will necessarily be implemented only through the file system, even if the broader direction remains file-system-friendly
+
+## 11. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
 - General runtime execution semantics: [protocol-and-runtime.md](./protocol-and-runtime.md)
@@ -196,3 +215,4 @@ See [protocol-and-runtime.md](./protocol-and-runtime.md) for the general runtime
 ## Change Log
 
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed compression view and task-management semantics while the overview remains the canonical entry point and index.
+- **v3.1 (2026-04-13)**: Added a future-boundary section clarifying that broader knowledge anti-entropy work is deferred beyond the current conversation-context compression scope.

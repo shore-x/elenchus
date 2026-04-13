@@ -59,13 +59,26 @@ function findRecentRawStartIndex(messages: readonly ConversationMessage[], targe
   return start;
 }
 
+function cloneMemorySnapshot(snapshot: MemorySnapshot | null): MemorySnapshot | null {
+  return snapshot ? { ...snapshot } : null;
+}
+
 export interface ActiveCompressionTask {
   id: string;
   requirements: string;
+  existingMemorySnapshot: MemorySnapshot | null;
   sourceMessages: readonly ConversationMessage[];
   attemptNumber: number;
   maxAttempts: number;
   startedAt: number;
+}
+
+function cloneActiveCompressionTask(task: ActiveCompressionTask): ActiveCompressionTask {
+  return {
+    ...task,
+    existingMemorySnapshot: cloneMemorySnapshot(task.existingMemorySnapshot),
+    sourceMessages: task.sourceMessages.map((message) => ({ ...message })),
+  };
 }
 
 function toActiveCompressionTaskSnapshot(task: ActiveCompressionTask | null): ActiveCompressionTaskSnapshot | null {
@@ -148,6 +161,7 @@ export class CompressionTaskManager {
       ? {
         id: snapshot.activeTask.id,
         requirements: snapshot.activeTask.requirements,
+        existingMemorySnapshot: null,
         sourceMessages: [],
         attemptNumber: snapshot.activeTask.attemptNumber,
         maxAttempts: snapshot.activeTask.maxAttempts,
@@ -156,7 +170,7 @@ export class CompressionTaskManager {
       : null;
   }
 
-  startTask(requirements: string, sourceMessages: readonly ConversationMessage[]):
+  startTask(requirements: string, sourceMessages: readonly ConversationMessage[], existingMemorySnapshot: MemorySnapshot | null):
     | { ok: true; task: ActiveCompressionTask }
     | { ok: false; error: string } {
     if (this.activeTask) {
@@ -166,17 +180,27 @@ export class CompressionTaskManager {
       };
     }
 
+    const clonedSourceMessages = sourceMessages.map((message) => ({ ...message }));
+    const clonedExistingMemorySnapshot = cloneMemorySnapshot(existingMemorySnapshot);
+    if (clonedSourceMessages.length === 0 && !clonedExistingMemorySnapshot?.content.trim()) {
+      return {
+        ok: false,
+        error: "No context is currently available to compress. Start a compression task only when the unit has an existing Memory Snapshot or recent raw conversation history.",
+      };
+    }
+
     const task: ActiveCompressionTask = {
       id: generateCompressionTaskId(),
       requirements: requirements.trim(),
-      sourceMessages: sourceMessages.map((message) => ({ ...message })),
+      existingMemorySnapshot: clonedExistingMemorySnapshot,
+      sourceMessages: clonedSourceMessages,
       attemptNumber: 1,
       maxAttempts: this.maxRetries + 1,
       startedAt: Date.now(),
     };
 
     this.activeTask = task;
-    return { ok: true, task: { ...task, sourceMessages: task.sourceMessages.map((message) => ({ ...message })) } };
+    return { ok: true, task: cloneActiveCompressionTask(task) };
   }
 
   registerSuccess(content: string): MemorySnapshot {
@@ -211,10 +235,7 @@ export class CompressionTaskManager {
       };
       return {
         shouldRetry: true,
-        task: {
-          ...this.activeTask,
-          sourceMessages: this.activeTask.sourceMessages.map((message) => ({ ...message })),
-        },
+        task: cloneActiveCompressionTask(this.activeTask),
       };
     }
 
