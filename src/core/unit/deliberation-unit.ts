@@ -8,6 +8,8 @@
 // children can be unmounted from that visible set and later remounted by new upward activity.
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { AgentTurn } from "./agent-turn.js";
 import { getBuiltInToolRegistry } from "../tools.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
@@ -25,7 +27,8 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  runDirectory: string;
+  workspaceRoot: string;
+  workDirectory?: string;
   level?: ToolLevel;
   path?: number[];
   unitId?: string;
@@ -59,8 +62,10 @@ export class DeliberationUnit {
   private commitLog: CommittedStep[] = [];
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
-  private runDirectory: string;
+  private workspaceRoot: string;
+  private workDirectory: string;
   private static readonly MAX_EMPTY_TURNS = 4;
+  private static readonly WORK_SUBDIR = ".elenchus/work";
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
   private static readonly COMPRESSION_MAX_TOKENS = 4096;
 
@@ -68,13 +73,14 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.runDirectory = options.runDirectory;
-    this.unitId = options.unitId ?? DeliberationUnit.buildDefaultUnitId(options.path ?? []);
+    this.workspaceRoot = options.workspaceRoot;
+    this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
+    this.workDirectory = options.workDirectory ?? DeliberationUnit.computeWorkDirectory(this.workspaceRoot, this.level, options.path ?? []);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.runDirectory);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.runDirectory);
+    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot, this.workDirectory);
+    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot, this.workDirectory);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -152,6 +158,8 @@ export class DeliberationUnit {
       unitId: this.unitId,
       level: this.level,
       path: [...this.scope.path],
+      workspaceRoot: this.workspaceRoot,
+      workDirectory: this.workDirectory,
       state: this.state,
       turnCounter: this.turnCounter,
       childCounter: this.childCounter,
@@ -190,10 +198,14 @@ export class DeliberationUnit {
     try {
       this.unitId = snapshot.unitId;
       this.level = snapshot.level;
+      this.workspaceRoot = snapshot.workspaceRoot;
+      this.workDirectory = snapshot.workDirectory;
       this.scope = {
         level: snapshot.level,
         path: [...snapshot.path],
       };
+      // Ensure work directory exists on restore (may have been deleted externally)
+      mkdirSync(this.workDirectory, { recursive: true });
       this.state = normalizedState;
       this.turnCounter = snapshot.turnCounter;
       this.childCounter = snapshot.childCounter;
@@ -307,8 +319,48 @@ export class DeliberationUnit {
     return this.ledger.getPendingProposalView();
   }
 
-  private static buildDefaultUnitId(path: number[]): string {
-    return path.length === 0 ? "unit-root" : `unit-${path.join("-")}`;
+  private static buildUnitId(level: ToolLevel, path: number[]): string {
+    if (path.length === 0) return "unit-root";
+    const padded = path.map((s) => String(s).padStart(2, "0"));
+    return `${level}-${padded.join("-")}`;
+  }
+
+  private static computeWorkDirectory(workspaceRoot: string, level: ToolLevel, path: number[]): string {
+    if (path.length === 0) return workspaceRoot;
+    const padded = path.map((s) => String(s).padStart(2, "0"));
+    const unitDirName = `${level}-${padded.join("-")}`;
+    if (level === "L1") {
+      return join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, unitDirName);
+    }
+    // L2: nested under parent L1 directory
+    const parentPadded = padded[0].padStart(2, "0");
+    const parentDirName = `L1-${parentPadded}`;
+    return join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, parentDirName, unitDirName);
+  }
+
+  private static findNextChildSlot(workspaceRoot: string, parentLevel: ToolLevel, parentPath: number[]): { childPath: number[]; childWorkDir: string } {
+    const childLevel = parentLevel === "L0" ? "L1" as const : "L2" as const;
+    const parentPadded = parentPath.map((s) => String(s).padStart(2, "0"));
+    const parentWorkDir = parentPath.length === 0
+      ? workspaceRoot
+      : parentLevel === "L1"
+        ? join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, `L1-${parentPadded.join("-")}`)
+        : join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, `L1-${parentPadded[0]}`, `${parentLevel}-${parentPadded.join("-")}`);
+
+    const searchBase = childLevel === "L1"
+      ? join(workspaceRoot, DeliberationUnit.WORK_SUBDIR)
+      : parentWorkDir;
+
+    for (let i = 1; i <= 999; i++) {
+      const childPath = [...parentPath, i];
+      const padded = childPath.map((s) => String(s).padStart(2, "0"));
+      const candidateDir = `${childLevel}-${padded.join("-")}`;
+      const fullPath = join(searchBase, candidateDir);
+      if (!existsSync(fullPath)) {
+        return { childPath, childWorkDir: fullPath };
+      }
+    }
+    throw new Error(`Could not find available child slot under ${searchBase}`);
   }
 
   private normalizeStateForColdStart(state: UnitState): UnitState {
@@ -358,7 +410,7 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
-      runDirectory: this.runDirectory,
+      workspaceRoot: this.workspaceRoot,
       level: childLevel,
       path: childPath,
       unitId,
@@ -652,7 +704,7 @@ export class DeliberationUnit {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
-            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args);
+            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.workDirectory });
             this.ledger.appendToolResultMessage({
               proposalId: approvedProposal.messageId,
               toolName,
@@ -735,11 +787,12 @@ export class DeliberationUnit {
 
     if (toolName === "spawnChild") {
       const task = args.task as string;
-      this.childCounter++;
-      const childId = `child-${this.childCounter}`;
-
+      const { childPath, childWorkDir } = DeliberationUnit.findNextChildSlot(this.workspaceRoot, this.level, this.scope.path);
       const childLevel = this.level === "L0" ? "L1" as const : "L2" as const;
-      const childPath = [...this.scope.path, this.childCounter];
+      const childId = DeliberationUnit.buildUnitId(childLevel, childPath);
+      this.childCounter = childPath[childPath.length - 1];
+
+      mkdirSync(childWorkDir, { recursive: true });
       const child = this.createChildUnit(childId, childLevel, childPath);
 
       this.children.set(childId, child);

@@ -28,14 +28,14 @@ export async function main(): Promise<void> {
   printBanner(config.level, config.verbose);
   printStartupInfo(config.provider, config.modelName, config.baseUrl, config.level);
 
-  const runDirectory = cwd();
+  const workspaceRoot = cwd();
 
   const session = createSession({
     llmClient,
     toolExecutor: new LocalNodeToolExecutor(),
-    runDirectory,
+    workspaceRoot,
     level: config.level,
-    persistence: new SqliteSessionPersistence({ runDirectory }),
+    persistence: new SqliteSessionPersistence({ workspaceRoot }),
     onSystemEvent: (event: SystemEvent) => {
       renderEvent(event, config.verbose);
     },

@@ -185,6 +185,8 @@ export interface DeliberationUnitSnapshot {
   unitId: string;
   level: ToolLevel;
   path: number[];
+  workspaceRoot: string;
+  workDirectory: string;
   state: UnitState;
   turnCounter: number;
   childCounter: number;

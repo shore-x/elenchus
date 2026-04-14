@@ -9,6 +9,6 @@ import { type AgentId, type ToolLevel } from "./types.js";
 
 export class AgentTurn extends CoreAgentTurn {
   constructor(selfId: AgentId, systemPrompt: string, model: Model<any>, level: ToolLevel = "L0") {
-    super(selfId, new PiAiLlmClient(model), level, cwd());
+    super(selfId, new PiAiLlmClient(model), level, cwd(), cwd());
   }
 }

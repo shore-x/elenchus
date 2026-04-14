@@ -13,7 +13,7 @@ interface PersistedSessionFile {
 }
 
 export interface FileSystemSessionPersistenceOptions {
-  runDirectory: string;
+  workspaceRoot: string;
 }
 
 export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
@@ -21,7 +21,7 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   private readonly sessionFilePath: string;
 
   constructor(options: FileSystemSessionPersistenceOptions) {
-    this.storageDir = join(options.runDirectory, ".elenchus");
+    this.storageDir = join(options.workspaceRoot, ".elenchus");
     this.sessionFilePath = join(this.storageDir, "session.json");
   }
 

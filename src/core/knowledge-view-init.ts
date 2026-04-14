@@ -1,5 +1,5 @@
 // Elenchus - Knowledge View Initialization
-// Bootstraps default knowledge-space files in the workspace root (runDirectory)
+// Bootstraps default knowledge-space files in the workspace root
 // if they do not already exist. Called once at session startup.
 // This is analogous to how .elenchus/ is created for persistence state.
 
@@ -12,13 +12,13 @@ function renderTemplate(template: string): string {
   return template.replace(/\{\{DATE\}\}/g, date);
 }
 
-export function initializeKnowledgeView(runDirectory: string): void {
-  const rootAgentMdPath = join(runDirectory, "AGENT.md");
+export function initializeKnowledgeView(workspaceRoot: string): void {
+  const rootAgentMdPath = join(workspaceRoot, "AGENT.md");
   if (!existsSync(rootAgentMdPath)) {
     writeFileSync(rootAgentMdPath, renderTemplate(DEFAULT_ROOT_AGENT_MD), "utf-8");
   }
 
-  const skillsDir = join(runDirectory, "skills");
+  const skillsDir = join(workspaceRoot, "skills");
   if (!existsSync(skillsDir)) {
     mkdirSync(skillsDir, { recursive: true });
   }

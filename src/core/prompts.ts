@@ -223,6 +223,7 @@ const KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE = `
 
 ## Knowledge View
 Your workspace root directory is: **{{WORKSPACE_ROOT}}**
+Your working directory is: **{{WORK_DIRECTORY}}**
 
 Knowledge is not a separate storage system — it is a navigable cognitive view built on top of the file system within this workspace.
 
@@ -240,6 +241,12 @@ AGENT.md should be a quick-orientation entry point, not exhaustive documentation
 - **Avoid**: temporary task notes, detailed implementation logic, full API documentation, conversation logs, or mechanical per-file listings.
 - **The root AGENT.md is injected into your system prompt every turn.** Its length directly reduces the context budget available for conversation and reasoning. Keep it especially concise — project-level overview and navigation only.
 - Update an AGENT.md when the directory's purpose or structure changes meaningfully, not after every small edit. Include an \`Updated:\` timestamp so future readers can gauge freshness.
+
+### Dual-Path Model
+- **Workspace root** ({{WORKSPACE_ROOT}}): The project's root directory, shared across all layers. The root AGENT.md is injected into your prompt. You may read and write files anywhere under the workspace root when collaboration between layers requires it.
+- **Working directory** ({{WORK_DIRECTORY}}): Your layer-specific default directory. Bash commands execute with this as the current working directory. File read/write tools use absolute paths, but your working directory is the natural place to store layer-local outputs, downloads, and intermediate artifacts.
+- Use **absolute paths** for readFile and writeFile operations to avoid ambiguity. Relative paths in those tools resolve against the process working directory, not your working directory.
+- Keep your working directory organized. Output files, downloaded data, and other artifacts produced by your layer should default to your working directory unless the task explicitly requires placing them elsewhere.
 
 ### Knowledge Space Boundary
 Your **knowledge space** is rooted at the workspace root directory shown above. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing skill regions, maintaining knowledge structure — must stay within the workspace root. Directories outside the workspace root are operational targets, not part of your knowledge space.
@@ -259,8 +266,10 @@ export function readRootAgentMd(runDirectory: string): string | null {
   }
 }
 
-export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, runDirectory: string, workspaceKnowledge?: string | null): string {
-  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace("{{WORKSPACE_ROOT}}", runDirectory);
+export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, workspaceRoot: string, workDirectory: string, workspaceKnowledge?: string | null): string {
+  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE
+    .replace("{{WORKSPACE_ROOT}}", workspaceRoot)
+    .replace("{{WORK_DIRECTORY}}", workDirectory);
   return buildGuideline()
     + buildLayerOrientation(level)
     + knowledgeViewGuideline

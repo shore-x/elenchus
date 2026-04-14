@@ -20,7 +20,7 @@ export class DeliberationUnit extends CoreDeliberationUnit {
     super({
       llmClient: new PiAiLlmClient(options.model),
       toolExecutor: new LocalNodeToolExecutor(),
-      runDirectory: cwd(),
+      workspaceRoot: cwd(),
       level: options.level,
       path: options.path,
       onSystemEvent: options.onSystemEvent,

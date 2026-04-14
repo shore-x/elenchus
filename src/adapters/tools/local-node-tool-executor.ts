@@ -17,9 +17,9 @@ function truncateOutput(output: string): string {
   );
 }
 
-async function executeBash(command: string): Promise<{ success: boolean; output: string }> {
+async function executeBash(command: string, cwd?: string): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
-    exec(command, { timeout: BASH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+    exec(command, { cwd, timeout: BASH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
       if (error && !combined) {
         resolve({
@@ -57,12 +57,12 @@ async function executeWriteFile(path: string, content: string): Promise<{ succes
 
 export class LocalNodeToolExecutor implements ToolExecutor {
 
-  async execute(toolName: string, args: Record<string, unknown>): Promise<ToolExecutionResult> {
+  async execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string }): Promise<ToolExecutionResult> {
     const start = Date.now();
     let result: { success: boolean; output: string };
     switch (toolName) {
       case "bash":
-        result = await executeBash(args.command as string);
+        result = await executeBash(args.command as string, options?.cwd);
         break;
       case "readFile":
         result = await executeReadFile(args.path as string);

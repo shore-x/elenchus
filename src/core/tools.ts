@@ -113,10 +113,11 @@ export const bashTool: ElenchusTool = {
   description:
     "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. " +
     "Use this for running programs, network requests (curl/wget), data processing, etc. " +
+    "Commands execute with your working directory as the current working directory (cwd). " +
     "You must provide proposedStep to describe how this command advances the task, not just restate the command.",
   parameters: Type.Object({
     command: Type.String({
-      description: "The shell command to execute.",
+      description: "The shell command to execute. Runs with your working directory as cwd.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -132,7 +133,7 @@ export const readFileTool: ElenchusTool = {
     "You must provide proposedStep to describe what reading this file will help establish for the task.",
   parameters: Type.Object({
     path: Type.String({
-      description: "Absolute or relative path to the file to read.",
+      description: "Absolute path to the file to read. Prefer absolute paths to avoid ambiguity.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -149,7 +150,7 @@ export const writeFileTool: ElenchusTool = {
     "You must provide proposedStep to describe how this write advances the task.",
   parameters: Type.Object({
     path: Type.String({
-      description: "Absolute or relative path to the file to write.",
+      description: "Absolute path to the file to write. Prefer absolute paths to avoid ambiguity.",
     }),
     content: Type.String({
       description: "The content to write to the file.",
@@ -190,7 +191,7 @@ export const sendToChildTool: ElenchusTool = {
     "You must provide proposedStep to describe how this follow-up advances the task.",
   parameters: Type.Object({
     childId: Type.String({
-      description: "The ID of the child agent unit to send the message to (e.g. 'child-1').",
+      description: "The ID of the child agent unit to send the message to (e.g. 'L1-01', 'L2-01-02').",
     }),
     message: Type.String({
       description: "The message to send to the child agent unit.",
@@ -212,7 +213,7 @@ export const unmountChildTool: ElenchusTool = {
     "You must provide proposedStep to describe how removing this child from the current working set advances the task.",
   parameters: Type.Object({
     childId: Type.String({
-      description: "The ID of the currently visible child agent unit to unmount (e.g. 'child-1').",
+      description: "The ID of the currently visible child agent unit to unmount (e.g. 'L1-01', 'L2-01-02').",
     }),
     proposedStep: proposedStepSchema,
   }),
