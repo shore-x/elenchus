@@ -36,8 +36,6 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
       return String(args.path);
     case "writeFile":
       return `${args.path} (${String(args.content).length} chars)`;
-    case "installSkill":
-      return String(args.sourcePath);
     case "yield":
       return String(args.content);
     case "report":
@@ -45,7 +43,7 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
     case "compressContext":
       return String(args.requirements);
     case "sleep":
-      return `timeout: ${args.timeoutMs}ms`;
+      return `timeout: ${args.timeoutSeconds}s`;
     case "spawnChild": {
       const task = String(args.task);
       return task.length > 100 ? task.slice(0, 100) + "..." : task;

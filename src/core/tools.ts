@@ -161,23 +161,6 @@ export const writeFileTool: ElenchusTool = {
   appliesToLevels: EXECUTION_LEVELS,
 };
 
-export const installSkillTool: ElenchusTool = {
-  name: "installSkill",
-  description:
-    "Propose to hot-install a local skill package directory into the runtime-managed skills set. This is a PROPOSAL — the other agent must vote APPROVE before it executes. " +
-    "The source directory must already contain a valid skill package with skill.json and SKILL.md. " +
-    "Installation is atomic and the new skill becomes available from the next turn rather than retroactively changing the current turn.",
-  parameters: Type.Object({
-    sourcePath: Type.String({
-      description: "Absolute or relative path to a local directory containing a valid skill package to install.",
-    }),
-    proposedStep: proposedStepSchema,
-  }),
-  category: "environment",
-  behavior: "blocking",
-  appliesToLevels: EXECUTION_LEVELS,
-};
-
 export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
@@ -243,13 +226,16 @@ export const sleepTool: ElenchusTool = {
   name: "sleep",
   description:
     "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "You must specify an explicit timeout. If no child agent reports before the timeout, " +
+    "You must specify an explicit timeout in seconds. If no child agent reports before the timeout, " +
     "a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. " +
     "Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. " +
+    "Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, " +
+    "a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. " +
+    "Avoid very short timeouts (under 10s) — they rarely accomplish meaningful waiting and mostly waste turns on repeated sleep cycles. " +
     "You must provide proposedStep to describe why this wait advances the task.",
   parameters: Type.Object({
-    timeoutMs: Type.Number({
-      description: "Timeout in milliseconds. The unit will be woken after this duration if no other event wakes it first. You must specify this explicitly every time.",
+    timeoutSeconds: Type.Number({
+      description: "Timeout in seconds. The unit will be woken after this duration if no other event wakes it first. Choose a duration appropriate to what you are waiting for — avoid very short timeouts under 10s.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -266,7 +252,6 @@ const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
   bashTool,
   readFileTool,
   writeFileTool,
-  installSkillTool,
   spawnChildTool,
   sendToChildTool,
   unmountChildTool,

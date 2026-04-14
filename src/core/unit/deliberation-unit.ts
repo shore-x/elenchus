@@ -9,7 +9,7 @@
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
 import { AgentTurn } from "./agent-turn.js";
-import { createStaticCapabilityProvider, type CapabilityProvider } from "../skills.js";
+import { getBuiltInToolRegistry } from "../tools.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
 import { ConversationLedger } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
@@ -25,7 +25,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  capabilityProvider?: CapabilityProvider;
+  runDirectory: string;
   level?: ToolLevel;
   path?: number[];
   unitId?: string;
@@ -45,7 +45,6 @@ export class DeliberationUnit {
   private level: ToolLevel;
   private llmClient: LlmClient;
   private toolExecutor: ToolExecutor;
-  private capabilityProvider: CapabilityProvider;
   private turnCounter = 0;
   private onSystemEvent: OnSystemEvent;
   private scope: UnitScope;
@@ -60,6 +59,7 @@ export class DeliberationUnit {
   private commitLog: CommittedStep[] = [];
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
+  private runDirectory: string;
   private static readonly MAX_EMPTY_TURNS = 4;
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
   private static readonly COMPRESSION_MAX_TOKENS = 4096;
@@ -68,13 +68,13 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.capabilityProvider = options.capabilityProvider ?? createStaticCapabilityProvider();
+    this.runDirectory = options.runDirectory;
     this.unitId = options.unitId ?? DeliberationUnit.buildDefaultUnitId(options.path ?? []);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.capabilityProvider);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.capabilityProvider);
+    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.runDirectory);
+    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.runDirectory);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -358,7 +358,7 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
-      capabilityProvider: this.capabilityProvider,
+      runDirectory: this.runDirectory,
       level: childLevel,
       path: childPath,
       unitId,
@@ -632,7 +632,7 @@ export class DeliberationUnit {
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
 
-          const resolvedTool = this.capabilityProvider.getSnapshot().bundle.resolveTool(toolName);
+          const resolvedTool = getBuiltInToolRegistry().get(toolName);
 
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;
@@ -642,7 +642,7 @@ export class DeliberationUnit {
           }
 
           if (toolName === "sleep") {
-            const timeoutMs = approvedProposal.args.timeoutMs as number;
+            const timeoutMs = (approvedProposal.args.timeoutSeconds as number) * 1000;
             this.transition(this.state, "idle");
             this.scheduleSleepTimer(timeoutMs, Date.now() + timeoutMs);
             return;

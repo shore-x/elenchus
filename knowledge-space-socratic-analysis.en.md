@@ -6,11 +6,11 @@ version: 1.0
 
 # Rethinking Knowledge Space: A Socratic Derivation from Skill and Memory to the File System
 
-This is not a formal design document, nor is it a solution specification.
+What follows is a chain of reasoning, not a design document or a solution specification.
 
-What it records is a chain of reasoning: how we began with what looked like a local question - whether `skill` and long-term `memory` should be unified - and, through a series of increasingly insistent questions, gradually touched a much larger proposition: if the agent's working world is already the file system, then is the so-called knowledge space ultimately just a navigable cognitive view built on top of that file system?
+It records how we began with what looked like a local question — whether `skill` and long-term `memory` should be unified — and, through a series of increasingly insistent questions, gradually touched a much larger proposition: if the agent's working world is already the file system, then is the so-called knowledge space ultimately just a navigable cognitive view built on top of that file system?
 
-This document does not try to provide a final institutional answer in advance. It only tries to faithfully record how this line of reasoning unfolded step by step: which intuitions were preserved, which empiricist assumptions were abandoned, which conclusions seem provisionally defensible, and where doubt still has to be retained.
+The aim here is not to deliver a final institutional answer, but to faithfully record how this line of reasoning unfolded: which intuitions held, which empiricist assumptions were abandoned, which conclusions seem provisionally defensible, and where doubt must still be retained.
 
 ---
 
@@ -18,11 +18,7 @@ This document does not try to provide a final institutional answer in advance. I
 
 The original question was not grand. It came from a simple observation: although `skill` and long-term memory are usually placed in different subsystems at the engineering level, they often play similar roles from the agent's point of view.
 
-Neither is part of the immediate conversational content produced in the current turn; both are some form of prior resource.
-
-Both may already exist before the agent begins thinking.
-
-Both may tell the agent, in natural language:
+Neither is part of the immediate conversational content produced in the current turn; both are forms of prior resource. Both may already exist before the agent begins thinking. And both may tell the agent, in natural language:
 
 - how a problem should currently be understood
 - where certain experiential conclusions came from
@@ -33,13 +29,13 @@ At that point, the first question arises naturally:
 
 > If `skill` and `memory` both appear to the agent as forms of prior knowledge that can be brought into use, why must they be divided into two ontologically different kinds of objects?
 
-This question is not meant to deny the historical legitimacy of skill systems. Traditional skill systems exist because they usually take on several additional responsibilities:
+This question is not meant to deny the historical legitimacy of skill systems. Traditional skill systems exist because they take on several additional responsibilities:
 
 - providing an installable and distributable unit of organization
 - injecting guidance into the prompt in a relatively stable way
 - sometimes registering tools or binding scripts
 
-But those additional responsibilities do not automatically prove that a skill is not knowledge at the ontological level. They only show that, in many systems, a skill has been given extra engineering packaging.
+But these additional responsibilities do not prove that a skill is not knowledge at the ontological level. They only show that, in many systems, a skill has been given extra engineering packaging.
 
 Once that packaging is stripped away, the question becomes sharper:
 
@@ -47,7 +43,7 @@ Once that packaging is stripped away, the question becomes sharper:
 
 If the answer is anywhere close to yes, then a direction of unification appears: `skill` and `memory` no longer need to be implemented as two categories of prior objects that are different in principle. They may simply be different nodes, different entry points, and different forms of organization within the same knowledge space.
 
-This step is still relatively conservative. At this stage, what we mean by unification still remains within familiar territory: natural-language text, reference relations, attached scripts, and progressive disclosure. In other words, the knowledge space still looks like a looser, more AI-native container for `skill` and `memory`.
+This step is still relatively conservative. At this stage, unification remains within familiar territory: natural-language text, reference relations, attached scripts, and progressive disclosure. The knowledge space still looks like a looser, more AI-native container for `skill` and `memory`.
 
 But the truly important part is that this step already plants the seed for every later extrapolation:
 
@@ -59,11 +55,11 @@ But the truly important part is that this step already plants the seed for every
 
 Once the starting point above is accepted, the question immediately moves one step forward.
 
-If a skill is no longer understood as a special plugin that must register tools, but rather as knowledge text plus a number of referenced scripts or code files, then the script files themselves have clearly already become part of the knowledge space. At the very least, they are no longer mere appendages external to the knowledge system; together with the knowledge text, they form a whole that the agent can understand and invoke.
+If a skill is no longer understood as a special plugin that must register tools, but rather as knowledge text plus referenced scripts or code files, then the script files themselves have already become part of the knowledge space. They are no longer mere appendages external to the knowledge system; together with the knowledge text, they form a whole that the agent can understand and invoke.
 
 At that point, a second question appears:
 
-> If script files can count as part of knowledge, then why should intermediate result files generated by the agent during execution not also be regarded as knowledge?
+> If script files can count as part of knowledge, then why should intermediate result files generated by the agent during execution be excluded?
 
 For example:
 
@@ -72,9 +68,9 @@ For example:
 - the output of an experimental script
 - a checklist prepared in some directory for a later task
 
-The difference between these things and what we usually call long-term memory is not that they cannot influence future reasoning. More often, the difference is simply that their lifespan is shorter, their stability is lower, and their expression may be rougher.
+The difference between these and what we usually call long-term memory is not that they cannot influence future reasoning. More often, the difference is simply that their lifespan is shorter, their stability is lower, and their expression is rougher.
 
-In other words, they are not "not knowledge"; they are knowledge candidates that have not yet been curated, consolidated, or elevated into more stable knowledge entry points.
+Put differently, they are not "not knowledge" — they are knowledge candidates that have not yet been curated, consolidated, or elevated into more stable entry points.
 
 So the first empiricist boundary begins to wobble:
 
@@ -82,9 +78,9 @@ So the first empiricist boundary begins to wobble:
 
 As long as some external file carries reusable cognitive output, it has already entered the extension of knowledge.
 
-This step matters greatly. Once intermediate results are admitted into the category of knowledge, knowledge is no longer just a collection of static resources prepared in advance. It also begins to include the cognitive artifacts that the agent externalizes during work.
+This step matters. Once intermediate results are admitted into the category of knowledge, knowledge is no longer just a collection of static resources prepared in advance. It also begins to include the cognitive artifacts that the agent externalizes during work.
 
-For the first time, the knowledge space shifts from being merely a place that stores prior knowledge to being a place that carries the traces of the agent's externalized cognition.
+For the first time, the knowledge space shifts from merely storing prior knowledge to carrying the traces of the agent's externalized cognition.
 
 ---
 
@@ -92,9 +88,9 @@ For the first time, the knowledge space shifts from being merely a place that st
 
 If we continue along the same line of questioning, the boundary loosens further.
 
-Suppose the agent downloads a code repository, a document, a specification PDF, or a dataset from the network. At first glance, we may instinctively say that these are merely external resources, not yet knowledge.
+Suppose the agent downloads a code repository, a document, a specification PDF, or a dataset from the network. At first glance, we may instinctively say these are merely external resources, not yet knowledge.
 
-But that judgment actually smuggles in an unexamined empiricist assumption:
+But that judgment smuggles in an unexamined empiricist assumption:
 
 > Only content that has been formally curated, filtered, or summarized by the system deserves to be called knowledge.
 
@@ -104,11 +100,9 @@ From the agent's point of view, a downloaded file and a preexisting local file d
 
 So the real question becomes:
 
-> Has the downloaded file already been brought into the knowledge view, rather than whether it ontologically counts as knowledge?
+> Has the downloaded file already been brought into the knowledge view — rather than whether it ontologically counts as knowledge?
 
-This distinction is crucial.
-
-If a downloaded file simply lies on disk and the agent never refers to it again, and no navigational relation points to it, then of course it remains only a potential cognitive resource.
+This distinction is crucial. If a downloaded file simply lies on disk and the agent never refers to it again, and no navigational relation points to it, then it remains only a potential cognitive resource.
 
 But if that file begins to be:
 
@@ -117,7 +111,7 @@ But if that file begins to be:
 - marked as a key source by some directory navigation page
 - compressed into a more stable summary
 
-then it has in fact already been elevated into an active node of the knowledge space.
+then it has already been elevated into an active node of the knowledge space.
 
 Thus the second empiricist boundary is weakened as well:
 
@@ -127,7 +121,7 @@ A more accurate formulation would be:
 
 > Downloaded material first enters the file system as an external resource, and can then be elevated, through the agent's cognitive process, into an active part of the knowledge space.
 
-This step expands the extension of knowledge even further, but it also introduces anxiety: if even downloaded files can become knowledge, then where exactly is the boundary?
+This step expands the extension of knowledge even further, but it also introduces a natural anxiety: if even downloaded files can become knowledge, then where exactly is the boundary?
 
 ---
 
@@ -143,31 +137,31 @@ When a child agent executes a task, it will often create its own temporary works
 - half-finished conclusions not yet submitted
 - auxiliary files that only serve the local task flow
 
-Intuitively, it is easy for a human to say: these things are too temporary, too messy, too local; they should count as work traces, not as knowledge.
+Intuitively, it is easy to say: these things are too temporary, too messy, too local; they should count as work traces, not as knowledge.
 
-But if we continue to hold the principle already admitted above - that if a file may be read again in the future, interpreted again, and influence decisions, then it has a knowledge-like character - then the temporary workspace is difficult to exclude.
+But if we continue to hold the principle already admitted — that if a file may be read again in the future, interpreted again, and influence decisions, then it has a knowledge-like character — the temporary workspace is difficult to exclude.
 
-In fact, the difference between a temporary workspace and long-term knowledge is more a matter of:
+The difference between a temporary workspace and long-term knowledge is more a matter of degree:
 
-- different lifespan
-- different reliability
-- different degree of organization
-- different priority for entering default context
+- lifespan
+- reliability
+- degree of organization
+- priority for entering default context
 
-rather than belonging to fundamentally different kinds.
+rather than a difference in kind.
 
 This is uncomfortable, but precisely because it is uncomfortable, it has philosophical value:
 
 > It forces us to admit that there is no naturally fixed, eternal boundary between knowledge and work product.
 
-Many systems can preserve that boundary only because of human governance conventions:
+Many systems preserve that boundary only through human governance conventions:
 
 - this directory is called `memory`, so it counts as knowledge
 - that directory is called `tmp`, so it does not
 - this file was manually curated, so it is worth preserving
 - that file is too temporary, so it need not enter the cognitive space
 
-Those judgments are certainly useful in engineering practice, but they are not first-principles conclusions; they are human governance agreements.
+These judgments are useful in engineering practice, but they are not first-principles conclusions — they are human governance agreements.
 
 Once we try to design a more AI-native system, we are forced to face a more uncomfortable but more fundamental fact:
 
@@ -179,82 +173,43 @@ Once we try to design a more AI-native system, we are forced to face a more unco
 
 At this point, an almost unavoidable conclusion comes into view.
 
-If:
-
-- `skill` can be knowledge
-- `memory` can be knowledge
-- scripts can be part of knowledge
-- intermediate result files can be knowledge
-- downloaded files can enter the knowledge view
-- content in a child agent's temporary workspace may also be elevated into knowledge in the future
-
-then if we continue pushing the question, we seem to arrive at a more extreme sentence:
+If `skill` can be knowledge, `memory` can be knowledge, scripts can be part of knowledge, intermediate result files can be knowledge, downloaded files can enter the knowledge view, and content in a child agent's temporary workspace may also be elevated into knowledge — then if we continue pushing the question, we seem to arrive at a more extreme sentence:
 
 > The entire file system is the agent's knowledge space.
 
-This judgment is attractive because it does capture a deep unification. It stops treating knowledge as a second storage system parallel to the real workspace, and instead acknowledges that the agent's working world is already externally grounded in the file system.
+This judgment is attractive because it captures a deep unification. It stops treating knowledge as a second storage system parallel to the real workspace, and instead acknowledges that the agent's working world is already externally grounded in the file system.
 
-From this perspective, what makes a separate knowledge system seem necessary is often only the fact that the file system lacks:
+From this perspective, what makes a separate knowledge system seem necessary is often only the fact that the file system lacks sufficiently clear local semantic descriptions, explicit navigational entry points, stable reference relations, and an organizational layer that the agent can maintain over time.
 
-- sufficiently clear local semantic descriptions
-- explicit navigational entry points
-- stable reference relations
-- an organizational layer that the agent can maintain over time
-
-That is, the real problem is no longer whether knowledge exists, but rather:
+The real problem, then, is no longer whether knowledge exists, but rather:
 
 > whether these external resources possess sufficient navigability and interpretability.
 
 In that sense, it is defensible to say that the entire file system is potential knowledge.
 
-But if one goes further and says that therefore there is no longer any need to define the concept of knowledge, the situation becomes dangerous.
-
-Because there is a hidden leap here:
-
-- from "all external files may become knowledge"
-- to "the concept of knowledge has lost all meaning"
-
-That step does not follow automatically.
+But if one goes further and says that therefore there is no longer any need to define the concept of knowledge, the situation becomes dangerous. There is a hidden leap here — from "all external files may become knowledge" to "the concept of knowledge has lost all meaning." That step does not follow automatically.
 
 ---
 
 ## Chapter 6. The Key Rebuttal: Why Can We Not Simply Abolish the Concept of Knowledge?
 
-If the concept of knowledge were completely abolished, the file system would of course still remain, and the agent could still access all files. But something very important would be lost: a distinction at the cognitive level.
+If the concept of knowledge were completely abolished, the file system would of course still remain, and the agent could still access all files. But something important would be lost: a distinction at the cognitive level.
 
-Because the concept of knowledge here is not necessarily meant to define some independent storage system. Rather, it defines a special cognitive point of view:
+The concept of knowledge here is not meant to define some independent storage system. Rather, it defines a special cognitive point of view:
 
 > Which external resources are currently being treated by the agent as interpretable, referable, maintainable, and progressively organizable cognitive objects?
 
 That is not the same question as whether a file exists on disk.
 
-A disk may simultaneously contain:
+A disk may simultaneously contain core project design documents, build caches, incomplete download fragments, one-off logs, meaningless temporary files, and high-value summaries distilled from discussion. If the concept of knowledge is eliminated entirely, then all of these are, in theory, merely files.
 
-- core project design documents
-- build caches
-- incomplete download fragments
-- one-off logs
-- meaningless temporary files
-- high-value summaries distilled from discussion
-
-If the concept of knowledge is eliminated entirely, then all of these are, in theory, merely files.
-
-That is not wrong at the storage level, but it is too weak at the cognitive level. The agent still needs some way to distinguish:
-
-- which things are worth maintaining over time
-- which things exist only temporarily
-- which things should serve as default entry points
-- which things are worth expanding only under specific tasks
+That is not wrong at the storage level, but it is too weak at the cognitive level. The agent still needs some way to distinguish which things are worth maintaining over time, which exist only temporarily, which should serve as default entry points, and which are worth expanding only under specific tasks.
 
 Thus a more stable formulation emerges:
 
 > The file system is the substrate of external resources; the knowledge space is not a second storage system parallel to it, but a navigable cognitive view built on top of that substrate.
 
-This sentence preserves two equally important facts.
-
-First, the knowledge space should no longer be turned into an isolated island detached from the workspace file system.
-
-Second, the concept of knowledge remains necessary, because what it expresses is not whether a file exists, but whether it has been brought into the agent's field of cognitive governance.
+This sentence preserves two equally important facts. First, the knowledge space should no longer be turned into an isolated island detached from the workspace file system. Second, the concept of knowledge remains necessary, because what it expresses is not whether a file exists, but whether it has been brought into the agent's field of cognitive governance.
 
 Put differently, `knowledge` here is no longer an ontologically closed object category, but an epistemic and organizational point of view.
 
@@ -272,11 +227,11 @@ A more accurate formulation would be:
 
 Once the file system is admitted as the unified substrate, a new question follows.
 
-If we are no longer going to build a separate knowledge system alongside it, then how is the agent supposed to find its way within such a broad and heterogeneous file system?
+If we are no longer going to build a separate knowledge system alongside it, how is the agent supposed to find its way within such a broad and heterogeneous file system?
 
 At this point, the idea of directory navigation pages appears.
 
-Imagine that certain directories contain a local Markdown file. This file does not serve as configuration, nor is it hard-coded into a strict schema. It simply explains, in natural language:
+Imagine that certain directories contain a local Markdown file — one that serves neither as configuration nor as a strict schema, but simply explains, in natural language:
 
 - what the directory is for
 - which subdirectories matter most
@@ -285,13 +240,9 @@ Imagine that certain directories contain a local Markdown file. This file does n
 - where the agent should read first in order to understand this area
 - which directories or files elsewhere are strongly related to it
 
-What this really does is add a layer of local semantic entry points to the file system.
+What this really does is add a layer of local semantic entry points to the file system. It does not try to replace the directory structure itself; rather, it adds on top of that structure a navigational explanation that the agent can read, write, and evolve.
 
-It does not try to replace the directory structure itself. Rather, it adds on top of that structure a navigational explanation that the agent can read, write, and evolve.
-
-This step is attractive because it shifts the problem from "how should knowledge objects be defined" to "how can the real workspace be made sufficiently navigable."
-
-That is much closer to the agent's actual workflow than designing an abstract central knowledge base.
+This step is attractive because it shifts the problem from "how should knowledge objects be defined" to "how can the real workspace be made sufficiently navigable" — a question much closer to the agent's actual workflow than designing an abstract central knowledge base.
 
 And it is precisely here that the whole line of reasoning begins to take on a provisional form of convergence:
 
@@ -309,24 +260,13 @@ If directory navigation pages are such a good idea, the simplest thought seems t
 
 > Then every directory should have a navigation page, maintained by the agent.
 
-This step appears almost natural, but on closer inspection the problem becomes obvious.
-
-Because it effectively means:
-
-- every directory must be semantically annotated
-- every directory must be maintained
-- every directory must carry local metadata synchronization obligations
-- the visible surface of the file system will quickly become covered with navigation pages
+This step appears almost natural, but on closer inspection the problem becomes obvious. It effectively means that every directory must be semantically annotated, maintained, and burdened with local metadata synchronization obligations — and that the visible surface of the file system will quickly become covered with navigation pages.
 
 Once this requirement is generalized, several problems appear immediately.
 
-First, many directories are simply not worth long-term semanticization.
+First, many directories are simply not worth long-term semanticization. If the agent downloads a large code repository from the network, there is no need to add navigation explanations to every directory within it. Most directories are not central to the current task; at most, they are local regions that can be searched and understood on demand.
 
-For example, if the agent downloads a large code repository from the network, there is no need to add navigation explanations to every directory within it. Most directories are not central to the current task; at most, they are local regions that can be searched and understood on demand.
-
-Second, navigation pages themselves can drift, decay, and become misleading.
-
-If the contents of a directory change rapidly but the navigation page is not updated, it can quickly degenerate from a semantic aid into a stale annotation that misleads.
+Second, navigation pages themselves can drift, decay, and become misleading. If the contents of a directory change rapidly but the navigation page is not updated, it can quickly degenerate from a semantic aid into a stale annotation that misleads.
 
 Third, the agent may end up spending a great deal of effort maintaining the navigation pages themselves instead of completing the actual task.
 
@@ -334,35 +274,23 @@ So an important correction appears:
 
 > Directory navigation pages should be understood as local semantic entry points for high-value regions, not as a layer that must mechanically cover the entire file system.
 
-This step is crucial because it pulls the idea back from a formalistic extreme.
+This step is crucial because it pulls the idea back from a formalistic extreme. The entire file system may in principle belong to the unified cognitive substrate, but only part of it will be further semanticized into high-quality navigable regions.
 
-That is to say, the entire file system may in principle belong to the unified cognitive substrate, but only part of it will be further semanticized into high-quality navigable regions.
-
-This distinction is not a betrayal of unification. On the contrary, it is a precondition for unification to remain workable.
-
-Without this contraction, the so-called unified knowledge space would ultimately degenerate into a maintenance hell of adding explanation files to every directory.
+This distinction is not a betrayal of unification. On the contrary, it is a precondition for unification to remain workable. Without this contraction, the so-called unified knowledge space would ultimately degenerate into a maintenance hell of adding explanation files to every directory.
 
 ---
 
 ## Chapter 9. Several Empiricist Assumptions Rejected on First-Principles Grounds
 
-Looking back over the entire line of reasoning, we can see that several assumptions that initially felt natural were gradually abandoned because they could not survive sustained questioning.
+Looking back over the entire line of reasoning, several assumptions that initially felt natural were gradually abandoned because they could not survive sustained questioning.
 
-The first abandoned assumption is that `skill` and `memory` are ontologically different by nature.
+The first abandoned assumption is that `skill` and `memory` are ontologically different by nature. On examination, they look more like the same prior external knowledge expressed through different forms of organization, rather than two separate species that must remain split.
 
-After examination, they look more like the same prior external knowledge expressed through different forms of organization, rather than two separate species that must remain split.
+The second abandoned assumption is that only formally curated long-term content deserves to be called knowledge. Once scripts, intermediate results, downloaded files, and temporary workspace contents are admitted as things that may influence future reasoning, that assumption stops being stable.
 
-The second abandoned assumption is that only formally curated long-term content deserves to be called knowledge.
+The third abandoned assumption is that knowledge has some a priori fixed boundary, and that outside the file system there exists a separate knowledge base. A view closer to first principles is that the agent's original situation is the entire external file system, and the knowledge space is only a cognitive organizational layer gradually built on top of that substrate.
 
-Once scripts, intermediate results, downloaded files, and temporary workspace contents are admitted as things that may influence future reasoning, that assumption stops being stable.
-
-The third abandoned assumption is that knowledge has some a priori fixed boundary, and that outside the file system there exists a separate knowledge base.
-
-A view closer to first principles is that the agent's original situation is the entire external file system, and the knowledge space is only a cognitive organizational layer gradually built on top of that substrate.
-
-The fourth abandoned assumption is that once unification is grounded in the file system, the whole file system should immediately be semanticized in full.
-
-That step turns out not to be reasonable, because it ignores the maintenance cost, drift risk, and attention burden of the navigation pages themselves.
+The fourth abandoned assumption is that once unification is grounded in the file system, the whole file system should immediately be semanticized in full. This turns out not to be reasonable, because it ignores the maintenance cost, drift risk, and attention burden of the navigation pages themselves.
 
 After these assumptions are stripped away, what remains is not a more elaborate empirical template, but a simpler and more stable skeleton:
 
@@ -383,9 +311,9 @@ Under this formulation, several key points are preserved at once.
 
 First, `skill`, `memory`, scripts, intermediate results, downloaded material, and the contents of child-agent workspaces all belong to the same external resource space rather than to several unrelated object families.
 
-Second, `Resident Knowledge` still matters, but it no longer means a sealed miniature universe. It becomes the default resident entry view into this larger cognitive space.
+Second, `Resident Knowledge` still matters, but it no longer means a sealed miniature universe — it becomes the default resident entry view into this larger cognitive space.
 
-Third, directory navigation pages are a highly promising organizational mechanism, but they should serve only those local regions that are worth long-term semanticization, and should not be promoted into a rule that every directory must have one.
+Third, directory navigation pages are a promising organizational mechanism, but they should serve only those local regions worth long-term semanticization, and should not be promoted into a rule that every directory must have one.
 
 Fourth, questions such as knowledge growth, drift, decay, conflict consolidation, and when temporary artifacts should be elevated or cleaned up are not solved by this line of reasoning. They have merely been pushed to a more accurate place from the outset:
 
@@ -395,19 +323,12 @@ Fourth, questions such as knowledge growth, drift, decay, conflict consolidation
 
 ## Closing: Why Is This Line of Reasoning Worth Preserving?
 
-This discussion deserves to be recorded separately not because it has already produced a final institutional design, but because it got something else right first, and that is more important.
+This discussion deserves to be recorded separately not because it has already produced a final institutional design, but because it got something else right first: it did not rush to search for a familiar engineering template and then force `skill`, `memory`, the file system, and temporary workspaces into it. Instead, it kept asking whether each boundary was really necessary, which distinctions were merely historical inertia left behind by previous implementations, and which concepts could in fact be folded together at a higher level of abstraction.
 
-It did not rush to search for a familiar engineering template and then force `skill`, `memory`, the file system, and temporary workspaces into it. Instead, it kept asking whether each boundary was really necessary, which distinctions were merely historical inertia left behind by previous implementations, and which concepts could in fact be folded together at a higher level of abstraction.
+That is the value of the Elenchus method: to keep questioning whether the classifications themselves hold, and to ask whether the premises beneath empiricist institutional arrangements are actually stable, before treating those arrangements as truth.
 
-That is precisely the value of the Elenchus method:
-
-- not to assume classifications first and then fill in the blanks
-- but to keep questioning whether the classifications themselves hold
-- not to treat empiricist institutional arrangements as truth from the start
-- but to ask first whether the premises beneath those arrangements are actually stable
-
-After this round of questioning, the most valuable thing to preserve is not some particular file format, nor some fixed directory layout, but a clearer recognition:
+After this round of questioning, the most valuable thing to preserve is not some particular file format or fixed directory layout, but a clearer recognition:
 
 > The agent's real working world is already the file system. The so-called knowledge space is not about creating a second world, but about gradually establishing a navigable, interpretable, and maintainable cognitive order within this one.
 
-This is not the end, but it is already enough to become a new start point.
+This is not the end, but it is already enough to become a new starting point.

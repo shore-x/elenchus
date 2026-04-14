@@ -32,7 +32,7 @@ function renderProposalDetail(proposal: ProposalCall): string {
     case "writeFile":
       return `File path: \`${proposal.args.path}\`\nContent:\n---\n${String(proposal.args.content)}\n---`;
     case "sleep":
-      return `Timeout: ${proposal.args.timeoutMs}ms`;
+      return `Timeout: ${proposal.args.timeoutSeconds}s`;
     case "spawnChild": {
       return `Task:\n---\n${String(proposal.args.task)}\n---`;
     }

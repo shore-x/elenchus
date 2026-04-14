@@ -1,0 +1,300 @@
+---
+title: "Elenchus Framework Design - Knowledge View"
+date: 2026-04-15
+version: 1.2
+---
+
+# Knowledge View
+
+> **Synchronization note**
+> - Changes here may require reviewing `framework-design.md` / §2.4, §4.3, §5.3.
+> - Changes in `framework-design.md` may require reviewing this file.
+
+## Scope
+
+- Why Elenchus unifies skill and memory into a single knowledge view
+- Storage model: file system as substrate, AGENT.md as local entry page
+- What AGENT.md is and is not
+- Structural conventions (soft, not enforced)
+- Coverage and referencing principles
+- How "skill" is reabsorbed
+- What is deliberately excluded
+
+Complements: [conversation-model.md](./conversation-model.md), [hierarchy-and-layers.md](./hierarchy-and-layers.md), [state-machine-and-tools.md](./state-machine-and-tools.md).
+
+Relevant overview: `framework-design.md` §2.4, §4.3, §5.3; Principles P2, P9, P10.
+
+---
+
+## 0. Relation to the Former Skill System
+
+The v1 installable-skill model — structured manifest, prompt appendix, namespaced tool registration, capability-provider hot install — was a legitimate engineering stage. Its code has been fully removed: `skills.ts`, `CapabilityBundle`, `CapabilityProvider`, `installSkill` tool, skill binding persistence, and the `adapters/skills/` directory no longer exist.
+
+Core shift:
+
+- **Old**: skill is an installable capability bundle, a separate object category.
+- **New**: skill is reabsorbed as an organizational result of well-organized actionable knowledge within the file system.
+
+---
+
+## 1. Foundational Position
+
+### 1.1 File system as unified substrate
+
+Knowledge space is not a separate storage system. The agent's original situation is the entire external file system; knowledge space is a cognitive organizational layer built on that substrate.
+
+Skill, memory, scripts, intermediate results, downloaded materials, temporary workspace artifacts — all belong to the same external resource space. They differ in stability, lifecycle, reliability, visibility, but not in storage ontology.
+
+### 1.2 Knowledge as cognitive view
+
+"Knowledge" here denotes a cognitive status, not an object category: certain files are being treated as interpretable, referenceable, maintainable cognitive objects.
+
+- File system = external resource substrate
+- Knowledge space = navigable cognitive view on that substrate
+
+### 1.3 Unification preserves differences, removes ontology division
+
+Different contents differ in stability, lifecycle, reliability — that is acknowledged. What is denied is a priori solidifying those differences into separate system entities.
+
+Goal: **preserve cognitive-status differences, remove storage-ontology division**.
+
+---
+
+## 2. AGENT.md: Role Definition
+
+### 2.1 AGENT.md is a local knowledge entry page
+
+AGENT.md is a **local knowledge entry page** or **semantic landing page** for a directory. Its purpose is to help the agent understand that directory at low cost:
+
+- What this directory is for
+- Which contents are core vs. secondary or temporary
+- Where to start reading
+- What external areas are related
+
+### 2.2 AGENT.md is not a configuration file
+
+AGENT.md must not be understood as:
+
+- A directory-level manifest
+- A directory-level system prompt
+- A permission declaration file
+- A mandatory behavior specification
+- A configuration protocol that must be stably parseable
+
+It may contain advisory descriptions, reading cues, and organizational information, but it must not become a rigid control plane over agent behavior.
+
+### 2.3 AGENT.md is not skill in disguise
+
+If AGENT.md is given strict schema, mandatory fields, unified registration, hard parsing dependencies, and system-level enforcement, it will slide back into exactly the kind of skill manifest this design set out to leave behind.
+
+AGENT.md's value lies in being a **natural-language semantic entry point**, not a renamed skill registration unit.
+
+---
+
+## 3. Structural Principles
+
+### 3.1 No enforced fixed structure
+
+AGENT.md must not be required to follow a fixed structure. Different directories differ in content nature, complexity, stability, audience, and cognitive purpose; their expression should be allowed to differ.
+
+The system may encourage common organizational habits, but must not elevate them to mandatory protocol. This avoids:
+
+- Formalism bloat
+- Metadata maintenance burden
+- Agent attention diverted from cognitive validity to format compliance
+
+### 3.2 Common shape as soft convention
+
+A recommended common shape may exist:
+
+- **Front section**: directory-level introduction, boundary description, key entry points, cognitive hints, update time
+- **Rear section**: descriptions of important files and subdirectories, local index, cross-references
+
+This layered shape supports progressive disclosure: the agent can read the front section first to build a directory-level model, then search or read the rear section on demand.
+
+But this layered shape is a **soft convention**, not a precondition for system correctness.
+
+### 3.3 Separator may exist, but must not become a protocol dependency
+
+Using a separator (e.g., `---`) between front and rear sections is a reasonable reading-optimization strategy. It helps the agent load high-level semantics cheaply, then expand into local details on demand.
+
+But the separator must not be:
+
+- Required to exist
+- Required to follow a uniform syntax
+- Required to be stably parseable by programs
+- Treated as invalid if absent
+
+Otherwise a beneficial writing habit becomes a rigid protocol.
+
+---
+
+## 4. Coverage Principles
+
+### 4.1 No full-directory coverage
+
+AGENT.md must not be required to cover every directory in the file system. Directory-level knowledge entry pages should serve only **high-value regions worth long-term semanticization**.
+
+Reasons:
+
+- Many directories are not worth long-term semantic maintenance
+- Low-value entry pages create maintenance burden, drift, and misleading staleness
+- Agent attention should not be consumed by metadata maintenance
+
+Direction: **acknowledge the whole file system as unified substrate in principle, but only semantically organize a subset of it with high quality**.
+
+### 4.2 Entering the knowledge view does not require AGENT.md
+
+A resource enters the knowledge view without AGENT.md being a necessary condition. Entry paths include:
+
+- Being explicitly referenced by an AGENT.md
+- Being marked as a key area by a parent directory's entry page
+- Being repeatedly read and referenced during tasks
+- Being incorporated into stable cognitive paths via summaries, indexes, or link networks
+
+AGENT.md is a powerful entry mechanism, but not the only form of knowledge-view presence.
+
+---
+
+## 5. Referencing and Connectivity
+
+### 5.1 Cross-directory referencing is allowed
+
+AGENT.md files in different directories may reference each other. Real knowledge organization does not strictly follow the directory tree; high-value associations often cross hierarchy levels, modules, task lines, and semantic regions.
+
+If AGENT.md can only describe "inside this directory", it provides only local orientation, not higher-quality knowledge connectivity.
+
+### 5.2 References are cognitive edges, not system registration
+
+Cross-directory references should not become a formal graph-database mechanism requiring central registration, unified indexing, or strong-consistency validation.
+
+At the current stage, references are lightweight cognitive edges: pointing to related directories, indicating cross-region paths, describing functional or semantic relationships. The emphasis is on **helping navigation and understanding**, not on building a complex knowledge-graph management system.
+
+---
+
+## 6. Content Boundary Principles
+
+### 6.1 Prioritize "how to understand here" over "how you must act"
+
+Appropriate AGENT.md content helps the agent build a local world model: directory purpose, content layering, recommended entry points, core vs. secondary distinction, relationships with other directories.
+
+It should not primarily be: behavioral constraint checklists, mandatory hard-rule sets, workflow-template forced entry points, or a local command system targeting the agent.
+
+### 6.2 Update time: present but semantically restrained
+
+Recording update time is reasonable for freshness gauging. But the timestamp means:
+
+- **It means**: this entry page was last organized or reviewed at this time.
+- **It does not mean**: contents have been fully verified, the description is necessarily accurate, or recent updates imply higher credibility.
+
+Update time is a cognitive auxiliary signal, not a truth guarantee.
+
+---
+
+## 7. Skill Reabsorption
+
+Under this design, traditional "skill" no longer needs to exist as an independent ontology. It can be reunderstood as:
+
+> A well-organized knowledge region that can stably help the agent accomplish a class of tasks.
+
+Such a knowledge region may contain: explanatory text, scripts or code, templates, reference materials, workflow clues, local entry pages and their cross-references.
+
+"Unifying knowledge and skill" is not crudely merging them into a new object type. It is reabsorbing the capability guidance formerly carried by "skill" into the file system's knowledge organization structure.
+
+What was a "skill" becomes a **recognizable, navigable, actionable knowledge region** — not a registered plugin with its own lifecycle.
+
+---
+
+## 8. Prompt Injection Design
+
+The knowledge view is realized primarily through prompt design rather than code enforcement.
+
+### 8.1 Workspace Root and Knowledge Space Boundary
+
+The **workspace root** is the directory from which the Elenchus CLI is launched (`cwd()`). This directory is the root of the agent's knowledge space.
+
+- The agent's absolute workspace root path is injected into the system prompt so the agent always knows where it is.
+- **Knowledge-organization activities** — creating or updating AGENT.md files, organizing skill regions, maintaining knowledge structure — must stay within the workspace root.
+- The agent may **read and write files anywhere** on the host system when a task requires it, but directories outside the workspace root are operational targets, not part of the knowledge space.
+- This is a prompt-level soft constraint, not a code-level enforcement, consistent with the overall knowledge-view philosophy.
+
+### 8.2 Knowledge View Guideline (static)
+
+A fixed prompt section inserted into every agent's system prompt, after Layer Orientation and before Cognitive Style. It includes:
+
+- The workspace root absolute path (dynamically substituted)
+- The knowledge-view mechanism: AGENT.md as local entry page, no enforced schema, natural cognitive housekeeping
+- **Writing guidance**: AGENT.md should be a quick-orientation entry point, not exhaustive documentation. Good content includes directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, and an `Updated:` timestamp. Agents should avoid putting temporary task notes, detailed implementation logic, full API documentation, or conversation logs into AGENT.md. The root AGENT.md is explicitly flagged as injected into the system prompt every turn, so agents understand its length directly reduces available context budget.
+- The knowledge space boundary constraint described in §8.1
+- Guidance to check for AGENT.md when exploring new directories within the workspace
+
+This section does not reproduce the full design principles. It conveys just enough for the agent to understand and participate in the knowledge-view convention.
+
+### 8.3 Workspace Knowledge (dynamic)
+
+Immediately after the Knowledge View Guideline, the system prompt injects the content of the root `AGENT.md` file from the workspace root. This content is read synchronously from disk each time `buildSystemPrompt` is called, so any agent modifications to the root AGENT.md take effect from the next turn.
+
+If the root AGENT.md does not exist, this section is silently omitted.
+
+### 8.4 Resulting system prompt structure
+
+```
+GUIDELINE (collaboration protocol, dialogue norms, tool descriptions)
++ LAYER_ORIENTATION (L0/L1/L2)
++ KNOWLEDGE_VIEW_GUIDELINE (static; includes workspace root path and boundary)
++ WORKSPACE_KNOWLEDGE (dynamic; root AGENT.md content, read each turn)
++ COGNITIVE_STYLE (Agent A / Agent B)
+```
+
+The former `capabilities?.buildSkillPromptAppendix()` injection point has been removed from the prompt assembly to avoid conflicting signals with the knowledge-view mechanism. The v1 skill runtime (capability provider, tool registration) remains operational for tool-surface purposes during the transition period.
+
+### 8.5 Runtime initialization
+
+At session startup, before creating the root deliberation unit, the framework checks the workspace root and bootstraps default knowledge-space files if they do not already exist:
+
+- `${runDirectory}/AGENT.md` — a generic workspace entry page template
+- `${runDirectory}/skills/` directory + `skills/AGENT.md` — skills directory convention and external-skill adaptation guidance
+
+The default templates are stored as string constants in `src/core/knowledge-view-defaults.ts` and written by `src/core/knowledge-view-init.ts`. This is analogous to how `.elenchus/` is auto-created for persistence state.
+
+If the files already exist (e.g., when running from the Elenchus project directory itself, which ships its own project-specific `AGENT.md`), they are not overwritten. Agents are expected to maintain and evolve these files over time.
+
+---
+
+## 9. Deliberately Excluded from Current Scope
+
+To maintain design simplicity and principle-level stability, the following are **explicitly not included** in this document:
+
+- AGENT.md governance flow (when/how agent creates, updates, or deletes AGENT.md)
+- Synchronization between AGENT.md and actual directory contents
+- Drift detection, staleness detection, and auto-repair
+- Unified validators or schema verification
+- Permission control, protection mechanisms, conflict-merge strategies
+- Whether a global index page, root entry page, or resident entry layer is needed
+- More complex knowledge-graph, scoring, or tagging designs
+- How the v1 capability-provider and installSkill tool transition toward the new model
+
+These belong to subsequent **knowledge governance / anti-entropy** problems, not to the current knowledge-view storage model.
+
+---
+
+## 10. Design Principles Summary
+
+1. **Substrate principle**: Knowledge space is a cognitive view on the file system, not an independent knowledge base.
+2. **Entry-page principle**: AGENT.md is a local knowledge entry page; its role is to help understand the directory, not to constrain the agent.
+3. **No-rigid-schema principle**: AGENT.md has no enforced fixed structure; common shapes are soft conventions only.
+4. **Progressive-disclosure principle**: AGENT.md may adopt a "directory introduction + local index" layered shape, but system correctness must not depend on it.
+5. **Selective-coverage principle**: Only high-value regions worth long-term semanticization need AGENT.md; full-directory coverage is not pursued.
+6. **Cross-reference principle**: AGENT.md files in different directories may reference each other to support cross-directory knowledge connectivity.
+7. **Skill-reabsorption principle**: Skill no longer exists as an independent storage ontology; it is reabsorbed as an organizational result of actionable knowledge regions.
+8. **Prompt-realization principle**: The knowledge view is realized through prompt injection (static guideline + dynamic root AGENT.md), not through code-level enforcement or schema validation.
+9. **Knowledge-space-boundary principle**: The workspace root (CLI launch directory) defines the boundary of the knowledge space. Agents may read/write files anywhere, but knowledge-organization activities stay within this root.
+10. **Scope-restraint principle**: Current scope is limited to the knowledge-view storage model and prompt injection; governance, anti-entropy, and auto-maintenance are deferred.
+
+---
+
+## Change Log
+
+- **v1.2 (2026-04-15)**: Remove v1 skill system code entirely: `skills.ts`, `CapabilityBundle`, `CapabilityProvider`, `installSkill` tool, skill binding persistence, `adapters/skills/` directory, `skill-system.md` design doc. Add Writing Guidance subsection to prompt (conciseness, root AGENT.md context-budget awareness, content direction, update timestamps). Tool surface now uses `getBuiltInToolList()` directly; `LocalNodeToolExecutor` simplified to built-in tools only. SQLite schema bumped to v4.
+- **v1.1 (2026-04-15)**: Add §8 Prompt Injection Design: workspace root = CLI cwd(), knowledge space boundary, static Knowledge View Guideline (includes absolute workspace root path), dynamic Workspace Knowledge (root AGENT.md read each turn). Runtime initialization writes default AGENT.md and skills/AGENT.md to workspace root on first startup. Remove `buildSkillPromptAppendix()` from prompt assembly. Add prompt-realization and knowledge-space-boundary principles.
+- **v1.0 (2026-04-14)**: Initial version. Supersedes `skill-system.md`. Defines knowledge view as a cognitive view on the file system substrate, introduces AGENT.md as local knowledge entry page with soft structural conventions, cross-directory referencing, skill reabsorption, and explicit scope exclusion of governance mechanisms.

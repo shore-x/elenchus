@@ -3,7 +3,6 @@
 
 import { cwd } from "node:process";
 import * as readline from "node:readline";
-import { LocalSkillRuntime } from "../../adapters/skills/local-skill-runtime.js";
 import { createSession } from "../../application/runtime.js";
 import { createPiAiLlmClient } from "../../adapters/llm/pi-ai-client.js";
 import { SqliteSessionPersistence } from "../../adapters/storage/sqlite/sqlite-session-persistence.js";
@@ -30,12 +29,11 @@ export async function main(): Promise<void> {
   printStartupInfo(config.provider, config.modelName, config.baseUrl, config.level);
 
   const runDirectory = cwd();
-  const capabilityProvider = new LocalSkillRuntime({ runDirectory });
 
   const session = createSession({
     llmClient,
-    toolExecutor: new LocalNodeToolExecutor(capabilityProvider, capabilityProvider),
-    capabilityProvider,
+    toolExecutor: new LocalNodeToolExecutor(),
+    runDirectory,
     level: config.level,
     persistence: new SqliteSessionPersistence({ runDirectory }),
     onSystemEvent: (event: SystemEvent) => {

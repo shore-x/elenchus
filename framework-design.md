@@ -27,7 +27,7 @@ version: 3.7
 | [`framework-design/protocol-and-runtime.md`](./framework-design/protocol-and-runtime.md) | 协议与运行时专题 | proposal-vote、阻塞/非阻塞、副作用落账、向上通信、控制平面 |
 | [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
-| [`framework-design/skill-system.md`](./framework-design/skill-system.md) | Skill系统专题 | 当前 installable skill v1、L1/L2注入规则、skill tool注册与执行、持久化绑定，以及向统一知识空间方向演进的状态说明 |
+| [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -87,16 +87,17 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 压缩属于投影层派生视图，不能回写或污染 `ConversationLedger`。详细约束见 [`context-compression.md`](./framework-design/context-compression.md)。
 当存在已持久化的 `Memory Snapshot` 时，冷启动恢复不必急于加载完整聊天历史，而应优先用 `Memory Snapshot + Recent Raw Window` 重建继续 deliberation 所需的最小工作集。
 
-### 2.4 知识空间方向（进行中）
+### 2.4 知识视图（已收敛方向）
 
-Elenchus 正在探索把 installable skills 与长期记忆统一到同一个 **knowledge space** 中。
+Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge view** 中。知识视图不是独立知识库，而是文件系统上的可导航认知视图。
 
-- 知识空间中的内容以自然语言为主，可引用其他文本、代码或脚本。
-- 当前方向不对知识施加刚性类型分类；agent 主要依赖知识文本中表达的来源、强制性、可信度、经验性与适用范围来做解释与判断。
-- 当前只明确区分 **`Resident Knowledge`** 与非驻留知识：前者表示默认常驻在 agent context 中的一小部分知识入口，后者表示按引用或按需展开的其余知识。
-- `Resident Knowledge` 目前只被定义为“常驻知识视图”，尚未决定它应当被配置为单一集合、单一文件，还是由分散节点的摘要动态汇总而成。
-- 知识空间也尚未决定是否完全以文件系统为唯一实现载体；当前仅确认“文件系统友好、文本可引用”的方向，而不提前排除其他底层实现可能。
-- 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计；本总纲当前只记录该方向的必要性，而不预先给出完整机制。
+- 文件系统是 agent 的统一工作底座；知识不是另一套存储，而是底座上的认知组织层。
+- 在值得长期语义化的目录下放置 **`AGENT.md`** 作为局部知识入口页，帮助 agent 以低成本理解该目录。
+- `AGENT.md` 不采用强制固定结构，常见分层写法（目录介绍 + 局部索引）只是软约定；不同目录下的 `AGENT.md` 可以互相引用。
+- `AGENT.md` 的职责是帮助理解目录，而不是约束 agent 行为；它不是目录级 manifest 或 system prompt。
+- 传统 `skill` 不再作为独立存储本体存在，而是被重新吸收为可行动知识区域的一种组织结果。
+- 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计。
+- 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 ### 2.5 本章相关核心原则
 
@@ -179,11 +180,9 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - 共享协作协议
 - Agent A / Agent B 的认知风格差异
 - 当前可用工具列表
-- 当前层级可见的 capability appendix（例如当前 installable skill v1 的指导，或未来知识空间中可注入的 `Resident Knowledge`）
+- 知识视图（Knowledge View）：通过 system prompt 注入工作空间根目录路径、AGENT.md 导航机制和知识空间边界约束
 
-其中 capability 注入当前仍通过共享的 **capability provider** 在 turn 边界读取最新快照完成：已安装 skill 的 prompt appendix 与 skill tools 不必只在 session 启动时决定；新增 skill 在成功热安装后可从后续 turn 开始生效，而不会追溯改变已经开始的 turn。
-
-更长期的方向则是把这类外部先验知识收敛为统一的 knowledge space，而不是长期维持“skill 系统”和“长期记忆系统”两套彼此独立的知识面。该方向目前只确定：agent 未来应能看到一小部分 `Resident Knowledge` 作为常驻知识入口，并通过引用继续展开更深层知识；但尚未确定 `Resident Knowledge` 的具体组装方式，也尚未确定 knowledge space 是否完全由文件系统单独承载。
+知识视图将外部先验知识统一为文件系统上的可导航认知视图：AGENT.md 作为局部知识入口页，工作空间根目录的 AGENT.md 内容每轮动态注入 system prompt。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 同时，框架采用 **无状态Agent + 外部化知识** 模型：知识不应沉淀为某个实例不可替代的隐藏积累，而应通过父层注入与外部资源传递。
 `spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文应通过 `report`、`yield` 与 `sendToChild` 在父子之间持续流动。
@@ -244,17 +243,15 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
 - **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
-- **Environment**：`bash`、`readFile`、`writeFile`、`installSkill`，以及安装后的 blocking skill tools
+- **Environment**：`bash`、`readFile`、`writeFile`
 
 可用性规则保持简单：
 
 - 子Agent管理工具仅非叶子层可用
 - 环境工具仅非纯协调层可用
 - 协议工具所有层级都可用（其中部分工具按状态条件注入）
-- `installSkill` 是内建 blocking environment tool，目前仅支持从本地合法 skill package 目录做热安装，并在成功后从下一次 turn 开始暴露新 skill
-- 安装后的 skill 默认仅向 `L1` / `L2` 注入；skill tool 仍是 proposal-producing blocking tools，必须经另一侧 agent 批准后才进入 `Executing`
 
-installable skill 的正式模型见 [`framework-design/skill-system.md`](./framework-design/skill-system.md)。这仍是当前实现的权威描述，但长期方向正在转向统一 knowledge space：未来 skill-like guidance 与长期记忆可能共享同一个外部知识底座，而不再维持彼此完全独立的子系统。如果该专题文档中的 skill 注入规则、tool registry、执行模型或持久化绑定发生变化，也需回看本总纲中的第四章与第五章摘要是否仍然准确。
+知识视图的正式设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 ### 5.4 本章相关核心原则
 
@@ -308,8 +305,8 @@ installable skill 的正式模型见 [`framework-design/skill-system.md`](./fram
 | Directive Overlay | 仅在当前轮临时注入给当前 agent 的控制提示，不进入共享历史 |
 | Memory Snapshot | 对既有聊天历史进行压缩后得到的弱结构化自然语言任务状态快照 |
 | Recent Raw Window | 最近一段未压缩原始上下文窗口，用于保留局部连续性与近期细节 |
-| Knowledge Space | 一个正在探索中的统一外部知识方向：skill-like guidance 与长期记忆未来可能共享同一知识底座，以自然语言文本及其引用关系为主要组织形式 |
-| Resident Knowledge | 默认常驻在 agent context 中的一小部分知识入口。当前只确定其“常驻知识视图”语义，尚未决定它是单一集合、单一文件，还是由分散知识节点的摘要动态汇总而成 |
+| Knowledge View | 文件系统上的可导航认知视图。skill、memory、脚本、中间结果等统一属于同一外部资源空间，不再按存储本体分裂为独立子系统；AGENT.md 是局部知识入口页 |
+| AGENT.md | 目录级局部知识入口页 / 语义着陆页。帮助 agent 以低成本理解目录：用途、边界、入口、关联。不采用强制固定结构，不充当目录级 manifest 或行为约束文件；不同目录下的 AGENT.md 可以互相引用 |
 | `.elenchus` 运行目录 | 当前嵌入式 SQLite 持久化后端在运行目录下使用的状态目录；默认数据库文件为 `.elenchus/state.db` |
 | Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
 | 开发期重建（Development-time Rebuild） | 当前 SQLite schema 在快速演进阶段采取的版本升级策略：schema 不匹配时直接重建本地数据库，而不是执行兼容迁移 |
@@ -323,6 +320,7 @@ installable skill 的正式模型见 [`framework-design/skill-system.md`](./fram
 
 ## 版本历史
 
+- **v3.9 (2026-04-14)**：将知识空间方向从"探索中"收敛为正式设计。新增专题文档 `knowledge-view.md` 替代旧 `skill-system.md`；知识视图定义为文件系统上的可导航认知视图，AGENT.md 作为局部知识入口页替代旧 skill manifest；传统 skill 被重新吸收为可行动知识区域的组织结果。同步更新总纲中文档地图、§2.4、§5.3、术语表。
 - **v3.8 (2026-04-13)**：在总纲中记录统一 knowledge space 的方向：开始探索将 installable skills 与长期记忆收敛到同一外部知识底座中，并引入 `Resident Knowledge` 作为常驻知识入口术语。明确当前仍未决定 `Resident Knowledge` 是统一集合还是分散节点摘要视图，也未决定 knowledge space 是否完全由文件系统独占实现；同时预留后续 knowledge anti-entropy 专题用于处理知识膨胀、漂移、腐烂与清理问题。
 - **v3.7 (2026-04-13)**：将 skill 运行时从启动期静态 bundle 升级为 turn-boundary capability provider。新增内建 blocking tool `installSkill`，当前支持从本地合法 skill package 目录执行热安装；安装成功后刷新 capability snapshot，并从下一次 turn 开始注入新的 skill prompt appendix 与 skill tools。同步更新总纲中的第四章、第五章摘要以反映热安装语义。
 - **v3.6 (2026-04-12)**：补充 SQLite 持久化的实现边界：当前 schema 不依赖数据库外键维护 unit graph，而由应用层持久化逻辑与保存顺序保证关系一致性；同时记录 `schema_meta` 版本号与开发期“版本不匹配即重建本地数据库”的策略。

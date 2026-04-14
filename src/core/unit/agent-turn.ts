@@ -4,11 +4,10 @@
 // The full agent-visible context is projected per turn from ConversationLedger upstream.
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
-import { buildSystemPrompt } from "../prompts.js";
+import { buildSystemPrompt, readRootAgentMd } from "../prompts.js";
 import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
-import type { CapabilityProvider } from "../skills.js";
 import { type AgentId, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
-import { type ElenchusTool } from "../tools.js";
+import { getBuiltInToolList, type ElenchusTool } from "../tools.js";
 
 const DISPLAY_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
@@ -31,13 +30,13 @@ export class AgentTurn {
   private selfId: AgentId;
   private llmClient: LlmClient;
   private level: ToolLevel;
-  private capabilityProvider: CapabilityProvider;
+  private runDirectory: string;
 
-  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", capabilityProvider: CapabilityProvider) {
+  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", runDirectory: string) {
     this.selfId = selfId;
     this.llmClient = llmClient;
     this.level = level;
-    this.capabilityProvider = capabilityProvider;
+    this.runDirectory = runDirectory;
   }
 
   async execute(
@@ -45,11 +44,12 @@ export class AgentTurn {
     hasPendingFromOther: boolean,
     hasChildren: boolean = false,
   ): Promise<TurnResult> {
-    const snapshot = this.capabilityProvider.getSnapshot();
-    const tools = snapshot.bundle.getToolsForTurn(hasPendingFromOther, this.level, hasChildren);
+    const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren);
+
+    const workspaceKnowledge = readRootAgentMd(this.runDirectory);
 
     const context: LlmContext = {
-      systemPrompt: buildSystemPrompt(this.selfId, this.level, snapshot.bundle),
+      systemPrompt: buildSystemPrompt(this.selfId, this.level, this.runDirectory, workspaceKnowledge),
       messages,
       tools: toProviderTools(tools),
     };

@@ -1,6 +1,8 @@
 // Elenchus - System Prompts
-// System Prompt = buildSystemPrompt(agentId, level)
-//              = SHARED_GUIDELINE (with Context Grounding) + LAYER_ORIENTATION[level] + AGENT_COGNITIVE_STYLE[agentId]
+// System Prompt = buildSystemPrompt(agentId, level, workspaceKnowledge?)
+//              = SHARED_GUIDELINE + LAYER_ORIENTATION[level] + KNOWLEDGE_VIEW_GUIDELINE
+//                + Workspace Knowledge (dynamic, from root AGENT.md)
+//                + AGENT_COGNITIVE_STYLE[agentId]
 // All layers share the same prompt family and core collaboration protocol (§4.3.1 Prompt Isomorphism).
 // Layer-specific differences remain minimal orientation facts about tool access and delegation structure.
 // Behavioral differences emerge mainly from the tool list injected per-turn and protocol dynamics, not from separate prompt logic families.
@@ -9,10 +11,13 @@
 // principle-oriented coordination across incoming messages and child work,
 // routine upward communication across layers, and deliberation pacing across
 // multiple open questions without urgency pressure.
+// Knowledge View: static guideline explaining the AGENT.md knowledge-view mechanism,
+// plus dynamic injection of root AGENT.md content read synchronously each turn.
 // Cognitive Style: epistemic strategy (evidence evaluation + reasoning organization).
 // Compression uses a separate fixed prompt to refresh a Memory Snapshot from ledger-derived context.
 
-import type { CapabilityBundle } from "./skills.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentId, ToolLevel } from "./types.js";
 
 const GUIDELINE_HEADER = `## Elenchus Deliberation Unit
@@ -79,7 +84,7 @@ The tools available in the current turn fall into three categories:
 
 - **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (start a background memory-snapshot refresh and continue normal deliberation), **vote** (evaluate your partner's proposal).
 - **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **unmountChild** (remove an idle child from the parent unit's current visible working set without terminating it), **sleep** (pause with timeout when waiting is the best next move).
-- **Environment tools** (if available): **bash**, **readFile**, **writeFile**, **installSkill** — direct interaction with the environment, including hot-installing a valid local skill package for later turns.
+- **Environment tools** (if available): **bash**, **readFile**, **writeFile** — direct interaction with the environment.
 
 The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall hierarchy.
 Raw assistant and tool-call traces are not carried forward as private chat history across turns. Each turn is grounded in shared context projected from public facts such as proposals, votes, tool results, child reports, and recorded protocol rejections.
@@ -98,7 +103,6 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - Child agent upward messages arrive asynchronously as [Public Fact][Child Report] broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped; these messages often call for either **sendToChild**, local replanning, or further upward coordination.
 - Use **unmountChild** when an idle child no longer deserves space in the parent unit's current visible context. If that child later sends a new upward communication message, it will become visible again.
 - Use **sleep** when deliberate waiting would serve the task better than further immediate discussion, coordination, or action.
-- Use **installSkill** only for a valid local skill package directory that is genuinely needed for the task; a newly installed skill becomes available from the next turn rather than retroactively changing the current one.
 - Tool execution results appear as [Public Fact][Tool Result] broadcasts.
 - If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a [Public Fact][Unit Runtime] broadcast.
 - When your task is complete, propose a **yield** with a clear summary or question`;
@@ -215,11 +219,53 @@ Your job is to write a natural-language task-state snapshot for future turns.
 - Write for continued work, not for archival display.
 - Return only the Memory Snapshot text.`;
 
-export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, capabilities?: CapabilityBundle): string {
+const KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE = `
+
+## Knowledge View
+Your workspace root directory is: **{{WORKSPACE_ROOT}}**
+
+Knowledge is not a separate storage system — it is a navigable cognitive view built on top of the file system within this workspace.
+
+Some directories contain an **AGENT.md** file. This is a local knowledge entry page that helps you understand the directory: what it is for, which contents matter most, where to start reading, and how it relates to other areas. AGENT.md files may reference each other across directories.
+
+AGENT.md is not a configuration file, not a manifest, and not a behavioral constraint. It is a natural-language semantic entry point written for you. There is no enforced schema — different directories may organize their AGENT.md differently depending on what is most helpful.
+
+You may create, update, or reference AGENT.md files as part of your normal work when doing so would improve the navigability and understandability of the workspace. This is a natural cognitive-housekeeping activity, not an extra compliance obligation. Maintain them when it genuinely helps future understanding; do not maintain them mechanically.
+
+When you encounter a new directory within the workspace, check whether an AGENT.md exists. If it does, read it first to orient yourself. If it does not, the directory is still part of the workspace — you can explore it normally and consider whether an AGENT.md would be worth creating.
+
+### Writing Guidance
+AGENT.md should be a quick-orientation entry point, not exhaustive documentation. A reader should be able to build a directory-level understanding within seconds.
+- **Good content**: directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, an \`Updated:\` date near the top.
+- **Avoid**: temporary task notes, detailed implementation logic, full API documentation, conversation logs, or mechanical per-file listings.
+- **The root AGENT.md is injected into your system prompt every turn.** Its length directly reduces the context budget available for conversation and reasoning. Keep it especially concise — project-level overview and navigation only.
+- Update an AGENT.md when the directory's purpose or structure changes meaningfully, not after every small edit. Include an \`Updated:\` timestamp so future readers can gauge freshness.
+
+### Knowledge Space Boundary
+Your **knowledge space** is rooted at the workspace root directory shown above. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing skill regions, maintaining knowledge structure — must stay within the workspace root. Directories outside the workspace root are operational targets, not part of your knowledge space.
+
+The workspace root AGENT.md, if present, is shown below as **Workspace Knowledge**.`;
+
+function buildWorkspaceKnowledge(content: string | null): string {
+  if (!content) return "";
+  return `\n\n## Workspace Knowledge\nThe following is the content of the root AGENT.md for the current workspace:\n\n${content}`;
+}
+
+export function readRootAgentMd(runDirectory: string): string | null {
+  try {
+    return readFileSync(join(runDirectory, "AGENT.md"), "utf-8");
+  } catch {
+    return null;
+  }
+}
+
+export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, runDirectory: string, workspaceKnowledge?: string | null): string {
+  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace("{{WORKSPACE_ROOT}}", runDirectory);
   return buildGuideline()
     + buildLayerOrientation(level)
-    + COGNITIVE_STYLES[agentId]
-    + (capabilities?.buildSkillPromptAppendix(level) ?? "");
+    + knowledgeViewGuideline
+    + buildWorkspaceKnowledge(workspaceKnowledge ?? null)
+    + COGNITIVE_STYLES[agentId];
 }
 
 export function buildCompressionSystemPrompt(): string {
