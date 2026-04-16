@@ -9,6 +9,7 @@
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
 import { existsSync, mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { AgentTurn } from "./agent-turn.js";
 import { getBuiltInToolRegistry } from "../tools.js";
@@ -65,9 +66,38 @@ export class DeliberationUnit {
   private workspaceRoot: string;
   private workDirectory: string;
   private static readonly MAX_EMPTY_TURNS = 4;
-  private static readonly WORK_SUBDIR = ".elenchus/work";
+  private static readonly WORKSPACES_DIR = ".elenchus/workspaces";
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
   private static readonly COMPRESSION_MAX_TOKENS = 4096;
+  private static readonly GIT_COMMIT_MESSAGE = "elenchus auto-commit";
+
+  /** Ensure a git repo exists in the given directory. No-op if .git already present. */
+  private static ensureGitRepo(dir: string): void {
+    if (existsSync(join(dir, ".git"))) return;
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+    } catch {
+      // git not available — proceed without tracking
+    }
+  }
+
+  /** Auto-commit all changes in the given directory. Silent no-op if git is unavailable. */
+  private static autoCommit(dir: string): void {
+    try {
+      execSync("git add -A", { cwd: dir, stdio: "pipe" });
+      // Check whether there are staged changes before committing
+      const status = execSync("git diff --cached --quiet", { cwd: dir, stdio: "pipe" });
+      // diff --cached --quiet exits 0 when no changes — nothing to commit
+      return;
+    } catch {
+      // diff --cached --quiet exits 1 when there ARE staged changes — proceed to commit
+    }
+    try {
+      execSync(`git commit -m "${DeliberationUnit.GIT_COMMIT_MESSAGE}" --allow-empty-message`, { cwd: dir, stdio: "pipe" });
+    } catch {
+      // commit failed (e.g., no git user configured) — proceed silently
+    }
+  }
 
   constructor(options: DeliberationUnitOptions) {
     this.level = options.level ?? "L0";
@@ -76,6 +106,11 @@ export class DeliberationUnit {
     this.workspaceRoot = options.workspaceRoot;
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
     this.workDirectory = options.workDirectory ?? DeliberationUnit.computeWorkDirectory(this.workspaceRoot, this.level, options.path ?? []);
+    // Ensure work directory exists and has git tracking (root unit uses workspaceRoot which always exists)
+    if (this.workDirectory !== this.workspaceRoot) {
+      mkdirSync(this.workDirectory, { recursive: true });
+    }
+    DeliberationUnit.ensureGitRepo(this.workDirectory);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
@@ -206,6 +241,7 @@ export class DeliberationUnit {
       };
       // Ensure work directory exists on restore (may have been deleted externally)
       mkdirSync(this.workDirectory, { recursive: true });
+      DeliberationUnit.ensureGitRepo(this.workDirectory);
       this.state = normalizedState;
       this.turnCounter = snapshot.turnCounter;
       this.childCounter = snapshot.childCounter;
@@ -335,27 +371,13 @@ export class DeliberationUnit {
     if (path.length === 0) return workspaceRoot;
     const padded = path.map((s) => String(s).padStart(2, "0"));
     const unitDirName = `${level}-${padded.join("-")}`;
-    if (level === "L1") {
-      return join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, unitDirName);
-    }
-    // L2: nested under parent L1 directory
-    const parentPadded = padded[0].padStart(2, "0");
-    const parentDirName = `L1-${parentPadded}`;
-    return join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, parentDirName, unitDirName);
+    // Flat layout: all unit workspaces are siblings under .elenchus/workspaces/
+    return join(workspaceRoot, DeliberationUnit.WORKSPACES_DIR, unitDirName);
   }
 
   private static findNextChildSlot(workspaceRoot: string, parentLevel: ToolLevel, parentPath: number[]): { childPath: number[]; childWorkDir: string } {
     const childLevel = parentLevel === "L0" ? "L1" as const : "L2" as const;
-    const parentPadded = parentPath.map((s) => String(s).padStart(2, "0"));
-    const parentWorkDir = parentPath.length === 0
-      ? workspaceRoot
-      : parentLevel === "L1"
-        ? join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, `L1-${parentPadded.join("-")}`)
-        : join(workspaceRoot, DeliberationUnit.WORK_SUBDIR, `L1-${parentPadded[0]}`, `${parentLevel}-${parentPadded.join("-")}`);
-
-    const searchBase = childLevel === "L1"
-      ? join(workspaceRoot, DeliberationUnit.WORK_SUBDIR)
-      : parentWorkDir;
+    const searchBase = join(workspaceRoot, DeliberationUnit.WORKSPACES_DIR);
 
     for (let i = 1; i <= 999; i++) {
       const childPath = [...parentPath, i];
@@ -721,6 +743,7 @@ export class DeliberationUnit {
             });
             this.notifyDurableStateChange();
             this.emit({ type: "tool-result", scope: this.scope, toolName, success: execResult.success, output: execResult.output, durationMs: execResult.durationMs });
+            DeliberationUnit.autoCommit(this.workDirectory);
             const nextState: UnitState = this.executingFromState === "turn-a" ? "turn-b" : "turn-a";
             this.executingFromState = null;
             this.transition("executing", nextState);
@@ -799,6 +822,7 @@ export class DeliberationUnit {
       this.childCounter = childPath[childPath.length - 1];
 
       mkdirSync(childWorkDir, { recursive: true });
+      DeliberationUnit.ensureGitRepo(childWorkDir);
       const child = this.createChildUnit(childId, childLevel, childPath);
 
       this.children.set(childId, child);

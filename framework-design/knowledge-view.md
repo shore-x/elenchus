@@ -278,13 +278,41 @@ Key properties:
 
 ### 9.2 Workspace directory organization
 
-Workspace directories are organized under the workspace root by unit identity. The specific naming convention (e.g., `.elenchus/units/{unitId}/`) is an implementation detail, but the principle is:
+Workspace directories are organized as **flat siblings** under a common parent directory, regardless of the control hierarchy between units. The parent-child relationship is a runtime communication and control concern, not a storage layout concern.
 
-- each unit has a clear, unique directory path
-- the path is known to the unit itself (injected via prompt or tool context)
-- the path is accessible to parent units for reading
+Layout convention:
 
-### 9.3 Knowledge artifacts in workspace
+```
+.elenchus/workspaces/
+  unit-root/          ← L0 root unit
+  L1-01/              ← L0's first child
+  L1-02/              ← L0's second child
+  L2-01-01/           ← L1-01's child (grandchild of root, but a flat sibling on disk)
+```
+
+Principles:
+
+- **Control hierarchy ≠ storage hierarchy**: the tree structure of agent delegation exists at the runtime level (ConversationLedger, DeliberationUnit), not at the file-system level. Workspace directories do not nest inside each other.
+- Each unit has a clear, unique directory path derived from its unit identity.
+- The path is known to the unit itself (injected via prompt or tool context).
+- The path is accessible to parent units for reading via absolute paths.
+- Flat layout ensures that each unit's git tracking is naturally isolated — a parent unit's `git status` does not see child unit changes, and no `.gitignore` prefix matching is needed to exclude child workspaces.
+
+### 9.3 Git-based change tracking
+
+Each unit workspace is initialized as an independent local git repository (`git init`). This provides a lightweight, zero-infrastructure mechanism for agents to detect file changes within their own workspace — especially changes to AGENT.md and other knowledge artifacts.
+
+Key properties:
+
+- **Local-only**: git is used purely for local state tracking. No remote synchronization, no branching strategy, no push/pull. The repo exists so the agent can run `git status`, `git diff`, and `git log` to understand what has changed in its workspace.
+- **Per-unit isolation**: because workspaces are flat siblings (§9.2), each unit's git repo covers only its own directory. A parent unit's `git status` never sees child unit changes, and no `.gitignore` tricks are needed to exclude child workspaces.
+- **Agent-visible**: the agent may use `bash` to run git commands for change detection. This is a natural use of the environment tools, not a special integration point.
+- **Automatic commits**: the framework performs `git add -A && git commit` at defined boundaries (e.g., after tool execution results are written, after AGENT.md updates). This gives the agent a meaningful change history without requiring the agent to manually commit.
+- **No enforcement**: git tracking is a convenience, not a correctness requirement. If git is not available on the host, or if the repo becomes corrupted, the unit continues to function normally.
+
+The root unit (L0) is a special case: its workspace is the workspace root itself (`cwd()`), which may already be a git repository for the user's project. In that case, the existing project git repo serves as the root unit's change tracker, and no additional `git init` is performed. If the workspace root is not already a git repo, one is initialized.
+
+### 9.4 Knowledge artifacts in workspace
 
 The primary knowledge artifact format is **.md files**. These serve multiple purposes:
 
@@ -295,7 +323,7 @@ The primary knowledge artifact format is **.md files**. These serve multiple pur
 
 These .md files are not structured data; they are natural-language documents that agents write for themselves and for other agents to read on demand.
 
-### 9.4 Cross-workspace reading
+### 9.5 Cross-workspace reading
 
 A parent unit may read files from a child unit's workspace directory. This is the primary mechanism for the **knowledge channel** in dual-channel communication (P27).
 
@@ -394,11 +422,14 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 11. **Agent-workspace-ownership principle**: Each agent unit owns its workspace directory; other units may read but should not directly modify it.
 12. **Knowledge-channel-complement principle**: The knowledge channel (.md files) complements the message channel (ConversationLedger); they carry different communication loads and must not substitute for each other.
 13. **Reference-over-copy principle**: When a parent unit needs child knowledge, prefer reading the original file over copying it; integration should produce the parent's own understanding, not a mirror.
+14. **Control-storage-decoupling principle**: The parent-child control hierarchy exists at the runtime level, not the file-system level. Workspace directories are flat siblings; control hierarchy does not dictate storage nesting.
+15. **Git-change-tracking principle**: Each unit workspace uses a local git repository for lightweight change detection. Git is a convenience mechanism, not a correctness requirement; the unit functions normally without it.
 
 ---
 
 ## Change Log
 
+- **v2.1 (2026-04-17)**: Redesign §9.2 for flat workspace layout (control hierarchy ≠ storage hierarchy). Add §9.3 Git-based change tracking (per-unit independent local git repo for change detection). Renumber §9.3→9.4, §9.4→9.5. Add two new design principles: control-storage-decoupling, git-change-tracking.
 - **v2.0 (2026-04-16)**: Add §9 Agent Workspace Model (workspace ownership, directory organization, knowledge artifacts, cross-workspace reading) and §10 Dual-Channel Knowledge Sharing (knowledge channel design, report-with-reference pattern, knowledge integration, discoverability, staleness). Add three new design principles: agent-workspace-ownership, knowledge-channel-complement, reference-over-copy. Update scope and relevant principles to include P27, P28. Renumber §9 (excluded scope) to §11, §10 (principles) to §12.
 - **v1.2 (2026-04-15)**: Remove v1 skill system code entirely: `skills.ts`, `CapabilityBundle`, `CapabilityProvider`, `installSkill` tool, skill binding persistence, `adapters/skills/` directory, `skill-system.md` design doc. Add Writing Guidance subsection to prompt (conciseness, root AGENT.md context-budget awareness, content direction, update timestamps). Tool surface now uses `getBuiltInToolList()` directly; `LocalNodeToolExecutor` simplified to built-in tools only. SQLite schema bumped to v4.
 - **v1.1 (2026-04-15)**: Add §8 Prompt Injection Design: workspace root = CLI cwd(), knowledge space boundary, static Knowledge View Guideline (includes absolute workspace root path), dynamic Workspace Knowledge (root AGENT.md read each turn). Runtime initialization writes default AGENT.md and skills/AGENT.md to workspace root on first startup. Remove `buildSkillPromptAppendix()` from prompt assembly. Add prompt-realization and knowledge-space-boundary principles.

@@ -260,9 +260,12 @@ AGENT.md should be a quick-orientation entry point, not exhaustive documentation
 
 ### Knowledge Sharing Across Agents
 When sharing knowledge with other agents (especially via report and yield), always use **absolute file paths** so that the receiving agent can locate and read the file without ambiguity. This is essential for cross-unit knowledge sharing:
-- When you save work results to a .md file, include the absolute path (e.g., /path/to/workspace/.elenchus/work/L1-01/findings.md) in your report or yield message.
+- When you save work results to a .md file, include the absolute path (e.g., /path/to/workspace/.elenchus/workspaces/L1-01/findings.md) in your report or yield message.
 - When reading files produced by other agents, use the absolute paths they provided.
 - This enables the dual-channel communication pattern: messages carry lightweight summaries + file paths, while the .md files carry the detailed knowledge that the receiving agent reads on demand.
+
+### Change Tracking
+Your working directory is a local git repository used for lightweight change detection. This is local-only — no remote sync, no branching strategy. You can use \`git status\`, \`git diff\`, and \`git log\` via bash to understand what has changed in your workspace, especially AGENT.md and other knowledge artifacts. The framework auto-commits after tool execution results are written, giving you a meaningful change history without manual effort.
 
 ### Knowledge Space Boundary
 Your **knowledge space** is rooted at the workspace root directory shown above. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing skill regions, maintaining knowledge structure — must stay within the workspace root. Directories outside the workspace root are operational targets, not part of your knowledge space.

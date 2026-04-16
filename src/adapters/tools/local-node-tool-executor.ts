@@ -16,7 +16,7 @@ const L0_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "ls", "find", "tree", "cat", "head", "tail", "grep", "wc",
   "du", "file", "stat", "pwd", "which", "echo", "diff",
   "sort", "uniq", "type", "less", "more", "printenv", "env",
-  "date", "uname", "hostname", "whoami", "id",
+  "date", "uname", "hostname", "whoami", "id", "git",
 ]);
 
 const L0_REJECTION_MESSAGE =
