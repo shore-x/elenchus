@@ -213,6 +213,12 @@ export class DeliberationUnit {
       this.loopRunning = false;
       this.consecutiveEmptyTurns = 0;
       this.ledger.loadSnapshot(snapshot.ledger);
+      if (coldStart) {
+        const supersededCount = this.ledger.supersedeAllPendingProposals();
+        if (supersededCount > 0) {
+          recoveryMessages.push(`${supersededCount} pending proposal(s) were superseded during cold-start recovery. They can no longer be voted on; new proposals may be submitted instead.`);
+        }
+      }
       this.compressionManager.loadSnapshot(compressionSnapshot);
       this.commitLog = snapshot.commitLog.map((step) => ({ ...step }));
       this.children = new Map<string, DeliberationUnit>();
@@ -684,7 +690,7 @@ export class DeliberationUnit {
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
 
-          const resolvedTool = getBuiltInToolRegistry().get(toolName);
+          const resolvedTool = getBuiltInToolRegistry(this.level).get(toolName);
 
           if (toolName === "yield") {
             const yieldContent = approvedProposal.args.content as string;
@@ -704,7 +710,7 @@ export class DeliberationUnit {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
-            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.workDirectory });
+            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.workDirectory, level: this.level });
             this.ledger.appendToolResultMessage({
               proposalId: approvedProposal.messageId,
               toolName,

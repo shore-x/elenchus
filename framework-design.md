@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-13
-version: 3.7
+version: 4.0
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -45,6 +45,7 @@ Elenchus 的核心思路是：通过两个具有互补认知策略的对称 Agen
 - **任务分解**：复杂任务如何通过子单元分层展开。
 - **状态管理**：单元在任意时刻处于何种状态，以及如何转换。
 - **持久化与恢复**：运行状态、记忆、聊天历史与子单元图如何落盘，并在冷启动后按需恢复。
+- **知识共享**：Agent之间如何通过持久化知识产物（.md 文件）进行跨单元、跨轮次的知识传递与协作。
 
 ### 1.3 设计目标
 
@@ -98,6 +99,25 @@ Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge
 - 传统 `skill` 不再作为独立存储本体存在，而是被重新吸收为可行动知识区域的一种组织结果。
 - 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计。
 - 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
+
+#### 2.4.1 双通道通信：消息 + 知识文件
+
+Agent 之间的协作依赖两个本质不同的通信通道：
+
+| | 消息通道 | 知识通道（.md 文件） |
+|---|---|---|
+| **带宽** | 窄 — 受上下文窗口硬约束 | 宽 — 按需读取，不读不占上下文 |
+| **时态** | 即时 — 发送即触发消费 | 持久 — 写一次，任意时刻可读 |
+| **消费模式** | 推送式 — 到达即处理 | 拉取式 — 按需、选择性读取 |
+| **生命周期** | 轮次级 — 属于对话历史 | 跨轮次 — 独立于任何单次对话 |
+| **核心职能** | 信号 / 触发 / 协调 | 知识传递 / 工作产物 / 长期记忆 |
+
+- **消息通道**用于 agent 之间的即时沟通与工作触发。消息到达即触发接收方开始工作，承载信号、协调意图和轻量摘要。
+- **知识通道**通过文件系统中的 `.md` 文件实现跨单元、跨轮次的持久化知识共享。子 agent 将工作记录、经验总结等保存为 `.md` 文件，在向上回报中提供文件路径以便父 agent 按需读取。
+- 消息通道不应承载详细工作成果；知识通道不应承担即时触发职责。两者互补，不互相替代。
+- 父 agent 可读取子 agent 目录下的 `.md` 文件，但应以引用 + 按需读取为主，避免大规模数据冗余（复制）。若父 agent 需要整合子 agent 知识，应产出自己的理解/摘要，而非镜像子 agent 文件。
+
+此设计遵循 **P27（双通道通信）** 原则。详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §11-12 与 [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) §5.1。
 
 ### 2.5 本章相关核心原则
 
@@ -165,13 +185,15 @@ Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge
 
 Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
-- **L0**：协调层，只做理解、拆分与汇总，不直接操作环境。
-- **L1**：主力规划+执行层，既能管理子单元，也能使用环境工具。
+- **L0**：协调层，负责理解、拆分与汇总。L0 拥有环境工具能力，但通过 prompt 策略约束其用途为信息获取与知识空间维护，不直接执行任务。
+- **L1**：主力规划+执行层，既能管理子单元，也能使用环境工具执行任务。
 - **L2**：叶子执行层，只做环境操作，不再继续派生子单元。
 
 ### 4.2 层级对称与层级同构
 
-顶层人类操作者在概念上可视为 `L-1` 父层，因此顶层与父子层之间不需要两套不同协议。所有层级共享相同 FSM、相同 proposal-vote 协议与相同 prompt 结构；差异只来自工具集注入。
+顶层人类操作者在概念上可视为 `L-1` 父层，因此顶层与父子层之间不需要两套不同协议。所有层级共享相同 FSM、相同 proposal-vote 协议与相同 prompt 结构。
+
+层级同构原则（P9）已从"工具集差异 = 行为差异"演变为"完整能力 + 角色策略差异 = 行为差异"。所有层级现在拥有相同的工具集；行为差异由 prompt 中的角色策略定义，而非由工具可用性决定。这更接近真实组织中的分工方式——角色定义行为，而非能力限制行为。详细讨论见 [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) §3。
 
 ### 4.3 Prompt 同构与知识模型
 
@@ -179,13 +201,14 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 - 共享协作协议
 - Agent A / Agent B 的认知风格差异
-- 当前可用工具列表
+- 当前可用工具列表（所有层级现在拥有相同工具集）
+- **层级角色策略**：通过 prompt 注入层级角色定义，约束工具使用范围（如 L0 仅用于信息获取与知识维护）
 - 知识视图（Knowledge View）：通过 system prompt 注入工作空间根目录路径、AGENT.md 导航机制和知识空间边界约束
 
 知识视图将外部先验知识统一为文件系统上的可导航认知视图：AGENT.md 作为局部知识入口页，工作空间根目录的 AGENT.md 内容每轮动态注入 system prompt。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 同时，框架采用 **无状态Agent + 外部化知识** 模型：知识不应沉淀为某个实例不可替代的隐藏积累，而应通过父层注入与外部资源传递。
-`spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文应通过 `report`、`yield` 与 `sendToChild` 在父子之间持续流动。
+`spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文通过两个通道持续流动：**消息通道**（`report`、`yield`、`sendToChild`）负责即时协调与工作触发，**知识通道**（.md 文件）负责持久化工作成果与经验传递。
 
 对于复杂任务，父层可在多个 turn 中逐步形成多个 delegated workstream，而不必把所有子问题强行压进单一 child workflow。新消息到来时，应判断它更适合通过 `sendToChild` 并入既有 child 的工作流，还是更适合作为新的独立工作流生成新的 child。
 
@@ -205,8 +228,10 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 ### 4.5 本章相关核心原则
 
 - **P3**：层级对称
-- **P9**：层级同构
+- **P9**：层级同构（已演变为完整能力 + 角色策略差异）
 - **P10**：无状态Agent
+- **P27**：双通道通信
+- **P28**：L0 角色策略约束
 
 ---
 ## 第五章 状态模型与工具面
@@ -245,11 +270,13 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
 - **Environment**：`bash`、`readFile`、`writeFile`
 
-可用性规则保持简单：
+可用性规则已随 L0 工具扩展而简化：
 
 - 子Agent管理工具仅非叶子层可用
-- 环境工具仅非纯协调层可用
+- 环境工具所有层级都可用（L0 通过 prompt 策略约束为信息获取与知识维护用途）
 - 协议工具所有层级都可用（其中部分工具按状态条件注入）
+
+L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bash` 等阻塞式环境工具时），但其 prompt 策略约束使得 L0 的环境工具使用范围与 L1/L2 有本质差异。
 
 知识视图的正式设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
 
@@ -290,6 +317,8 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 | P24 | 单unit单活动压缩任务 | Context Compression / Protocol and Runtime |
 | P25 | 有限重试后回到deliberation | Context Compression / Protocol and Runtime |
 | P26 | 方向命名显式化 | Conversation Model |
+| P27 | 双通道通信 | Knowledge View / Hierarchy and Layers |
+| P28 | L0 角色策略约束 | Hierarchy and Layers |
 
 ## 附录B 术语表
 
@@ -306,6 +335,10 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 | Memory Snapshot | 对既有聊天历史进行压缩后得到的弱结构化自然语言任务状态快照 |
 | Recent Raw Window | 最近一段未压缩原始上下文窗口，用于保留局部连续性与近期细节 |
 | Knowledge View | 文件系统上的可导航认知视图。skill、memory、脚本、中间结果等统一属于同一外部资源空间，不再按存储本体分裂为独立子系统；AGENT.md 是局部知识入口页 |
+| 知识通道（Knowledge Channel） | Agent 之间通过文件系统中的 .md 文件进行持久化知识共享的通信通道；与消息通道互补，承载工作产物、长期记忆与跨轮次知识传递 |
+| 消息通道（Message Channel） | Agent 之间通过 ConversationLedger 进行即时沟通与工作触发的通信通道；承载信号、协调意图与轻量摘要 |
+| Agent 工作空间（Agent Workspace） | 每个 agent unit 在文件系统中拥有的专属工作目录，用于存放该 unit 的知识产物（.md 文件）；按 agent 归属组织，允许跨 agent 读取但不鼓励直接更改 |
+| 层级角色策略（Layer Role Policy） | 通过 prompt 注入的层级角色定义，约束各层级对共享工具集的使用范围；如 L0 的环境工具仅用于信息获取与知识维护，不用于直接任务执行 |
 | AGENT.md | 目录级局部知识入口页 / 语义着陆页。帮助 agent 以低成本理解目录：用途、边界、入口、关联。不采用强制固定结构，不充当目录级 manifest 或行为约束文件；不同目录下的 AGENT.md 可以互相引用 |
 | `.elenchus` 运行目录 | 当前嵌入式 SQLite 持久化后端在运行目录下使用的状态目录；默认数据库文件为 `.elenchus/state.db` |
 | Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
@@ -320,6 +353,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 ## 版本历史
 
+- **v4.0 (2026-04-16)**：引入双通道通信架构（消息通道 + 知识通道），新增 P27（双通道通信）与 P28（L0 角色策略约束）原则。L0 获得完整环境工具能力，通过 prompt 策略约束用途为信息获取与知识空间维护；层级同构原则（P9）从“工具集差异 = 行为差异”演变为“完整能力 + 角色策略差异 = 行为差异”。新增 agent 工作空间概念，每个 agent unit 管理自己的目录，知识通过 .md 文件跨单元共享。同步更新总纲中 §1.2、§2.4、§4.1-4.3、§5.3、原则索引、术语表。
 - **v3.9 (2026-04-14)**：将知识空间方向从"探索中"收敛为正式设计。新增专题文档 `knowledge-view.md` 替代旧 `skill-system.md`；知识视图定义为文件系统上的可导航认知视图，AGENT.md 作为局部知识入口页替代旧 skill manifest；传统 skill 被重新吸收为可行动知识区域的组织结果。同步更新总纲中文档地图、§2.4、§5.3、术语表。
 - **v3.8 (2026-04-13)**：在总纲中记录统一 knowledge space 的方向：开始探索将 installable skills 与长期记忆收敛到同一外部知识底座中，并引入 `Resident Knowledge` 作为常驻知识入口术语。明确当前仍未决定 `Resident Knowledge` 是统一集合还是分散节点摘要视图，也未决定 knowledge space 是否完全由文件系统独占实现；同时预留后续 knowledge anti-entropy 专题用于处理知识膨胀、漂移、腐烂与清理问题。
 - **v3.7 (2026-04-13)**：将 skill 运行时从启动期静态 bundle 升级为 turn-boundary capability provider。新增内建 blocking tool `installSkill`，当前支持从本地合法 skill package 目录执行热安装；安装成功后刷新 capability snapshot，并从下一次 turn 开始注入新的 skill prompt appendix 与 skill tools。同步更新总纲中的第四章、第五章摘要以反映热安装语义。

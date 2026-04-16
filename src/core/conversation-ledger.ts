@@ -230,6 +230,17 @@ export class ConversationLedger {
     return this.updateProposalStatus(proposalId, "superseded");
   }
 
+  supersedeAllPendingProposals(): number {
+    let count = 0;
+    for (const message of this.messages) {
+      if (message.kind === "proposal_message" && message.status === "pending") {
+        message.status = "superseded";
+        count++;
+      }
+    }
+    return count;
+  }
+
   readAll(): readonly ConversationMessage[] {
     return this.messages;
   }

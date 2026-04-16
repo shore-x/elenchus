@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Knowledge View"
 date: 2026-04-15
-version: 1.2
+version: 2.0
 ---
 
 # Knowledge View
@@ -18,11 +18,13 @@ version: 1.2
 - Structural conventions (soft, not enforced)
 - Coverage and referencing principles
 - How "skill" is reabsorbed
+- Agent workspace model and inter-agent knowledge sharing
+- Dual-channel communication: knowledge channel design
 - What is deliberately excluded
 
 Complements: [conversation-model.md](./conversation-model.md), [hierarchy-and-layers.md](./hierarchy-and-layers.md), [state-machine-and-tools.md](./state-machine-and-tools.md).
 
-Relevant overview: `framework-design.md` §2.4, §4.3, §5.3; Principles P2, P9, P10.
+Relevant overview: `framework-design.md` §2.4, §4.3, §5.3; Principles P2, P9, P10, P27, P28.
 
 ---
 
@@ -261,7 +263,106 @@ If the files already exist (e.g., when running from the Elenchus project directo
 
 ---
 
-## 9. Deliberately Excluded from Current Scope
+## 9. Agent Workspace Model
+
+### 9.1 Each unit owns a workspace directory
+
+Every agent unit is assigned a workspace directory on the file system. This directory serves as the unit's persistent knowledge base — a place to store work records, experience summaries, task notes, and any other knowledge artifacts that should survive across turns and context compression.
+
+Key properties:
+
+- **Ownership**: the unit that owns a workspace has full read/write authority over it
+- **Visibility**: other units (especially parent units) may read files from a child's workspace, but should not directly modify them
+- **Persistence**: workspace contents persist on disk independent of the unit's runtime state; they survive context compression, unmount/remount, and cold restart
+- **AGENT.md**: each workspace should maintain an AGENT.md as its local knowledge entry page, helping any reader (including parent units) quickly understand what the workspace contains
+
+### 9.2 Workspace directory organization
+
+Workspace directories are organized under the workspace root by unit identity. The specific naming convention (e.g., `.elenchus/units/{unitId}/`) is an implementation detail, but the principle is:
+
+- each unit has a clear, unique directory path
+- the path is known to the unit itself (injected via prompt or tool context)
+- the path is accessible to parent units for reading
+
+### 9.3 Knowledge artifacts in workspace
+
+The primary knowledge artifact format is **.md files**. These serve multiple purposes:
+
+- **Work records**: detailed logs of what was done, what was found, what decisions were made
+- **Experience summaries**: lessons learned, patterns observed, heuristics distilled
+- **Task notes**: intermediate state, open questions, pending items
+- **Knowledge integration**: parent-unit summaries that synthesize child work into higher-level understanding
+
+These .md files are not structured data; they are natural-language documents that agents write for themselves and for other agents to read on demand.
+
+### 9.4 Cross-workspace reading
+
+A parent unit may read files from a child unit's workspace directory. This is the primary mechanism for the **knowledge channel** in dual-channel communication (P27).
+
+Guidelines:
+
+- **Read on demand, not eagerly**: parent units should read child workspace files only when they need specific information, not preemptively scan everything
+- **Reference over copy**: when a parent needs child knowledge, prefer reading the original file over copying it. If the parent needs to integrate or transform child knowledge, it should produce its own .md file with its own understanding, not mirror the child's file
+- **Discovery via report messages**: child units should include file paths in `report`/`yield` messages so parents know what knowledge artifacts exist and where to find them
+- **No direct modification**: parent units should not directly modify files in a child's workspace. If a parent wants the child to update something, it should send a message via `sendToChild`
+
+## 10. Dual-Channel Knowledge Sharing
+
+### 10.1 Knowledge channel in the communication architecture
+
+The knowledge channel is one half of the dual-channel communication architecture (P27). It complements the message channel:
+
+- **Message channel** (ConversationLedger): carries signals, triggers, coordination, and lightweight summaries. Push-based; arrival triggers processing.
+- **Knowledge channel** (.md files in workspaces): carries detailed work products, long-term memory, and cross-turn knowledge. Pull-based; read on demand, not read = no context cost.
+
+The two channels are complementary, not redundant:
+
+- The message channel should not carry detailed work results (that would waste context budget)
+- The knowledge channel should not carry immediate triggering responsibility (files don't trigger work; messages do)
+
+### 10.2 Report-with-reference pattern
+
+When a child unit completes a task phase or reaches a coordination point, the recommended pattern is:
+
+1. **Write**: save detailed work record to a .md file in the child's workspace
+2. **Report**: send `report` or `yield` with a lightweight summary + the .md file path(s)
+3. **Read on demand**: parent reads the .md file only when it needs the detail
+
+This pattern ensures that:
+- The parent always receives a signal that new work has been done (via message channel)
+- The parent can access full detail when needed (via knowledge channel)
+- Context budget is preserved when detail is not needed
+
+### 10.3 Knowledge integration at parent level
+
+When a parent unit reads child workspace files and needs to incorporate that knowledge:
+
+- The parent should produce its **own** .md file in its own workspace, containing its own understanding, synthesis, or summary
+- This is not a copy of the child's file — it is the parent's interpretation, potentially combining insights from multiple children or adding context from the parent's own reasoning
+- The parent's integrated knowledge file may reference the original child files for traceability
+
+### 10.4 Discoverability considerations
+
+The primary discoverability mechanism is the report message: when a child saves a .md file, it tells the parent where to find it. This is sufficient for the common case.
+
+For broader discovery (e.g., parent wants to explore what a child has accumulated over time):
+
+- The child's AGENT.md should serve as the workspace entry page, listing key knowledge artifacts
+- The parent may use `bash` (ls, find, grep) to explore the child's workspace directory structure
+- These are secondary mechanisms; the primary path remains report-with-reference
+
+### 10.5 Staleness and currency
+
+Files are static snapshots. When a child updates a .md file, the parent has no automatic notification of the change. Mitigations:
+
+- The child should mention significant updates in `report` messages
+- The parent should be aware that a file read at time T may not reflect changes made after T
+- AGENT.md update timestamps provide a soft freshness signal
+- For critical real-time coordination, the message channel should be used instead of the knowledge channel
+
+---
+
+## 11. Deliberately Excluded from Current Scope
 
 To maintain design simplicity and principle-level stability, the following are **explicitly not included** in this document:
 
@@ -278,7 +379,7 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 
 ---
 
-## 10. Design Principles Summary
+## 12. Design Principles Summary
 
 1. **Substrate principle**: Knowledge space is a cognitive view on the file system, not an independent knowledge base.
 2. **Entry-page principle**: AGENT.md is a local knowledge entry page; its role is to help understand the directory, not to constrain the agent.
@@ -290,11 +391,15 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 8. **Prompt-realization principle**: The knowledge view is realized through prompt injection (static guideline + dynamic root AGENT.md), not through code-level enforcement or schema validation.
 9. **Knowledge-space-boundary principle**: The workspace root (CLI launch directory) defines the boundary of the knowledge space. Agents may read/write files anywhere, but knowledge-organization activities stay within this root.
 10. **Scope-restraint principle**: Current scope is limited to the knowledge-view storage model and prompt injection; governance, anti-entropy, and auto-maintenance are deferred.
+11. **Agent-workspace-ownership principle**: Each agent unit owns its workspace directory; other units may read but should not directly modify it.
+12. **Knowledge-channel-complement principle**: The knowledge channel (.md files) complements the message channel (ConversationLedger); they carry different communication loads and must not substitute for each other.
+13. **Reference-over-copy principle**: When a parent unit needs child knowledge, prefer reading the original file over copying it; integration should produce the parent's own understanding, not a mirror.
 
 ---
 
 ## Change Log
 
+- **v2.0 (2026-04-16)**: Add §9 Agent Workspace Model (workspace ownership, directory organization, knowledge artifacts, cross-workspace reading) and §10 Dual-Channel Knowledge Sharing (knowledge channel design, report-with-reference pattern, knowledge integration, discoverability, staleness). Add three new design principles: agent-workspace-ownership, knowledge-channel-complement, reference-over-copy. Update scope and relevant principles to include P27, P28. Renumber §9 (excluded scope) to §11, §10 (principles) to §12.
 - **v1.2 (2026-04-15)**: Remove v1 skill system code entirely: `skills.ts`, `CapabilityBundle`, `CapabilityProvider`, `installSkill` tool, skill binding persistence, `adapters/skills/` directory, `skill-system.md` design doc. Add Writing Guidance subsection to prompt (conciseness, root AGENT.md context-budget awareness, content direction, update timestamps). Tool surface now uses `getBuiltInToolList()` directly; `LocalNodeToolExecutor` simplified to built-in tools only. SQLite schema bumped to v4.
 - **v1.1 (2026-04-15)**: Add §8 Prompt Injection Design: workspace root = CLI cwd(), knowledge space boundary, static Knowledge View Guideline (includes absolute workspace root path), dynamic Workspace Knowledge (root AGENT.md read each turn). Runtime initialization writes default AGENT.md and skills/AGENT.md to workspace root on first startup. Remove `buildSkillPromptAppendix()` from prompt assembly. Add prompt-realization and knowledge-space-boundary principles.
 - **v1.0 (2026-04-14)**: Initial version. Supersedes `skill-system.md`. Defines knowledge view as a cognitive view on the file system substrate, introduces AGENT.md as local knowledge entry page with soft structural conventions, cross-directory referencing, skill reabsorption, and explicit scope exclusion of governance mechanisms.

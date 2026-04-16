@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
 date: 2026-04-12
-version: 3.5
+version: 4.0
 ---
 
 # Protocol and Runtime
@@ -126,6 +126,8 @@ This decomposition matters because upward communication and pausing are independ
 
 `yield` should be understood as an upward communication plus an explicit handoff of initiative. It is appropriate not only for stage completion, but also when the unit lacks enough information to continue efficiently, needs upper-layer judgment before proceeding, or wants to pause until the upper layer replies with more context.
 
+Like `report`, `yield` should follow the report-with-reference pattern when detailed work results exist: save to .md file, include file path(s) in the yield message, keep the message body lightweight.
+
 ### 7.2 Report
 
 `report` means:
@@ -135,6 +137,14 @@ This decomposition matters because upward communication and pausing are independ
 - continue normal turn progression rather than pausing
 
 `report` should be understood as routine coordination rather than a minor side note. It is the default upward move when upper-layer visibility would improve coordination at a key decision point, but the unit still has worthwhile local work it can continue.
+
+**Report-with-reference pattern**: When a child unit has produced detailed work results, it should follow the dual-channel communication pattern (P27):
+
+1. Save detailed work record to a .md file in the child's workspace (knowledge channel)
+2. Include the file path(s) in the `report` message payload (message channel)
+3. Keep the `report` message body lightweight — a summary plus file references, not the full detail
+
+This ensures the parent receives a signal through the message channel while the detailed knowledge remains accessible through the knowledge channel on demand. See [knowledge-view.md](./knowledge-view.md) §10 for the full dual-channel design.
 
 ### 7.3 Sleep
 
@@ -199,6 +209,7 @@ This keeps recovery semantically honest while still preserving durable history a
 
 ## Change Log
 
+- **v4.0 (2026-04-16)**: Add report-with-reference pattern to `report` and `yield` semantics, connecting upward communication to the dual-channel knowledge sharing architecture (P27). Both tools now recommend saving detailed work to .md files and including file paths in the message payload rather than embedding full detail.
 - **v3.5 (2026-04-12)**: Added the schema-version boundary for SQLite persistence. During the current rapid-iteration phase, a schema mismatch causes the local `.elenchus/state.db` store to be rebuilt rather than migrated in place.
 - **v3.4 (2026-04-12)**: Updated the persistence implementation note from filesystem snapshots to SQLite-backed durable storage in `.elenchus/state.db`. Clarified that SQLite retains the full durable history while cold-start recovery rebuilds only the next working set.
 - **v3.3 (2026-04-12)**: Added the cold-start recovery boundary. Documented that resumable session state is stored under the run-directory-local `.elenchus/` folder, and clarified that persisted `turn-a` / `turn-b` / `executing` normalize to `idle` rather than resuming mid-turn or mid-execution.

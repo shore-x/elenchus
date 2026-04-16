@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - State Machine and Tools"
 date: 2026-04-13
-version: 3.3
+version: 4.0
 ---
 
 # State Machine and Tools
@@ -48,7 +48,7 @@ This leads to the current five-state model.
 | **Executing** | Blocking wait for a blocking environment action |
 | **Terminated** | Irrecoverable terminal state after forced parent termination |
 
-A unit's reachable state space still depends on its tool set. For example, L0 never reaches `Executing`.
+A unit's reachable state space depends on its tool usage. L0 can now reach `Executing` when using environment tools for permitted purposes (information acquisition and knowledge space maintenance).
 
 ## 3. Transition Rules
 
@@ -110,7 +110,8 @@ The tool surface is intentionally simple.
 - `bash`
 - `readFile`
 - `writeFile`
-- `installSkill`
+
+(`installSkill` was removed in v1.2 of the knowledge-view redesign; skill installation is no longer a separate tool.)
 
 ## 6. Tool Availability by Layer
 
@@ -124,18 +125,17 @@ The tool surface is intentionally simple.
 | SendToChild | ✓（条件） | ✓（条件） | ✗ |
 | UnmountChild | ✓（条件） | ✓（条件） | ✗ |
 | Sleep | ✓ | ✓ | ✗ |
-| Bash | ✗ | ✓ | ✓ |
-| ReadFile | ✗ | ✓ | ✓ |
-| WriteFile | ✗ | ✓ | ✓ |
-| InstallSkill | ✗ | ✓ | ✓ |
+| Bash | ✓（角色策略约束） | ✓ | ✓ |
+| ReadFile | ✓（角色策略约束） | ✓ | ✓ |
+| WriteFile | ✓（角色策略约束） | ✓ | ✓ |
 
 Rules in summary:
 
 - child-management tools belong to non-leaf layers
-- environment tools belong to non-pure-coordination layers
+- environment tools belong to **all layers** (L0 usage constrained by role policy P28 to information acquisition and knowledge space maintenance)
 - protocol tools belong to all layers
 - some tools, such as `vote`, `sendToChild`, and `unmountChild`, are conditionally visible based on current state
-- `installSkill` is a built-in blocking environment tool for hot-installing a valid local skill package; successful installation refreshes the shared capability set and becomes visible from later turns, not retroactively inside the current turn
+- L0's environment tool usage is further constrained by the **layer role policy** (P28): the partner agent (Verifier) is guided in the prompt to reject tool uses that exceed L0's role scope
 
 ## 7. Tool-Surface Notes
 
@@ -171,15 +171,15 @@ Rules in summary:
 - removes that child from the parent agent's visible context without terminating it or removing the program's parent-child affiliation
 - if that child later emits a new `upward-message`, it automatically remounts into the parent's visible child set; the parent receives the new child report together with a light runtime broadcast noting the remount
 
-### 7.5 `installSkill`
+### 7.5 L0 Environment Tool Role Policy
 
-- proposal-producing
-- blocking
-- available only at L1 and L2
-- accepts a local directory source that must already contain a valid `skill.json` and `SKILL.md`
-- installs atomically into the runtime-managed skill directory
-- refreshes the shared capability provider on success
-- newly installed skill tools and prompt appendix become visible from the next turn rather than the current in-flight turn
+L0 now has access to `bash`, `readFile`, and `writeFile`, but with a **role policy constraint** (P28):
+
+- **Permitted uses**: information acquisition (reading files, listing directories, searching content) and knowledge space maintenance (writing/updating .md files in its own workspace)
+- **Prohibited uses**: directly executing tasks that should be delegated to child units
+- **Self-awareness prompt**: if L0 finds itself using tools to directly solve a problem rather than delegating it, it should stop and create a child agent instead
+- **Partner enforcement**: the Verifier agent is guided in the prompt to reject tool uses that exceed L0's role scope
+- This is a **soft constraint** enforced through prompt policy and proposal-vote, not a hard code-level restriction
 
 ## 8. Related Detailed Documents
 
@@ -192,6 +192,7 @@ Rules in summary:
 
 ## Change Log
 
+- **v4.0 (2026-04-16)**: L0 gains environment tools (bash, readFile, writeFile) with role policy constraint (P28). Tool availability table updated: L0 environment tools marked with role policy constraint. L0 can now reach `Executing` state. Removed `installSkill` from tool list (already removed in code, doc now catches up). Added §7.5 L0 Environment Tool Role Policy. Updated rules summary to reflect all-layer environment tool availability.
 - **v3.3 (2026-04-13)**: Added the built-in blocking environment tool `installSkill` to the detailed tool surface. Documented it as an L1/L2-only hot-install mechanism for valid local skill-package directories, with next-turn capability visibility after successful installation.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the child-management tool surface. Documented it as a non-blocking visibility-management tool: it removes an `idle` child from the parent agent's visible context while preserving affiliation, and a later child `upward-message` automatically remounts the child with a light runtime broadcast.
 - **v3.1 (2026-04-12)**: Updated tool-surface notes to reflect the semantic rewrite of `report` and `yield`. `yield` is now documented as a general upward handoff-and-pause move, including requests for more information, while `report` is documented as routine upward coordination at key moments rather than a special-case escalation path.

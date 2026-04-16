@@ -1,5 +1,6 @@
 // Elenchus - Local Node Tool Executor
 // Executes approved blocking tools (Bash, ReadFile, WriteFile) in the local Node environment.
+// At L0, bash commands are restricted to an information-gathering whitelist as a hard constraint.
 
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -8,6 +9,34 @@ import type { ToolExecutionResult, ToolExecutor } from "../../core/ports.js";
 
 const BASH_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_CHARS = 50_000;
+
+// L0 bash command whitelist — information-gathering commands only.
+// Commands are matched by extracting the first token (before any space/pipe/redirect).
+const L0_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
+  "ls", "find", "tree", "cat", "head", "tail", "grep", "wc",
+  "du", "file", "stat", "pwd", "which", "echo", "diff",
+  "sort", "uniq", "type", "less", "more", "printenv", "env",
+  "date", "uname", "hostname", "whoami", "id",
+]);
+
+const L0_REJECTION_MESSAGE =
+  "L0 hard constraint: this command is not in the information-gathering whitelist. " +
+  "As the top-level coordinator, delegate task execution to a child unit using spawnChild. " +
+  "Your bash access is for surveying and inspecting — not for doing the work yourself.";
+
+function extractFirstCommand(input: string): string {
+  // Strip leading whitespace, then take the first token before space/pipe/redirect/semicolon
+  const trimmed = input.trimStart();
+  const match = trimmed.match(/^([^\s|;&><]+)/);
+  return match ? match[1] : "";
+}
+
+function isL0BashAllowed(command: string): boolean {
+  const first = extractFirstCommand(command);
+  // Also handle path-qualified commands like /usr/bin/ls or ./node_modules/.bin/tsc
+  const basename = first.includes("/") ? first.split("/").pop()! : first;
+  return L0_ALLOWED_COMMANDS.has(basename);
+}
 
 function truncateOutput(output: string): string {
   if (output.length <= MAX_OUTPUT_CHARS) return output;
@@ -57,12 +86,16 @@ async function executeWriteFile(path: string, content: string): Promise<{ succes
 
 export class LocalNodeToolExecutor implements ToolExecutor {
 
-  async execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string }): Promise<ToolExecutionResult> {
+  async execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string }): Promise<ToolExecutionResult> {
     const start = Date.now();
     let result: { success: boolean; output: string };
     switch (toolName) {
       case "bash":
-        result = await executeBash(args.command as string, options?.cwd);
+        if (options?.level === "L0" && !isL0BashAllowed(args.command as string)) {
+          result = { success: false, output: L0_REJECTION_MESSAGE };
+        } else {
+          result = await executeBash(args.command as string, options?.cwd);
+        }
         break;
       case "readFile":
         result = await executeReadFile(args.path as string);

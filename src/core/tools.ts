@@ -1,7 +1,7 @@
 // Elenchus - Tool Definitions
 // Three-layer tool allocation (§4.3):
 //   - Child management (SpawnChild, SendToChild, UnmountChild, Sleep) → non-leaf (L0, L1)
-//   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
+//   - Environment tools (Bash, ReadFile, WriteFile) → all layers (L0 constrained by role policy P28)
 //   - Protocol tools (Yield, Report, Vote, CompressContext) → all layers
 // Yield and Report form the same upward-communication family: both send a shared upward message,
 // while their difference is whether the unit pauses afterward.
@@ -25,7 +25,8 @@ export interface ElenchusTool {
 }
 
 const NON_LEAF_LEVELS: readonly ToolLevel[] = ["L0", "L1"];
-const EXECUTION_LEVELS: readonly ToolLevel[] = ["L1", "L2"];
+const L0_LEVEL: readonly ToolLevel[] = ["L0"];
+const EXECUTION_LEVELS: readonly ToolLevel[] = ["L1", "L2"]; // L0 uses its own bashL0/writeFileL0 variants
 const ALL_LEVELS: readonly ToolLevel[] = ["L0", "L1", "L2"];
 
 const proposedStepSchema = Type.String({
@@ -108,6 +109,32 @@ export const voteTool: ElenchusTool = {
   requiresPendingProposal: true,
 };
 
+export const bashL0Tool: ElenchusTool = {
+  name: "bash",
+  description:
+    "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. " +
+    "As the top-level coordinator, your bash access serves your coordination role: surveying the project landscape (ls, find, tree), " +
+    "inspecting content (cat, head, grep, wc), and understanding the current state of work across the knowledge space. " +
+    "You also use bash to maintain your knowledge space — checking what child units have produced, verifying file structures, " +
+    "and ensuring your workspace is well-organized for coordination. " +
+    "When you discover work that needs doing, your strength is in delegating it to a child unit — bash helps you see what needs doing, " +
+    "not do it yourself. " +
+    "**Hard constraint**: at L0, only information-gathering commands are permitted (ls, find, tree, cat, head, tail, grep, wc, " +
+    "du, file, stat, pwd, which, echo, diff, sort, uniq, type, less, more, printenv, env, date, uname, hostname, whoami, id). " +
+    "Task-execution commands (build, install, run, edit, delete, etc.) will be rejected at runtime — delegate those to a child unit instead. " +
+    "Commands execute with your working directory as the current working directory (cwd). " +
+    "You must provide proposedStep to describe how this command advances the task, not just restate the command.",
+  parameters: Type.Object({
+    command: Type.String({
+      description: "The shell command to execute. Runs with your working directory as cwd.",
+    }),
+    proposedStep: proposedStepSchema,
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: L0_LEVEL,
+};
+
 export const bashTool: ElenchusTool = {
   name: "bash",
   description:
@@ -130,10 +157,11 @@ export const readFileTool: ElenchusTool = {
   name: "readFile",
   description:
     "Propose to read the contents of a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. " +
-    "You must provide proposedStep to describe what reading this file will help establish for the task.",
+    "You must provide proposedStep to describe what reading this file will help establish for the task. " +
+    "Always use absolute paths to avoid ambiguity and to make file references shareable across agents.",
   parameters: Type.Object({
     path: Type.String({
-      description: "Absolute path to the file to read. Prefer absolute paths to avoid ambiguity.",
+      description: "Absolute path to the file to read. Use absolute paths so that file references can be shared with other agents.",
     }),
     proposedStep: proposedStepSchema,
   }),
@@ -142,15 +170,40 @@ export const readFileTool: ElenchusTool = {
   appliesToLevels: EXECUTION_LEVELS,
 };
 
+export const writeFileL0Tool: ElenchusTool = {
+  name: "writeFile",
+  description:
+    "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. " +
+    "As the top-level coordinator, your writeFile access serves your coordination role: maintaining AGENT.md files, " +
+    "writing knowledge summaries and integration notes, and organizing your workspace so that both you and your child units " +
+    "can navigate the project's knowledge effectively. " +
+    "Always use absolute paths so that other agents can locate and read the file. " +
+    "Creates the file if it does not exist. Overwrites if it does. " +
+    "You must provide proposedStep to describe how this write advances the task.",
+  parameters: Type.Object({
+    path: Type.String({
+      description: "Absolute path to the file to write. Use absolute paths so that other agents can locate and read the file.",
+    }),
+    content: Type.String({
+      description: "The content to write to the file.",
+    }),
+    proposedStep: proposedStepSchema,
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: L0_LEVEL,
+};
+
 export const writeFileTool: ElenchusTool = {
   name: "writeFile",
   description:
     "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. " +
     "Creates the file if it does not exist. Overwrites if it does. " +
-    "You must provide proposedStep to describe how this write advances the task.",
+    "You must provide proposedStep to describe how this write advances the task. " +
+    "Always use absolute paths so that other agents can locate and read the file.",
   parameters: Type.Object({
     path: Type.String({
-      description: "Absolute path to the file to write. Prefer absolute paths to avoid ambiguity.",
+      description: "Absolute path to the file to write. Use absolute paths so that other agents can locate and read the file.",
     }),
     content: Type.String({
       description: "The content to write to the file.",
@@ -250,8 +303,10 @@ const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
   reportTool,
   compressContextTool,
   voteTool,
+  bashL0Tool,
   bashTool,
   readFileTool,
+  writeFileL0Tool,
   writeFileTool,
   spawnChildTool,
   sendToChildTool,
@@ -259,8 +314,11 @@ const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
   sleepTool,
 ];
 
-export function getBuiltInToolRegistry(): ReadonlyMap<string, ElenchusTool> {
-  return new Map(BUILT_IN_TOOLS.map((tool) => [tool.name, tool]));
+export function getBuiltInToolRegistry(level?: ToolLevel): ReadonlyMap<string, ElenchusTool> {
+  const tools = level !== undefined
+    ? BUILT_IN_TOOLS.filter((tool) => tool.appliesToLevels.includes(level))
+    : BUILT_IN_TOOLS;
+  return new Map(tools.map((tool) => [tool.name, tool]));
 }
 
 export function getBuiltInTools(): readonly ElenchusTool[] {
@@ -285,16 +343,16 @@ export function getBuiltInToolList(hasPendingProposal: boolean, level: ToolLevel
   });
 }
 
-export function isBlockingTool(toolName: string): boolean {
-  return getBuiltInToolRegistry().get(toolName)?.behavior === "blocking";
+export function isBlockingTool(toolName: string, level?: ToolLevel): boolean {
+  return getBuiltInToolRegistry(level).get(toolName)?.behavior === "blocking";
 }
 
-export function isNonBlockingTool(toolName: string): boolean {
-  return getBuiltInToolRegistry().get(toolName)?.behavior === "nonblocking";
+export function isNonBlockingTool(toolName: string, level?: ToolLevel): boolean {
+  return getBuiltInToolRegistry(level).get(toolName)?.behavior === "nonblocking";
 }
 
-export function isT8Tool(toolName: string): boolean {
-  return getBuiltInToolRegistry().get(toolName)?.behavior === "pause";
+export function isT8Tool(toolName: string, level?: ToolLevel): boolean {
+  return getBuiltInToolRegistry(level).get(toolName)?.behavior === "pause";
 }
 
 export function buildToolList(hasPendingProposal: boolean, level: ToolLevel, hasChildren: boolean = false): ElenchusTool[] {

@@ -65,5 +65,5 @@ export interface ToolExecutionResult {
 }
 
 export interface ToolExecutor {
-  execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string }): Promise<ToolExecutionResult>;
+  execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string }): Promise<ToolExecutionResult>;
 }

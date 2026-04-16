@@ -220,7 +220,7 @@ export interface PendingProposal {
 }
 
 // FSM states (5-state: v1.1 merged stopped into idle)
-// L0: executing is never entered (no blocking tools)
+// L0: executing is entered when environment tools are used for permitted purposes (P28)
 // L1: executing is entered when a blocking tool proposal is approved
 export type UnitState = "idle" | "turn-a" | "turn-b" | "executing" | "terminated";
 
