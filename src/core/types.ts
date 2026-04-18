@@ -184,7 +184,7 @@ export interface DeliberationUnitSnapshot {
   unitId: string;
   level: ToolLevel;
   path: number[];
-  globalRoot: string;
+  workspaceRoot: string;
   projectRoot: string;
   state: UnitState;
   turnCounter: number;

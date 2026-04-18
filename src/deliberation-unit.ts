@@ -22,7 +22,7 @@ export class DeliberationUnit extends CoreDeliberationUnit {
     super({
       llmClient: new PiAiLlmClient(options.model),
       toolExecutor: new LocalNodeToolExecutor(),
-      globalRoot: join(homedir(), ".elenchus"),
+      workspaceRoot: join(homedir(), "Elenchus"),
       projectRoot: cwd(),
       level: options.level,
       path: options.path,

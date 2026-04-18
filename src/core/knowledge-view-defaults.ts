@@ -1,31 +1,31 @@
 // Elenchus - Knowledge View Defaults
 // Default template content for knowledge-space bootstrap files.
-// These are written to the workspace root (runDirectory) on first startup
+// These are written to the workspaceRoot on first startup
 // if the corresponding files do not already exist.
-// The workspace root is the CLI working directory, not the Elenchus source directory.
+// The workspaceRoot is the agent's working world root (default ~/Elenchus/).
 // Agents are expected to maintain and evolve these files over time.
 
 export const DEFAULT_ROOT_AGENT_MD = `# Workspace
 
-This is the root knowledge entry page for the current workspace.
+This is the navigation hub for the Elenchus agent's working world.
 
 Updated: {{DATE}}
 
 ## Overview
 
-This workspace was initialized with the Elenchus knowledge-view convention. The root AGENT.md (this file) provides top-level orientation for agents working in this directory.
+This workspace was initialized with the Elenchus knowledge-view convention. This AGENT.md serves as the navigation hub — it indexes active projects and provides cross-project context for coordination.
 
 Update this file to describe the actual contents, purpose, and structure of the workspace as you learn more about it.
 
-## Directory Index
+## Active Projects
 
-- \`skills/\` — Actionable knowledge regions for reusable task guidance. See \`skills/AGENT.md\` for conventions.
+- (List active project directories here as they are discovered)
 
 ## Notes
 
-- AGENT.md files in subdirectories provide local orientation for their respective areas.
-- Knowledge organization (creating/updating AGENT.md, organizing skills) stays within this workspace root.
-- You may read and write files anywhere on the host system as tasks require, but this directory is your knowledge space.
+- Knowledge has a single destination: where the work naturally belongs. Write knowledge at meaningful locations in the project structure, not here.
+- This file is the only AGENT.md injected into every agent's system prompt. Keep it concise — overview and navigation only.
+- AGENT.md files in project directories provide local orientation. Agents discover them through this navigation hub or via report messages with absolute paths.
 `;
 
 export const DEFAULT_SKILLS_AGENT_MD = `# Skills

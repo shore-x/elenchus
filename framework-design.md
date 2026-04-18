@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-13
-version: 5.0
+version: 8.0
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -27,7 +27,7 @@ version: 5.0
 | [`framework-design/protocol-and-runtime.md`](./framework-design/protocol-and-runtime.md) | 协议与运行时专题 | proposal-vote、阻塞/非阻塞、副作用落账、向上通信、控制平面 |
 | [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
-| [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、全局/项目双层知识空间、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
+| [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、单目的地知识空间、逻辑领地模型、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -99,8 +99,10 @@ Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge
 - 传统 `skill` 不再作为独立存储本体存在，而是被重新吸收为可行动知识区域的一种组织结果。
 - 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计。
 - **Agent 不持有文件系统领地**：Agent 是纯运行时线程（P10），上下文在内存 + SQLite 中，对文件系统只有读写操作。知识存在于共享的文件系统中，不属于任何 agent。
-- **双层根目录**：知识空间由 globalRoot（`~/.elenchus/`）和 projectRoot（cwd/git root）共同定义。全局根存储跨项目知识、运行时状态；项目根是 bash cwd 和项目知识产物位置。详见 [`framework-design/workspace-ownership-analysis.md`](./framework-design/workspace-ownership-analysis.md) 和 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §9。
-- 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
+- **单目的地知识空间**：知识只有一个目的地——工作所在的位置。Agent 不需要做"全局还是项目"的范围判断，知识写在工作自然归属的位置。发现通过消息通道（report + 绝对路径）和导航（AGENT.md），不通过存储分区。
+- **逻辑领地模型**：Elenchus agent 集体 = 用户的合作者，拥有统一的工作空间（workspaceRoot）。项目边界是 agent 分工的结果，不是系统结构的前提。L0 可同时协调多个项目，每个 child 的 cwd 是其任务所属项目的根（从 task brief 自动推断）。
+- **workspaceRoot**（用户可配置，默认 `~/Elenchus/`）：工作空间根目录，L0 的 bash cwd，存放 AGENT.md 导航页和框架状态（`.elenchus-state/state.db`）。不是 agent 的写入目的地——agent 写在工作所在的项目位置。
+- 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) 和 [`workspace-ownership-analysis.md`](./workspace-ownership-analysis.md) §8-9。
 
 #### 2.4.1 双通道通信：消息 + 知识文件
 
@@ -207,7 +209,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - **层级角色策略**：通过 prompt 注入层级角色定义，约束工具使用范围（如 L0 仅用于信息获取与知识维护）
 - 知识视图（Knowledge View）：通过 system prompt 注入全局根目录路径、项目根目录路径、AGENT.md 导航机制和知识空间边界约束
 
-知识视图将外部先验知识统一为文件系统上的可导航认知视图，采用双层根目录架构：**globalRoot**（`~/.elenchus/`，固定，跨项目）和 **projectRoot**（cwd/git root，项目级）。全局 AGENT.md 和项目 AGENT.md 内容每轮动态注入 system prompt。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
+知识视图将外部先验知识统一为文件系统上的可导航认知视图，采用**单目的地 + 逻辑领地**架构：**workspaceRoot**（用户可配置，默认 `~/Elenchus/`）是工作空间根目录和 L0 的 bash cwd。每个 child 的 projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 system prompt；child 的项目 AGENT.md 通过 readFile 按需读取。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 同时，框架采用 **无状态Agent + 外部化知识** 模型（P10）：Agent 是纯运行时线程，不持有文件系统领地。知识存在于共享的文件系统中，不属于任何 agent。Agent 的运行时上下文（ConversationLedger、CompressionSnapshot、FSM state）保存在内存与 SQLite 中；文件系统中的知识产物是共享世界的组成部分，任何 agent 都可以读写。
 `spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文通过两个通道持续流动：**消息通道**（`report`、`yield`、`sendToChild`）负责即时协调与工作触发，**知识通道**（.md 文件）负责持久化工作成果与经验传递。
@@ -352,10 +354,12 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | Knowledge View | 文件系统上的可导航认知视图。skill、memory、脚本、中间结果等统一属于同一外部资源空间，不再按存储本体分裂为独立子系统；AGENT.md 是局部知识入口页 |
 | 知识通道（Knowledge Channel） | Agent 之间通过文件系统中的 .md 文件进行持久化知识共享的通信通道；与消息通道互补，承载工作产物、长期记忆与跨轮次知识传递 |
 | 消息通道（Message Channel） | Agent 之间通过 ConversationLedger 进行即时沟通与工作触发的通信通道；承载信号、协调意图与轻量摘要 |
-| 双层知识空间（Two-Root Knowledge Space） | 文件系统上所有 agent 共同读写的知识世界，由两个根目录定义：globalRoot（`~/.elenchus/`）存储跨项目知识与运行时状态，projectRoot（cwd/git root）是 bash cwd 与项目知识产物位置。Agent 不持有任何目录；知识产物按作用范围存放于全局或项目中有意义的位置 |
+| 单目的地知识空间（Single-Destination Knowledge Space） | 知识只有一个目的地——工作所在的位置。Agent 不做"全局还是项目"的范围判断，知识写在工作自然归属的位置。发现通过消息通道和导航，不通过存储分区 |
 | 层级角色策略（Layer Role Policy） | 通过 prompt 注入的层级角色定义，约束各层级对共享工具集的使用范围；如 L0 的环境工具仅用于信息获取与知识维护，不用于直接任务执行 |
+| 逻辑领地（Logical Territory） | 项目留在文件系统原位，框架适应用户的目录布局。workspaceRoot 是逻辑概念上的领地根，不要求物理上包含所有项目 |
+| 合作者模型（Collaborator Model） | Elenchus agent 集体被视为与用户平等的合作者，拥有统一工作空间，可同时协调多个项目。跨项目可见性是协调前提而非噪声 |
 | AGENT.md | 目录级局部知识入口页 / 语义着陆页。帮助 agent 以低成本理解目录：用途、边界、入口、关联。不采用强制固定结构，不充当目录级 manifest 或行为约束文件；不同目录下的 AGENT.md 可以互相引用 |
-| `~/.elenchus/` 全局根目录 | 应用级固定目录，独立于 CLI 启动位置。存储全局 AGENT.md、跨项目知识产物（`knowledge/`）、按项目隔离的运行时状态（`projects/<hash>/state.db`） |
+| workspaceRoot | 工作空间根目录（用户可配置，默认 `~/Elenchus/`）。L0 的 bash cwd，存放 AGENT.md 导航页和框架状态（`.elenchus-state/state.db`）。不是 agent 的写入目的地 |
 | Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
 | 开发期重建（Development-time Rebuild） | 当前 SQLite schema 在快速演进阶段采取的版本升级策略：schema 不匹配时直接重建本地数据库，而不是执行兼容迁移 |
 | CompressionTaskManager | 管理 unit 级压缩任务生命周期的运行时组件，负责活动任务状态、重复抑制与有限重试 |
@@ -369,6 +373,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v8.0 (2026-04-18)**：知识空间从双根模型迁移到单目的地 + 逻辑领地模型。消除"全局 vs 项目"的范围判断——知识只写在工作所在的位置。workspaceRoot（用户可配置，默认 `~/Elenchus/`）取代 `~/.elenchus/` 作为工作空间根目录。L0 bash cwd = workspaceRoot；child projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 prompt。SQLite state.db 移至 workspaceRoot 下。移除 `~/.elenchus/knowledge/` 作为 agent 写入目的地。引入合作者模型：agent 集体 = 用户的合作者，跨项目可见性是协调前提。术语表更新：双层知识空间 → 单目的地知识空间，全局根目录 → workspaceRoot。同步更新 `workspace-ownership-analysis.md` §8-9、`knowledge-view.md`。
 - **v7.0 (2026-04-18)**：子 Agent 生命周期从 unmount/remount 模型迁移到固定 Slot 池模型。移除 `unmountChild` 工具、mounted/dormant 可见性维度。父 agent 拥有固定数量协调 slot，所有 child 始终可见。Slot 回收通过协作式调度（sendToChild → yield → reassign）。不提供强制上下文重置，依赖任务亲和性 + 压缩自调节 + 知识外化三层机制。更新 §4.3.1、§5.2、§5.3、术语表、原则索引（P10 扩展）。同步更新 `workspace-ownership-analysis.md` 第七节。
 - **v6.0 (2026-04-17)**：引入双层根目录架构：globalRoot（`~/.elenchus/`）+ projectRoot（cwd/git root）。全局根存储跨项目知识（`knowledge/`）、按项目运行时状态（`projects/<hash>/state.db`）、全局 AGENT.md；项目根是 bash cwd 与项目知识产物位置。Prompt 注入改为全局 + 项目双 AGENT.md。Session 持久化从 `<projectRoot>/.elenchus/state.db` 迁移到 `~/.elenchus/projects/<hash>/state.db`。术语表更新：共享知识空间 → 双层知识空间，`.elenchus` 运行目录 → `~/.elenchus/` 全局根目录。同步更新 §2.4、§4.3、文档地图、术语表。
 - **v5.0 (2026-04-17)**：移除 per-agent workspace 概念，Agent 不再持有文件系统领地。从 P10 第一性原理推导：Agent = 纯运行时线程，知识存在于共享文件系统中。所有 agent 的 bash cwd 统一为 workspaceRoot。知识产物存放在项目中有意义的位置而非 per-agent 目录。冲突管理依赖 L0 协调 + proposal-vote + git，而非结构隔离。新增 `workspace-ownership-analysis.md` 推理链文档记录设计推导过程。同步更新总纲中 §2.4、§4.3、原则索引（P10 扩展）、术语表（Agent 工作空间 → 共享知识空间）。[Superseded by v6.0]

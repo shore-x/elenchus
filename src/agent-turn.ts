@@ -1,7 +1,6 @@
 // Elenchus - AgentTurn
 // Compatibility wrapper over the new layered core implementation.
 
-import { cwd } from "node:process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Model } from "@mariozechner/pi-ai";
@@ -11,7 +10,7 @@ import { type AgentId, type ToolLevel } from "./types.js";
 
 export class AgentTurn extends CoreAgentTurn {
   constructor(selfId: AgentId, systemPrompt: string, model: Model<any>, level: ToolLevel = "L0") {
-    const globalRoot = join(homedir(), ".elenchus");
-    super(selfId, new PiAiLlmClient(model), level, globalRoot, cwd());
+    const workspaceRoot = join(homedir(), "Elenchus");
+    super(selfId, new PiAiLlmClient(model), level, workspaceRoot);
   }
 }

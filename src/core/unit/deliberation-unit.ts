@@ -25,7 +25,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  globalRoot: string;
+  workspaceRoot: string;
   projectRoot: string;
   level?: ToolLevel;
   path?: number[];
@@ -59,7 +59,7 @@ export class DeliberationUnit {
   private commitLog: CommittedStep[] = [];
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
-  private globalRoot: string;
+  private workspaceRoot: string;
   private projectRoot: string;
   private static readonly MAX_EMPTY_TURNS = 4;
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
@@ -70,14 +70,14 @@ export class DeliberationUnit {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.globalRoot = options.globalRoot;
+    this.workspaceRoot = options.workspaceRoot;
     this.projectRoot = options.projectRoot;
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.globalRoot, this.projectRoot);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.globalRoot, this.projectRoot);
+    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot);
+    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -145,7 +145,7 @@ export class DeliberationUnit {
       unitId: this.unitId,
       level: this.level,
       path: [...this.scope.path],
-      globalRoot: this.globalRoot,
+      workspaceRoot: this.workspaceRoot,
       projectRoot: this.projectRoot,
       state: this.state,
       turnCounter: this.turnCounter,
@@ -183,7 +183,7 @@ export class DeliberationUnit {
     try {
       this.unitId = snapshot.unitId;
       this.level = snapshot.level;
-      this.globalRoot = snapshot.globalRoot;
+      this.workspaceRoot = snapshot.workspaceRoot;
       this.projectRoot = snapshot.projectRoot;
       this.scope = {
         level: snapshot.level,
@@ -358,7 +358,7 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
-      globalRoot: this.globalRoot,
+      workspaceRoot: this.workspaceRoot,
       projectRoot: this.projectRoot,
       level: childLevel,
       path: childPath,

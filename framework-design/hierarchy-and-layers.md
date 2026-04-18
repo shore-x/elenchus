@@ -202,9 +202,11 @@ That means:
 - knowledge should be injected or externalized rather than accumulated as irreplaceable hidden history
 - the parent naturally acts as a knowledge curator when spawning children
 
-The knowledge externalization direction has now been concretized through the **shared file system** model and **dual-channel communication** (P27):
+The knowledge externalization direction has now been concretized through the **single-destination knowledge space** and **dual-channel communication** (P27):
 
-- agents do not own file system territory; they operate on a shared file system with dual roots (globalRoot + projectRoot)
+- agents do not own file system territory; they operate on a shared file system with a single destination — knowledge is written where the work naturally belongs
+- the workspaceRoot (user-configurable, default `~/Elenchus/`) is L0's bash cwd and the navigation hub for the agent's entire working world
+- each child's projectRoot is inferred from its task brief; children operate on their project's actual file structure
 - knowledge artifacts (.md files) persist across turns and survive context compression
 - the message channel carries signals and triggers; the knowledge channel carries durable work products
 - `spawnChild(task)` provides an initial brief, while ongoing context flows through both channels
@@ -212,9 +214,9 @@ The knowledge externalization direction has now been concretized through the **s
 
 The longer-term direction is to externalize not only ad hoc task context, but a broader **knowledge space** shared by skill-like guidance and long-term memory.
 
-- a small amount of **`Resident Knowledge`** may eventually become part of the default agent-visible knowledge surface
+- the workspaceRoot AGENT.md serves as the navigation hub, injected into every agent's system prompt
 - deeper knowledge should remain expandable by reference rather than preloaded in full
-- the framework currently does **not** assume that `Resident Knowledge` must be stored as one canonical file or one explicit set; it may instead emerge from distributed knowledge nodes and a separately assembled resident view
+- the framework currently does **not** assume that knowledge must be stored as one canonical file or one explicit set; it may instead emerge from distributed knowledge nodes and a separately assembled resident view
 - the framework also does **not** yet commit to the file system as the only possible implementation substrate, even though the current direction remains file-system-friendly and text-centric
 
 ## 9. Commit Log as Parent-Visible Progress Boundary
@@ -269,6 +271,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v5.1 (2026-04-18)**: Migrate from dual-root to single-destination + logical territory model. Replace globalRoot + projectRoot with workspaceRoot (user-configurable, default `~/Elenchus/`). L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Update §8.
 - **v5.0 (2026-04-18)**: Replace unmount/remount model with fixed slot pool model. Parent has N coordination slots; all children always visible; slot recovery through cooperative scheduling (sendToChild → yield → reassign). No forced context reset; three self-regulating mechanisms (task affinity, compression, knowledge externalization). Update §5.3, §6, §8, changelog.
 - **v4.0 (2026-04-16)**: L0 gains environment tools with role policy constraint (P28). Layer isomorphism (P9) evolves from tool-set difference to role-policy difference. Add dual-channel communication (P27): message channel + knowledge channel via .md files. Add agent workspace model: each unit manages its own directory, knowledge shared through .md files. Restructure §5 into §5.1 (dual-channel), §5.2 (iterative coordination), §5.3 (unmount/remount). Update §7 prompt isomorphism to include layer role policy. Update §8 to reflect concrete knowledge externalization through workspace model. [Superseded by v5.0 for §5.3 and §6]
 - **v3.5 (2026-04-13)**: Extended the externalized-knowledge discussion toward a unified knowledge-space direction. Introduced `Resident Knowledge` as the current term for the small default resident knowledge surface, while explicitly recording that its assembly model and the ultimate storage substrate both remain undecided.

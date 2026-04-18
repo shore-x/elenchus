@@ -1,5 +1,5 @@
 // Elenchus - FileSystem Session Persistence
-// Stores the recoverable root deliberation graph under ~/.elenchus/projects/<hash>/.
+// Stores the recoverable root deliberation graph under workspaceRoot/.elenchus-state/.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,7 +22,7 @@ function hashPath(absolutePath: string): string {
 }
 
 export interface FileSystemSessionPersistenceOptions {
-  globalRoot: string;
+  workspaceRoot: string;
   projectRoot: string;
 }
 
@@ -31,8 +31,7 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   private readonly sessionFilePath: string;
 
   constructor(options: FileSystemSessionPersistenceOptions) {
-    const projectHash = hashPath(options.projectRoot);
-    this.storageDir = join(options.globalRoot, "projects", projectHash);
+    this.storageDir = join(options.workspaceRoot, ".elenchus-state");
     this.sessionFilePath = join(this.storageDir, "session.json");
   }
 

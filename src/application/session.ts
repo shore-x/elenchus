@@ -11,7 +11,7 @@ import type { CommittedStep, OnSystemEvent, ToolLevel, UnitState } from "../core
 export interface DeliberationSessionOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  globalRoot: string;
+  workspaceRoot: string;
   projectRoot: string;
   level?: ToolLevel;
   onSystemEvent?: OnSystemEvent;
@@ -24,13 +24,13 @@ export class DeliberationSession {
 
   constructor(options: DeliberationSessionOptions) {
     this.persistence = options.persistence ?? null;
-    initializeKnowledgeView(options.globalRoot, options.projectRoot);
+    initializeKnowledgeView(options.workspaceRoot);
     const restoredSnapshot = this.persistence?.loadSnapshot() ?? null;
 
     this.unit = new DeliberationUnit({
       llmClient: options.llmClient,
       toolExecutor: options.toolExecutor,
-      globalRoot: options.globalRoot,
+      workspaceRoot: options.workspaceRoot,
       projectRoot: options.projectRoot,
       level: restoredSnapshot?.level ?? options.level,
       path: restoredSnapshot?.path,

@@ -391,17 +391,18 @@ Claude Code、Cursor 等 AI 编码工具都有 project 概念。用户在不同�
 
 ### 知识 = 共享文件系统（单目的地）
 
-- **projectRoot 是唯一的知识目的地**——agent 写在工作自然归属的位置，不需要做范围判断
-- **globalRoot 是基础设施**——存放框架状态和极少数跨项目导航，不是 agent 的写入目的地
+- **知识只有一个目的地：工作所在的位置**——agent 写在工作自然归属的位置，不需要做"全局还是项目"的范围判断
+- **workspaceRoot 是基础设施**——用户可配置（默认 `~/Elenchus/`），存放 AGENT.md 导航页和框架状态（`.elenchus-state/state.db`），不是 agent 的写入目的地
 - 没有存储层面的"项目知识"与"系统知识"区分——都是文件，通过相同工具访问
 - 治理通过 L0 协调 + 提案-投票 + git，不通过存储层强制
 - AGENT.md 作为导航页面服务任何读者，不是特定 agent 的私有笔记本
+- 仅 workspaceRoot AGENT.md 注入 system prompt；child 的项目 AGENT.md 通过 readFile 按需读取
 
-### Bash cwd = 所属项目根
+### Bash cwd = workspaceRoot / 所属项目根
 
-- L0 的 cwd 可以是 `~/.elenchus/` 或用户指定的根——L0 是协调者
-- 每个 child 的 cwd 是其任务所属项目的根——通过 spawnChild 时指定
-- 没有全局统一的 cwd——每个 unit 的 cwd 是其工作上下文的一部分
+- L0 的 cwd = workspaceRoot（用户可配置，默认 `~/Elenchus/`）——L0 是协调者
+- 每个 child 的 cwd 是其任务所属项目的根——从 task brief 自动推断路径，找到 git root 或目录根
+- 无法推断时继承父 unit 的 cwd
 - Agent 在项目结构的有意义位置写入产物
 
 ### 子 Agent 生命周期 = 固定 Slot 池

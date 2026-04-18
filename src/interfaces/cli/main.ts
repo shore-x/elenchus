@@ -30,16 +30,16 @@ export async function main(): Promise<void> {
   printBanner(config.level, config.verbose);
   printStartupInfo(config.provider, config.modelName, config.baseUrl, config.level);
 
-  const globalRoot = join(homedir(), ".elenchus");
+  const workspaceRoot = join(homedir(), "Elenchus");
   const projectRoot = cwd();
 
   const session = createSession({
     llmClient,
     toolExecutor: new LocalNodeToolExecutor(),
-    globalRoot,
+    workspaceRoot,
     projectRoot,
     level: config.level,
-    persistence: new SqliteSessionPersistence({ globalRoot, projectRoot }),
+    persistence: new SqliteSessionPersistence({ workspaceRoot, projectRoot }),
     onSystemEvent: (event: SystemEvent) => {
       renderEvent(event, config.verbose);
     },

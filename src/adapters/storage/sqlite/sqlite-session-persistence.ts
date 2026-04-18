@@ -21,10 +21,10 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS: AgentId[] = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "8";
+const CURRENT_SCHEMA_VERSION = "9";
 
 interface SqliteSessionPersistenceOptions {
-  globalRoot: string;
+  workspaceRoot: string;
   projectRoot: string;
 }
 
@@ -37,7 +37,7 @@ interface UnitRow {
   unit_id: string;
   level: DeliberationUnitSnapshot["level"];
   path: string;
-  global_root: string;
+  workspace_root: string;
   project_root: string;
   state: DeliberationUnitSnapshot["state"];
   turn_counter: number;
@@ -195,7 +195,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
 
   constructor(options: SqliteSessionPersistenceOptions) {
     const projectHash = hashPath(options.projectRoot);
-    const storageDir = join(options.globalRoot, "projects", projectHash);
+    const storageDir = join(options.workspaceRoot, ".elenchus-state");
     mkdirSync(storageDir, { recursive: true });
     this.db = new Database(join(storageDir, "state.db"));
     this.db.pragma("foreign_keys = OFF");
@@ -300,7 +300,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         session_id TEXT NOT NULL,
         level TEXT NOT NULL,
         path TEXT NOT NULL,
-        global_root TEXT NOT NULL,
+        workspace_root TEXT NOT NULL,
         project_root TEXT NOT NULL,
         state TEXT NOT NULL,
         turn_counter INTEGER NOT NULL,
@@ -408,7 +408,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
   private saveUnitSnapshot(snapshot: DeliberationUnitSnapshot, sessionId: string, now: number): void {
     this.db.prepare(`
       INSERT INTO units (
-        unit_id, session_id, level, path, global_root, project_root,
+        unit_id, session_id, level, path, workspace_root, project_root,
         state, turn_counter, child_counter,
         sleep_deadline_ms, created_at, updated_at, terminated_at
       )
@@ -417,7 +417,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         session_id = excluded.session_id,
         level = excluded.level,
         path = excluded.path,
-        global_root = excluded.global_root,
+        workspace_root = excluded.workspace_root,
         project_root = excluded.project_root,
         state = excluded.state,
         turn_counter = excluded.turn_counter,
@@ -430,7 +430,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       sessionId,
       snapshot.level,
       JSON.stringify(snapshot.path),
-      snapshot.globalRoot,
+      snapshot.workspaceRoot,
       snapshot.projectRoot,
       snapshot.state,
       snapshot.turnCounter,
@@ -626,7 +626,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
   private loadUnitSnapshot(unitId: string): DeliberationUnitSnapshot {
     const unitRow = this.db
       .prepare(`
-        SELECT unit_id, level, path, global_root, project_root, state, turn_counter, child_counter, sleep_deadline_ms
+        SELECT unit_id, level, path, workspace_root, project_root, state, turn_counter, child_counter, sleep_deadline_ms
         FROM units
         WHERE unit_id = ?
       `)
@@ -713,7 +713,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       unitId: unitRow.unit_id,
       level: unitRow.level,
       path: parseJson<number[]>(unitRow.path),
-      globalRoot: unitRow.global_root,
+      workspaceRoot: unitRow.workspace_root,
       projectRoot: unitRow.project_root,
       state: unitRow.state,
       turnCounter: unitRow.turn_counter,
