@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Knowledge View"
 date: 2026-04-15
-version: 2.0
+version: 4.0
 ---
 
 # Knowledge View
@@ -18,7 +18,7 @@ version: 2.0
 - Structural conventions (soft, not enforced)
 - Coverage and referencing principles
 - How "skill" is reabsorbed
-- Agent workspace model and inter-agent knowledge sharing
+- Global and project knowledge space model (two-root architecture)
 - Dual-channel communication: knowledge channel design
 - What is deliberately excluded
 
@@ -234,17 +234,23 @@ This section does not reproduce the full design principles. It conveys just enou
 
 ### 8.3 Workspace Knowledge (dynamic)
 
-Immediately after the Knowledge View Guideline, the system prompt injects the content of the root `AGENT.md` file from the workspace root. This content is read synchronously from disk each time `buildSystemPrompt` is called, so any agent modifications to the root AGENT.md take effect from the next turn.
+Immediately after the Knowledge View Guideline, the system prompt injects the content of two AGENT.md files:
 
-If the root AGENT.md does not exist, this section is silently omitted.
+1. **Global AGENT.md** (`~/.elenchus/AGENT.md`): cross-project knowledge, injected first.
+2. **Project AGENT.md** (`<projectRoot>/AGENT.md`): project-specific knowledge, injected second.
+
+Both are read synchronously from disk each time `buildSystemPrompt` is called, so any agent modifications take effect from the next turn.
+
+If either AGENT.md does not exist, that section is silently omitted.
 
 ### 8.4 Resulting system prompt structure
 
 ```
 GUIDELINE (collaboration protocol, dialogue norms, tool descriptions)
 + LAYER_ORIENTATION (L0/L1/L2)
-+ KNOWLEDGE_VIEW_GUIDELINE (static; includes workspace root path and boundary)
-+ WORKSPACE_KNOWLEDGE (dynamic; root AGENT.md content, read each turn)
++ KNOWLEDGE_VIEW_GUIDELINE (static; includes global root path, project root path, and boundary)
++ GLOBAL_KNOWLEDGE (dynamic; ~/.elenchus/AGENT.md content, read each turn)
++ PROJECT_KNOWLEDGE (dynamic; <projectRoot>/AGENT.md content, read each turn)
 + COGNITIVE_STYLE (Agent A / Agent B)
 ```
 
@@ -252,87 +258,106 @@ The former `capabilities?.buildSkillPromptAppendix()` injection point has been r
 
 ### 8.5 Runtime initialization
 
-At session startup, before creating the root deliberation unit, the framework checks the workspace root and bootstraps default knowledge-space files if they do not already exist:
+At session startup, before creating the root deliberation unit, the framework bootstraps default knowledge-space files in two locations:
 
-- `${runDirectory}/AGENT.md` — a generic workspace entry page template
-- `${runDirectory}/skills/` directory + `skills/AGENT.md` — skills directory convention and external-skill adaptation guidance
+**Global root** (`~/.elenchus/`):
+- `AGENT.md` — global knowledge entry page template
+- `knowledge/` directory — global knowledge artifacts directory
 
-The default templates are stored as string constants in `src/core/knowledge-view-defaults.ts` and written by `src/core/knowledge-view-init.ts`. This is analogous to how `.elenchus/` is auto-created for persistence state.
+**Project root** (`<projectRoot>/`):
+- `AGENT.md` — project-level knowledge entry page template (only if not already present)
 
-If the files already exist (e.g., when running from the Elenchus project directory itself, which ships its own project-specific `AGENT.md`), they are not overwritten. Agents are expected to maintain and evolve these files over time.
+The default templates are stored as string constants in `src/core/knowledge-view-defaults.ts` and written by `src/core/knowledge-view-init.ts`. The global root and its subdirectories are created on first run; project-level files are only created if they do not already exist.
+
+If the project AGENT.md already exists (e.g., when running from a project that ships its own `AGENT.md`), it is not overwritten. Agents are expected to maintain and evolve these files over time.
 
 ---
 
-## 9. Agent Workspace Model
+## 9. Global and Project Knowledge Space
 
-### 9.1 Each unit owns a workspace directory
+### 9.1 Two-root architecture
 
-Every agent unit is assigned a workspace directory on the file system. This directory serves as the unit's persistent knowledge base — a place to store work records, experience summaries, task notes, and any other knowledge artifacts that should survive across turns and context compression.
+Elenchus distinguishes two root directories, serving different purposes:
+
+| Concept | Path | Role |
+|---|---|---|
+| **globalRoot** | `~/.elenchus/` | Application-level fixed directory, independent of where the CLI is launched. Stores global knowledge, cross-project experience, and session persistence. |
+| **projectRoot** | `cwd()` or git root | The project being worked on. Bash cwd is set here. Agents operate on the project's actual file structure. |
+
+The global root is fixed and stable — it exists regardless of which project the user is working on. The project root varies per session, determined by where the user launches Elenchus (or the git root detected from that location).
+
+This design follows from the first-principles analysis in [`workspace-ownership-analysis.md`](./workspace-ownership-analysis.md), which demonstrates that per-agent workspace ownership provides only illusory isolation, and that the knowledge space should be application-level infrastructure rather than tied to the command-line launch directory.
+
+### 9.2 Global root structure
+
+```
+~/.elenchus/                           ← globalRoot (fixed)
+  AGENT.md                             ← Global knowledge entry page (cross-project)
+  knowledge/                           ← Global knowledge artifacts
+  projects/<project-hash>/             ← Per-project runtime state
+    state.db                           ← SQLite session persistence
+    AGENT.md                           ← Project-level persistent knowledge entry
+```
 
 Key properties:
 
-- **Ownership**: the unit that owns a workspace has full read/write authority over it
-- **Visibility**: other units (especially parent units) may read files from a child's workspace, but should not directly modify them
-- **Persistence**: workspace contents persist on disk independent of the unit's runtime state; they survive context compression, unmount/remount, and cold restart
-- **AGENT.md**: each workspace should maintain an AGENT.md as its local knowledge entry page, helping any reader (including parent units) quickly understand what the workspace contains
+- **`<project-hash>`**: a deterministic hash of the projectRoot absolute path, ensuring each project gets a unique state directory without exposing the full path in the directory name.
+- **`knowledge/`**: the default location for global knowledge artifacts — methodology notes, cross-project experience, tool usage insights, reusable patterns.
+- **`AGENT.md`**: the global knowledge entry page, injected into every agent's system prompt across all projects.
 
-### 9.2 Workspace directory organization
+### 9.3 Project root as bash cwd
 
-Workspace directories are organized as **flat siblings** under a common parent directory, regardless of the control hierarchy between units. The parent-child relationship is a runtime communication and control concern, not a storage layout concern.
+All agents execute bash commands with `cwd` set to the project root. There is no per-agent working directory. Agents operate on the project's actual file structure directly.
 
-Layout convention:
+Knowledge artifacts within the project are placed at meaningful locations in the project structure. An analysis of the auth module goes to `docs/auth-analysis.md` or `src/auth/AGENT.md`, not to a private agent directory.
 
-```
-.elenchus/workspaces/
-  unit-root/          ← L0 root unit
-  L1-01/              ← L0's first child
-  L1-02/              ← L0's second child
-  L2-01-01/           ← L1-01's child (grandchild of root, but a flat sibling on disk)
-```
+Agents are encouraged to write `.md` files within the project when the knowledge is project-specific. This includes work records, findings, and AGENT.md files for project directories.
 
-Principles:
+### 9.4 Knowledge artifact placement
 
-- **Control hierarchy ≠ storage hierarchy**: the tree structure of agent delegation exists at the runtime level (ConversationLedger, DeliberationUnit), not at the file-system level. Workspace directories do not nest inside each other.
-- Each unit has a clear, unique directory path derived from its unit identity.
-- The path is known to the unit itself (injected via prompt or tool context).
-- The path is accessible to parent units for reading via absolute paths.
-- Flat layout ensures that each unit's git tracking is naturally isolated — a parent unit's `git status` does not see child unit changes, and no `.gitignore` prefix matching is needed to exclude child workspaces.
+The primary knowledge artifact format is **.md files**. Agents decide where to place them based on scope:
 
-### 9.3 Git-based change tracking
+- **Global/cross-project knowledge** → `~/.elenchus/knowledge/` (methodology, reusable patterns, tool insights)
+- **Project-specific knowledge** → within the project structure (findings, module-level AGENT.md, docs)
 
-Each unit workspace is initialized as an independent local git repository (`git init`). This provides a lightweight, zero-infrastructure mechanism for agents to detect file changes within their own workspace — especially changes to AGENT.md and other knowledge artifacts.
+The prompt guides this distinction but does not enforce it. The agent's context window + compression snapshot serves as the in-memory staging area; the file system is for published knowledge. If an artifact has value, it goes to a meaningful location; if it has no value, it should not be written.
+
+There is no ontological distinction between "notes" and "work files" — both are knowledge produced during work.
+
+### 9.5 Change tracking via project git
+
+The project root may already be a git repository. This repository serves as the natural change tracking mechanism for project files — agents can use `git status`, `git diff`, and `git log` via bash to understand what has changed.
 
 Key properties:
 
-- **Local-only**: git is used purely for local state tracking. No remote synchronization, no branching strategy, no push/pull. The repo exists so the agent can run `git status`, `git diff`, and `git log` to understand what has changed in its workspace.
-- **Per-unit isolation**: because workspaces are flat siblings (§9.2), each unit's git repo covers only its own directory. A parent unit's `git status` never sees child unit changes, and no `.gitignore` tricks are needed to exclude child workspaces.
-- **Agent-visible**: the agent may use `bash` to run git commands for change detection. This is a natural use of the environment tools, not a special integration point.
-- **Automatic commits**: the framework performs `git add -A && git commit` at defined boundaries (e.g., after tool execution results are written, after AGENT.md updates). This gives the agent a meaningful change history without requiring the agent to manually commit.
-- **No enforcement**: git tracking is a convenience, not a correctness requirement. If git is not available on the host, or if the repo becomes corrupted, the unit continues to function normally.
+- **No per-unit git init**: the project's own git repository tracks changes. No additional git repositories are created.
+- **Agent-visible**: agents use `bash` to run git commands. This is a natural use of environment tools, not a special integration point.
+- **Conflict detection**: git naturally detects when multiple agents have modified the same files.
+- **No enforcement**: git tracking is a convenience, not a correctness requirement.
 
-The root unit (L0) is a special case: its workspace is the workspace root itself (`cwd()`), which may already be a git repository for the user's project. In that case, the existing project git repo serves as the root unit's change tracker, and no additional `git init` is performed. If the workspace root is not already a git repo, one is initialized.
+Global knowledge files under `~/.elenchus/` are not tracked by git. They are personal configuration and knowledge, analogous to Claude Code's `~/.claude/` directory.
 
-### 9.4 Knowledge artifacts in workspace
+### 9.6 Conflict management
 
-The primary knowledge artifact format is **.md files**. These serve multiple purposes:
+When multiple agents operate on the same shared file system, conflicts can occur. The framework manages this through existing coordination mechanisms rather than structural isolation:
 
-- **Work records**: detailed logs of what was done, what was found, what decisions were made
-- **Experience summaries**: lessons learned, patterns observed, heuristics distilled
-- **Task notes**: intermediate state, open questions, pending items
-- **Knowledge integration**: parent-unit summaries that synthesize child work into higher-level understanding
+- **L0 coordination**: L0 assigns work scope through task briefs and monitors child progress through report/yield. L0 naturally prevents overlap by delegating non-overlapping tasks.
+- **Proposal-vote**: any write within a unit requires dual-agent approval, catching potentially problematic operations.
+- **Git safety net**: even if conflict occurs, git provides detection and recovery.
+- **Low actual concurrency**: within a unit, execution is strictly serial (FSM). Between units, L0 coordinates scheduling.
 
-These .md files are not structured data; they are natural-language documents that agents write for themselves and for other agents to read on demand.
+This approach makes conflict **explicit** rather than **hidden**.
 
-### 9.5 Cross-workspace reading
+### 9.7 Cross-unit knowledge sharing
 
-A parent unit may read files from a child unit's workspace directory. This is the primary mechanism for the **knowledge channel** in dual-channel communication (P27).
+Agents share knowledge through the file system. This is the primary mechanism for the **knowledge channel** in dual-channel communication (P27).
 
 Guidelines:
 
-- **Read on demand, not eagerly**: parent units should read child workspace files only when they need specific information, not preemptively scan everything
-- **Reference over copy**: when a parent needs child knowledge, prefer reading the original file over copying it. If the parent needs to integrate or transform child knowledge, it should produce its own .md file with its own understanding, not mirror the child's file
-- **Discovery via report messages**: child units should include file paths in `report`/`yield` messages so parents know what knowledge artifacts exist and where to find them
-- **No direct modification**: parent units should not directly modify files in a child's workspace. If a parent wants the child to update something, it should send a message via `sendToChild`
+- **Read on demand, not eagerly**: agents should read knowledge files only when they need specific information, not preemptively scan everything
+- **Reference over copy**: when an agent needs knowledge produced by another agent, prefer reading the original file over copying it. If integration is needed, produce a new understanding rather than mirroring the original.
+- **Discovery via report messages**: agents should include absolute file paths in `report`/`yield` messages so other agents know what knowledge artifacts exist and where to find them
+- **Coordination via L0**: if an agent needs another agent to update or create a knowledge artifact, it should report upward to L0, which can then coordinate via `sendToChild`
 
 ## 10. Dual-Channel Knowledge Sharing
 
@@ -417,19 +442,21 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 6. **Cross-reference principle**: AGENT.md files in different directories may reference each other to support cross-directory knowledge connectivity.
 7. **Skill-reabsorption principle**: Skill no longer exists as an independent storage ontology; it is reabsorbed as an organizational result of actionable knowledge regions.
 8. **Prompt-realization principle**: The knowledge view is realized through prompt injection (static guideline + dynamic root AGENT.md), not through code-level enforcement or schema validation.
-9. **Knowledge-space-boundary principle**: The workspace root (CLI launch directory) defines the boundary of the knowledge space. Agents may read/write files anywhere, but knowledge-organization activities stay within this root.
+9. **Knowledge-space-boundary principle**: Knowledge space has two boundaries — globalRoot (`~/.elenchus/`) and projectRoot (cwd/git root). Agents may read/write files anywhere on the host system, but knowledge-organization activities stay within these two roots.
 10. **Scope-restraint principle**: Current scope is limited to the knowledge-view storage model and prompt injection; governance, anti-entropy, and auto-maintenance are deferred.
-11. **Agent-workspace-ownership principle**: Each agent unit owns its workspace directory; other units may read but should not directly modify it.
+11. **Two-root-knowledge principle**: Knowledge space has two roots — globalRoot (`~/.elenchus/`) for cross-project knowledge and persistence, projectRoot (cwd/git root) for project-specific operations. The global root is fixed and independent of launch location.
 12. **Knowledge-channel-complement principle**: The knowledge channel (.md files) complements the message channel (ConversationLedger); they carry different communication loads and must not substitute for each other.
-13. **Reference-over-copy principle**: When a parent unit needs child knowledge, prefer reading the original file over copying it; integration should produce the parent's own understanding, not a mirror.
-14. **Control-storage-decoupling principle**: The parent-child control hierarchy exists at the runtime level, not the file-system level. Workspace directories are flat siblings; control hierarchy does not dictate storage nesting.
-15. **Git-change-tracking principle**: Each unit workspace uses a local git repository for lightweight change detection. Git is a convenience mechanism, not a correctness requirement; the unit functions normally without it.
+13. **Reference-over-copy principle**: When an agent needs knowledge produced by another agent, prefer reading the original file over copying it; integration should produce the agent's own understanding, not a mirror.
+14. **Explicit-conflict principle**: Conflict in shared space is explicit and manageable through L0 coordination + proposal-vote + git, rather than hidden through structural isolation that only provides illusory separation.
+15. **No-notes-work-split principle**: There is no ontological distinction between "notes" and "work files" — both are knowledge produced during work. The in-memory context window is the staging area; the file system is for published knowledge.
 
 ---
 
 ## Change Log
 
-- **v2.1 (2026-04-17)**: Redesign §9.2 for flat workspace layout (control hierarchy ≠ storage hierarchy). Add §9.3 Git-based change tracking (per-unit independent local git repo for change detection). Renumber §9.3→9.4, §9.4→9.5. Add two new design principles: control-storage-decoupling, git-change-tracking.
+- **v4.0 (2026-04-17)**: Introduce two-root architecture: globalRoot (`~/.elenchus/`) + projectRoot (cwd/git root). Global root stores cross-project knowledge (`knowledge/`), per-project state (`projects/<hash>/state.db`), and global AGENT.md. Project root is bash cwd and site for project-specific knowledge artifacts. Prompt injection now includes both global and project AGENT.md. Session persistence moved from `<projectRoot>/.elenchus/state.db` to `~/.elenchus/projects/<hash>/state.db`. Replace shared-knowledge-space principle with two-root-knowledge principle.
+- **v3.0 (2026-04-17)**: Redesign §9 from per-agent workspace to shared knowledge space. [Superseded by v4.0]
+- **v2.1 (2026-04-17)**: Redesign §9.2 for flat workspace layout (control hierarchy ≠ storage hierarchy). Add §9.3 Git-based change tracking (per-unit independent local git repo for change detection). Renumber §9.3→9.4, §9.4→9.5. Add two new design principles: control-storage-decoupling, git-change-tracking. [Superseded by v3.0]
 - **v2.0 (2026-04-16)**: Add §9 Agent Workspace Model (workspace ownership, directory organization, knowledge artifacts, cross-workspace reading) and §10 Dual-Channel Knowledge Sharing (knowledge channel design, report-with-reference pattern, knowledge integration, discoverability, staleness). Add three new design principles: agent-workspace-ownership, knowledge-channel-complement, reference-over-copy. Update scope and relevant principles to include P27, P28. Renumber §9 (excluded scope) to §11, §10 (principles) to §12.
 - **v1.2 (2026-04-15)**: Remove v1 skill system code entirely: `skills.ts`, `CapabilityBundle`, `CapabilityProvider`, `installSkill` tool, skill binding persistence, `adapters/skills/` directory, `skill-system.md` design doc. Add Writing Guidance subsection to prompt (conciseness, root AGENT.md context-budget awareness, content direction, update timestamps). Tool surface now uses `getBuiltInToolList()` directly; `LocalNodeToolExecutor` simplified to built-in tools only. SQLite schema bumped to v4.
 - **v1.1 (2026-04-15)**: Add §8 Prompt Injection Design: workspace root = CLI cwd(), knowledge space boundary, static Knowledge View Guideline (includes absolute workspace root path), dynamic Workspace Knowledge (root AGENT.md read each turn). Runtime initialization writes default AGENT.md and skills/AGENT.md to workspace root on first startup. Remove `buildSkillPromptAppendix()` from prompt assembly. Add prompt-realization and knowledge-space-boundary principles.

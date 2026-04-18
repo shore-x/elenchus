@@ -25,7 +25,7 @@ const AGENT_NAMES: Record<AgentId, string> = {
   "agent-b": "Agent B",
 };
 
-const CHILD_TOOLS = new Set(["spawnChild", "sendToChild", "unmountChild"]);
+const CHILD_TOOLS = new Set(["spawnChild", "sendToChild"]);
 const FRAMEWORK_TOOLS = new Set(["yield", "report", "sleep", "vote", "compressContext"]);
 
 function formatToolArgs(toolName: string, args: Record<string, unknown>): string {
@@ -50,8 +50,6 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
     }
     case "sendToChild":
       return `${args.childId}: ${String(args.message).slice(0, 80)}${String(args.message).length > 80 ? "..." : ""}`;
-    case "unmountChild":
-      return String(args.childId);
     default:
       return JSON.stringify(args);
   }

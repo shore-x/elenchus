@@ -64,7 +64,7 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 - When new incoming information is materially relevant to a child unit's current task, consider whether it belongs inside that existing child workflow rather than leaving the child on stale context.
 - Do not force unrelated or weakly related work into an existing child workflow. If new information instead opens a sufficiently separate line of work, a new child unit may be cleaner than overloading the current one.
 - When a child report reveals missing context, changed assumptions, or a need for redirection, seriously consider **sendToChild** rather than waiting for the child to finish.
-- Use **unmountChild** when an 'idle' child no longer needs to stay in the parent unit's current visible working set. Unmounting is a visibility-management move, not completion or termination.
+- You have a **fixed number of coordination slots** for child units. All children are always visible; there is no unmount/hide mechanism. When all slots are occupied and you need a new child, use **sendToChild** to request an existing child to wrap up its work and yield, then assign the freed slot to the new task.
 - Use **sleep** when waiting is itself the best next commitment because immediate further deliberation would add less value than allowing later information to arrive.
 - The absence of newly visible messages does not by itself mean the task is complete, blocked, or ready to pause.
 - These are decision principles, not a fixed scenario checklist. Let the task state determine which move is best.
@@ -83,7 +83,7 @@ const GUIDELINE_TOOLS = `
 The tools available in the current turn fall into three categories:
 
 - **Protocol tools** (all layers): **yield** (upward handoff and pause, including requests for more information), **report** (routine upward coordination and continue), **compressContext** (start a background memory-snapshot refresh and continue normal deliberation), **vote** (evaluate your partner's proposal).
-- **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **unmountChild** (remove an idle child from the parent unit's current visible working set without terminating it), **sleep** (pause with timeout when waiting is the best next move).
+- **Child management tools** (if available): **spawnChild** (create a child agent unit from an initial brief), **sendToChild** (send follow-up or updated guidance to an existing child unit), **sleep** (pause with timeout when waiting is the best next move).
 - **Environment tools** (all layers): **bash**, **readFile**, **writeFile** — at L0 these serve the coordinator role (surveying, inspecting, maintaining knowledge artifacts); at L1/L2 they serve direct execution.
 
 The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall hierarchy.
@@ -101,7 +101,7 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - If the unit lacks enough context to continue with confidence, strongly prefer an explicit **yield** requesting the missing information over silently guessing.
 - Use **sendToChild** when ongoing delegated work should receive additional context, constraints, corrections, clarifications, redirection, or a response to the child's earlier report or yield.
 - Child agent upward messages arrive asynchronously as [Public Fact][Child Report] broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped; these messages often call for either **sendToChild**, local replanning, or further upward coordination.
-- Use **unmountChild** when an idle child no longer deserves space in the parent unit's current visible context. If that child later sends a new upward communication message, it will become visible again.
+- You have a fixed number of coordination slots for child units. All children are always visible. When all slots are full and you need a new child, use **sendToChild** to request an existing child to wrap up and yield, then assign the freed slot.
 - Use **sleep** when deliberate waiting would serve the task better than further immediate discussion, coordination, or action.
 - Tool execution results appear as [Public Fact][Tool Result] broadcasts.
 - If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a [Public Fact][Unit Runtime] broadcast.
@@ -232,10 +232,10 @@ Your job is to write a natural-language task-state snapshot for future turns.
 const KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE = `
 
 ## Knowledge View
-Your workspace root directory is: **{{WORKSPACE_ROOT}}**
-Your working directory is: **{{WORK_DIRECTORY}}**
+Your global root directory is: **{{GLOBAL_ROOT}}**
+Your project root directory is: **{{PROJECT_ROOT}}**
 
-Knowledge is not a separate storage system — it is a navigable cognitive view built on top of the file system within this workspace.
+Knowledge is not a separate storage system — it is a navigable cognitive view built on top of the file system.
 
 Some directories contain an **AGENT.md** file. This is a local knowledge entry page that helps you understand the directory: what it is for, which contents matter most, where to start reading, and how it relates to other areas. AGENT.md files may reference each other across directories.
 
@@ -249,32 +249,45 @@ When you encounter a new directory within the workspace, check whether an AGENT.
 AGENT.md should be a quick-orientation entry point, not exhaustive documentation. A reader should be able to build a directory-level understanding within seconds.
 - **Good content**: directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, an \`Updated:\` date near the top.
 - **Avoid**: temporary task notes, detailed implementation logic, full API documentation, conversation logs, or mechanical per-file listings.
-- **The root AGENT.md is injected into your system prompt every turn.** Its length directly reduces the context budget available for conversation and reasoning. Keep it especially concise — project-level overview and navigation only.
+- **The global and project AGENT.md files are injected into your system prompt every turn.** Their length directly reduces the context budget available for conversation and reasoning. Keep them especially concise — overview and navigation only.
 - Update an AGENT.md when the directory's purpose or structure changes meaningfully, not after every small edit. Include an \`Updated:\` timestamp so future readers can gauge freshness.
 
-### Dual-Path Model
-- **Workspace root** ({{WORKSPACE_ROOT}}): The project's root directory, shared across all layers. The root AGENT.md is injected into your prompt. You may read and write files anywhere under the workspace root when collaboration between layers requires it.
-- **Working directory** ({{WORK_DIRECTORY}}): Your layer-specific default directory. Bash commands execute with this as the current working directory. File read/write tools use absolute paths, but your working directory is the natural place to store layer-local outputs, downloads, and intermediate artifacts.
-- Use **absolute paths** for readFile and writeFile operations to avoid ambiguity. Relative paths in those tools resolve against the process working directory, not your working directory.
-- Keep your working directory organized. Output files, downloaded data, and other artifacts produced by your layer should default to your working directory unless the task explicitly requires placing them elsewhere.
+### Agent Knowledge Model
+You are a stateless compute unit — your runtime context (conversation history, FSM state, compression snapshot) lives in memory and SQLite, not on the file system. The file system is a shared world that all agents read and write; no agent owns any directory. Your context window is your working staging area; the file system is for published knowledge. If an artifact has value, place it at a meaningful location; if it has no value, do not write it.
 
-### Knowledge Sharing Across Agents
-When sharing knowledge with other agents (especially via report and yield), always use **absolute file paths** so that the receiving agent can locate and read the file without ambiguity. This is essential for cross-unit knowledge sharing:
-- When you save work results to a .md file, include the absolute path (e.g., /path/to/workspace/.elenchus/workspaces/L1-01/findings.md) in your report or yield message.
-- When reading files produced by other agents, use the absolute paths they provided.
-- This enables the dual-channel communication pattern: messages carry lightweight summaries + file paths, while the .md files carry the detailed knowledge that the receiving agent reads on demand.
+### Two-Root Knowledge Space
+- **Global root** (**{{GLOBAL_ROOT}}**): Application-level fixed directory, independent of which project you are working on. This ensures cross-project knowledge and runtime state persist regardless of where you launch Elenchus. Structure:
+  - \`AGENT.md\` — global knowledge entry page (injected into your system prompt)
+  - \`knowledge/\` — global knowledge artifacts (methodology, reusable patterns, tool insights)
+  - \`projects/\` — per-project runtime state (do not modify; managed by the framework)
+- **Project root** (**{{PROJECT_ROOT}}**): The project being worked on. Bash commands execute with the project root as the current working directory. Project-specific knowledge artifacts go at meaningful locations within the project structure.
+- There is no per-agent working directory. All agents share the same two roots.
+- **Placement heuristic**: Global knowledge = methodology notes, tool usage experience, reusable patterns, cross-project observations. Project knowledge = module analysis, bug findings, directory-level AGENT.md, project-specific documentation.
+- Use **absolute paths** for readFile and writeFile operations to avoid ambiguity.
+
+### Conflict Awareness
+Multiple agents may operate on the same shared file system. Conflict is explicit, not hidden — this is a feature, not a risk:
+- **L0 coordination**: L0 assigns non-overlapping work scope through task briefs and monitors child progress.
+- **Proposal-vote**: any write within a unit requires dual-agent approval, catching potentially problematic operations.
+- **Git safety net**: if conflict occurs, git provides detection and recovery via \`git diff\` and \`git revert\`.
+If you suspect your work might overlap with another unit's, mention it in your report or yield so L0 can coordinate.
 
 ### Change Tracking
-Your working directory is a local git repository used for lightweight change detection. This is local-only — no remote sync, no branching strategy. You can use \`git status\`, \`git diff\`, and \`git log\` via bash to understand what has changed in your workspace, especially AGENT.md and other knowledge artifacts. The framework auto-commits after tool execution results are written, giving you a meaningful change history without manual effort.
+If the project root is a git repository, you can use \`git status\`, \`git diff\`, and \`git log\` via bash to understand what has changed. This is a natural use of environment tools, not a special integration point.
 
 ### Knowledge Space Boundary
-Your **knowledge space** is rooted at the workspace root directory shown above. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing skill regions, maintaining knowledge structure — must stay within the workspace root. Directories outside the workspace root are operational targets, not part of your knowledge space.
+Your **knowledge space** spans two roots: the global root (\`{{GLOBAL_ROOT}}\`) and the project root (\`{{PROJECT_ROOT}}\`). You may read and write files anywhere on the host system when a task requires it (e.g., editing a system config file), but knowledge-organization activities — creating or updating AGENT.md files, organizing knowledge structure — must stay within these two roots. Directories outside both roots are operational targets you may act upon, not places where you organize knowledge.
 
-The workspace root AGENT.md, if present, is shown below as **Workspace Knowledge**.`;
+The global AGENT.md and project AGENT.md, if present, are shown below as **Global Knowledge** and **Project Knowledge**.`;
 
-function buildWorkspaceKnowledge(content: string | null): string {
+function buildGlobalKnowledge(content: string | null): string {
   if (!content) return "";
-  return `\n\n## Workspace Knowledge\nThe following is the content of the root AGENT.md for the current workspace:\n\n${content}`;
+  return `\n\n## Global Knowledge\nThe following is the content of the global AGENT.md (\`~/.elenchus/AGENT.md\`):\n\n${content}`;
+}
+
+function buildProjectKnowledge(content: string | null): string {
+  if (!content) return "";
+  return `\n\n## Project Knowledge\nThe following is the content of the project root AGENT.md:\n\n${content}`;
 }
 
 export function readRootAgentMd(runDirectory: string): string | null {
@@ -285,14 +298,15 @@ export function readRootAgentMd(runDirectory: string): string | null {
   }
 }
 
-export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, workspaceRoot: string, workDirectory: string, workspaceKnowledge?: string | null): string {
+export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, globalRoot: string, projectRoot: string, globalKnowledge?: string | null, projectKnowledge?: string | null): string {
   const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE
-    .replace("{{WORKSPACE_ROOT}}", workspaceRoot)
-    .replace("{{WORK_DIRECTORY}}", workDirectory);
+    .replace(/\{\{GLOBAL_ROOT\}\}/g, globalRoot)
+    .replace(/\{\{PROJECT_ROOT\}\}/g, projectRoot);
   return buildGuideline()
     + buildLayerOrientation(level)
     + knowledgeViewGuideline
-    + buildWorkspaceKnowledge(workspaceKnowledge ?? null)
+    + buildGlobalKnowledge(globalKnowledge ?? null)
+    + buildProjectKnowledge(projectKnowledge ?? null)
     + COGNITIVE_STYLES[agentId];
 }
 

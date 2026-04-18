@@ -38,8 +38,6 @@ function renderProposalDetail(proposal: ProposalCall): string {
     }
     case "sendToChild":
       return `Child: ${proposal.args.childId}\nMessage:\n---\n${String(proposal.args.message)}\n---`;
-    case "unmountChild":
-      return `Child: ${proposal.args.childId}`;
     default:
       return `Arguments:\n${JSON.stringify(proposal.args, null, 2) ?? "{}"}`;
   }

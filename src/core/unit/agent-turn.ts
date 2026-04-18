@@ -30,15 +30,15 @@ export class AgentTurn {
   private selfId: AgentId;
   private llmClient: LlmClient;
   private level: ToolLevel;
-  private workspaceRoot: string;
-  private workDirectory: string;
+  private globalRoot: string;
+  private projectRoot: string;
 
-  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", workspaceRoot: string, workDirectory: string) {
+  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", globalRoot: string, projectRoot: string) {
     this.selfId = selfId;
     this.llmClient = llmClient;
     this.level = level;
-    this.workspaceRoot = workspaceRoot;
-    this.workDirectory = workDirectory;
+    this.globalRoot = globalRoot;
+    this.projectRoot = projectRoot;
   }
 
   async execute(
@@ -48,10 +48,11 @@ export class AgentTurn {
   ): Promise<TurnResult> {
     const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren);
 
-    const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
+    const globalKnowledge = readRootAgentMd(this.globalRoot);
+    const projectKnowledge = readRootAgentMd(this.projectRoot);
 
     const context: LlmContext = {
-      systemPrompt: buildSystemPrompt(this.selfId, this.level, this.workspaceRoot, this.workDirectory, workspaceKnowledge),
+      systemPrompt: buildSystemPrompt(this.selfId, this.level, this.globalRoot, this.projectRoot, globalKnowledge, projectKnowledge),
       messages,
       tools: toProviderTools(tools),
     };

@@ -1,6 +1,6 @@
 // Elenchus - Tool Definitions
 // Three-layer tool allocation (§4.3):
-//   - Child management (SpawnChild, SendToChild, UnmountChild, Sleep) → non-leaf (L0, L1)
+//   - Child management (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
 //   - Environment tools (Bash, ReadFile, WriteFile) → all layers (L0 constrained by role policy P28)
 //   - Protocol tools (Yield, Report, Vote, CompressContext) → all layers
 // Yield and Report form the same upward-communication family: both send a shared upward message,
@@ -257,25 +257,6 @@ export const sendToChildTool: ElenchusTool = {
   requiresChildren: true,
 };
 
-export const unmountChildTool: ElenchusTool = {
-  name: "unmountChild",
-  description:
-    "Propose to unmount an existing idle child agent unit from the parent unit's current visible context. This is a PROPOSAL — the other agent must vote APPROVE. " +
-    "Unmounting removes that child from the parent agent's current visible child set and context budget, but it does not terminate the child or remove the underlying parent-child affiliation in the program. " +
-    "Only an idle child can be unmounted. If that child later sends a new upward communication message, it will automatically remount into the parent unit's visible child set. " +
-    "You must provide proposedStep to describe how removing this child from the current working set advances the task.",
-  parameters: Type.Object({
-    childId: Type.String({
-      description: "The ID of the currently visible child agent unit to unmount (e.g. 'L1-01', 'L2-01-02').",
-    }),
-    proposedStep: proposedStepSchema,
-  }),
-  category: "child-management",
-  behavior: "nonblocking",
-  appliesToLevels: NON_LEAF_LEVELS,
-  requiresChildren: true,
-};
-
 export const sleepTool: ElenchusTool = {
   name: "sleep",
   description:
@@ -310,7 +291,6 @@ const BUILT_IN_TOOLS: readonly ElenchusTool[] = [
   writeFileTool,
   spawnChildTool,
   sendToChildTool,
-  unmountChildTool,
   sleepTool,
 ];
 

@@ -4,13 +4,10 @@
 // allowing CLI and future UI layers to share the same runtime without inheriting Node-specific details.
 // Unit-level context compression is managed here via a separate CompressionTaskManager,
 // while agent-visible context remains a turn-scoped projection from ConversationLedger.
-// Parent-visible child context is restricted to the currently mounted child set; idle
-// children can be unmounted from that visible set and later remounted by new upward activity.
+// Parent-visible child context includes all children (fixed slot pool model).
+// Children are always visible; there is no unmount/remount mechanism.
 // The unit also owns durable snapshot export and cold-start restoration of its recoverable child graph.
 
-import { existsSync, mkdirSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { join } from "node:path";
 import { AgentTurn } from "./agent-turn.js";
 import { getBuiltInToolRegistry } from "../tools.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
@@ -28,8 +25,8 @@ const AGENT_NAMES: Record<AgentId, string> = {
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
   toolExecutor: ToolExecutor;
-  workspaceRoot: string;
-  workDirectory?: string;
+  globalRoot: string;
+  projectRoot: string;
   level?: ToolLevel;
   path?: number[];
   unitId?: string;
@@ -54,68 +51,33 @@ export class DeliberationUnit {
   private scope: UnitScope;
   private executingFromState: "turn-a" | "turn-b" | null = null;
   private children = new Map<string, DeliberationUnit>();
-  private dormantChildren = new Map<string, PersistedChildSnapshot>();
-  private mountedChildren = new Set<string>();
   private childCounter = 0;
+  static readonly MAX_CHILDREN = 8;
   private sleepTimer: ReturnType<typeof setTimeout> | null = null;
   private sleepDeadlineMs: number | null = null;
   private consecutiveEmptyTurns = 0;
   private commitLog: CommittedStep[] = [];
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
-  private workspaceRoot: string;
-  private workDirectory: string;
+  private globalRoot: string;
+  private projectRoot: string;
   private static readonly MAX_EMPTY_TURNS = 4;
-  private static readonly WORKSPACES_DIR = ".elenchus/workspaces";
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
   private static readonly COMPRESSION_MAX_TOKENS = 4096;
-  private static readonly GIT_COMMIT_MESSAGE = "elenchus auto-commit";
 
-  /** Ensure a git repo exists in the given directory. No-op if .git already present. */
-  private static ensureGitRepo(dir: string): void {
-    if (existsSync(join(dir, ".git"))) return;
-    try {
-      execSync("git init", { cwd: dir, stdio: "pipe" });
-    } catch {
-      // git not available — proceed without tracking
-    }
-  }
-
-  /** Auto-commit all changes in the given directory. Silent no-op if git is unavailable. */
-  private static autoCommit(dir: string): void {
-    try {
-      execSync("git add -A", { cwd: dir, stdio: "pipe" });
-      // Check whether there are staged changes before committing
-      const status = execSync("git diff --cached --quiet", { cwd: dir, stdio: "pipe" });
-      // diff --cached --quiet exits 0 when no changes — nothing to commit
-      return;
-    } catch {
-      // diff --cached --quiet exits 1 when there ARE staged changes — proceed to commit
-    }
-    try {
-      execSync(`git commit -m "${DeliberationUnit.GIT_COMMIT_MESSAGE}" --allow-empty-message`, { cwd: dir, stdio: "pipe" });
-    } catch {
-      // commit failed (e.g., no git user configured) — proceed silently
-    }
-  }
 
   constructor(options: DeliberationUnitOptions) {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
-    this.workspaceRoot = options.workspaceRoot;
+    this.globalRoot = options.globalRoot;
+    this.projectRoot = options.projectRoot;
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
-    this.workDirectory = options.workDirectory ?? DeliberationUnit.computeWorkDirectory(this.workspaceRoot, this.level, options.path ?? []);
-    // Ensure work directory exists and has git tracking (root unit uses workspaceRoot which always exists)
-    if (this.workDirectory !== this.workspaceRoot) {
-      mkdirSync(this.workDirectory, { recursive: true });
-    }
-    DeliberationUnit.ensureGitRepo(this.workDirectory);
     this.ledger = new ConversationLedger();
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot, this.workDirectory);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot, this.workDirectory);
+    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.globalRoot, this.projectRoot);
+    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.globalRoot, this.projectRoot);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.scope = {
@@ -176,25 +138,15 @@ export class DeliberationUnit {
   exportSnapshot(): DeliberationUnitSnapshot {
     const children: PersistedChildSnapshot[] = [...this.children.entries()].map(([childId, child]) => ({
       childId,
-      mounted: this.mountedChildren.has(childId),
       snapshot: child.exportSnapshot(),
     }));
-    for (const [childId, childSnapshot] of this.dormantChildren.entries()) {
-      if (!this.children.has(childId)) {
-        children.push({
-          childId: childSnapshot.childId,
-          mounted: childSnapshot.mounted,
-          snapshot: childSnapshot.snapshot,
-        });
-      }
-    }
 
     return {
       unitId: this.unitId,
       level: this.level,
       path: [...this.scope.path],
-      workspaceRoot: this.workspaceRoot,
-      workDirectory: this.workDirectory,
+      globalRoot: this.globalRoot,
+      projectRoot: this.projectRoot,
       state: this.state,
       turnCounter: this.turnCounter,
       childCounter: this.childCounter,
@@ -209,11 +161,9 @@ export class DeliberationUnit {
   restoreFromSnapshot(
     snapshot: DeliberationUnitSnapshot,
     options?: {
-      includeUnmountedChildren?: boolean;
       coldStart?: boolean;
     },
   ): void {
-    const includeUnmountedChildren = options?.includeUnmountedChildren ?? true;
     const coldStart = options?.coldStart ?? false;
     const normalizedState = coldStart ? this.normalizeStateForColdStart(snapshot.state) : snapshot.state;
     const compressionSnapshot = coldStart && snapshot.compression.activeTask
@@ -233,15 +183,12 @@ export class DeliberationUnit {
     try {
       this.unitId = snapshot.unitId;
       this.level = snapshot.level;
-      this.workspaceRoot = snapshot.workspaceRoot;
-      this.workDirectory = snapshot.workDirectory;
+      this.globalRoot = snapshot.globalRoot;
+      this.projectRoot = snapshot.projectRoot;
       this.scope = {
         level: snapshot.level,
         path: [...snapshot.path],
       };
-      // Ensure work directory exists on restore (may have been deleted externally)
-      mkdirSync(this.workDirectory, { recursive: true });
-      DeliberationUnit.ensureGitRepo(this.workDirectory);
       this.state = normalizedState;
       this.turnCounter = snapshot.turnCounter;
       this.childCounter = snapshot.childCounter;
@@ -258,19 +205,9 @@ export class DeliberationUnit {
       this.compressionManager.loadSnapshot(compressionSnapshot);
       this.commitLog = snapshot.commitLog.map((step) => ({ ...step }));
       this.children = new Map<string, DeliberationUnit>();
-      this.dormantChildren = new Map<string, PersistedChildSnapshot>();
-      this.mountedChildren = new Set<string>();
       this.clearSleepState();
 
       for (const childEntry of snapshot.children) {
-        if (!includeUnmountedChildren && !childEntry.mounted) {
-          this.dormantChildren.set(childEntry.childId, {
-            childId: childEntry.childId,
-            mounted: false,
-            snapshot: childEntry.snapshot,
-          });
-          continue;
-        }
 
         const child = this.createChildUnit(
           childEntry.childId,
@@ -280,9 +217,6 @@ export class DeliberationUnit {
         );
         child.restoreFromSnapshot(childEntry.snapshot, options);
         this.children.set(childEntry.childId, child);
-        if (childEntry.mounted) {
-          this.mountedChildren.add(childEntry.childId);
-        }
       }
 
       if (snapshot.sleepDeadlineMs !== null) {
@@ -317,7 +251,7 @@ export class DeliberationUnit {
   }
 
   private buildChildCommitViews(limit: number = DeliberationUnit.CHILD_COMMIT_VIEW_LIMIT): ChildCommitView[] {
-    return [...this.mountedChildren]
+    return [...this.children.keys()]
       .map((childId) => {
         const child = this.children.get(childId);
         if (!child) {
@@ -333,12 +267,8 @@ export class DeliberationUnit {
       .filter((view): view is ChildCommitView => view !== null);
   }
 
-  private hasMountedChildren(): boolean {
-    return this.mountedChildren.size > 0;
-  }
-
-  private isChildMounted(childId: string): boolean {
-    return this.mountedChildren.has(childId);
+  private hasChildren(): boolean {
+    return this.children.size > 0;
   }
 
   private recordCommittedStep(proposal: PendingProposal): void {
@@ -367,28 +297,18 @@ export class DeliberationUnit {
     return `${level}-${padded.join("-")}`;
   }
 
-  private static computeWorkDirectory(workspaceRoot: string, level: ToolLevel, path: number[]): string {
-    if (path.length === 0) return workspaceRoot;
-    const padded = path.map((s) => String(s).padStart(2, "0"));
-    const unitDirName = `${level}-${padded.join("-")}`;
-    // Flat layout: all unit workspaces are siblings under .elenchus/workspaces/
-    return join(workspaceRoot, DeliberationUnit.WORKSPACES_DIR, unitDirName);
-  }
-
-  private static findNextChildSlot(workspaceRoot: string, parentLevel: ToolLevel, parentPath: number[]): { childPath: number[]; childWorkDir: string } {
+  private static findNextChildSlot(parentLevel: ToolLevel, parentPath: number[], existingChildIds: Set<string>): number[] {
     const childLevel = parentLevel === "L0" ? "L1" as const : "L2" as const;
-    const searchBase = join(workspaceRoot, DeliberationUnit.WORKSPACES_DIR);
 
     for (let i = 1; i <= 999; i++) {
       const childPath = [...parentPath, i];
       const padded = childPath.map((s) => String(s).padStart(2, "0"));
-      const candidateDir = `${childLevel}-${padded.join("-")}`;
-      const fullPath = join(searchBase, candidateDir);
-      if (!existsSync(fullPath)) {
-        return { childPath, childWorkDir: fullPath };
+      const candidateId = `${childLevel}-${padded.join("-")}`;
+      if (!existingChildIds.has(candidateId)) {
+        return childPath;
       }
     }
-    throw new Error(`Could not find available child slot under ${searchBase}`);
+    throw new Error("Could not find available child slot");
   }
 
   private normalizeStateForColdStart(state: UnitState): UnitState {
@@ -438,26 +358,20 @@ export class DeliberationUnit {
     const child = new DeliberationUnit({
       llmClient: this.llmClient,
       toolExecutor: this.toolExecutor,
-      workspaceRoot: this.workspaceRoot,
+      globalRoot: this.globalRoot,
+      projectRoot: this.projectRoot,
       level: childLevel,
       path: childPath,
       unitId,
       onSystemEvent: (event: SystemEvent) => {
         if (event.type === "upward-message" && this.sameScope(event.scope, child.scope)) {
           const broadcastMeta = this.buildDeferredVisibilityMeta();
-          const wasMounted = this.isChildMounted(childId);
-          if (!wasMounted) {
-            this.mountedChildren.add(childId);
-          }
           this.ledger.appendChildReportMessage({
             childId,
             deliveryMode: event.deliveryMode,
             content: event.content,
             ...broadcastMeta,
           });
-          if (!wasMounted) {
-            this.ledger.appendSystemMessage(`Child unit ${childId} was remounted after new upward activity.`, broadcastMeta);
-          }
           this.notifyDurableStateChange();
           this.wakeIfIdle();
         }
@@ -627,7 +541,7 @@ export class DeliberationUnit {
       this.notifyDurableStateChange();
       const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
 
-      const hasChildren = this.hasMountedChildren();
+      const hasChildren = this.hasChildren();
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
       const pendingProposal = this.getPendingProposal();
       const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
@@ -732,7 +646,7 @@ export class DeliberationUnit {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
-            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.workDirectory, level: this.level });
+            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.projectRoot, level: this.level });
             this.ledger.appendToolResultMessage({
               proposalId: approvedProposal.messageId,
               toolName,
@@ -743,7 +657,6 @@ export class DeliberationUnit {
             });
             this.notifyDurableStateChange();
             this.emit({ type: "tool-result", scope: this.scope, toolName, success: execResult.success, output: execResult.output, durationMs: execResult.durationMs });
-            DeliberationUnit.autoCommit(this.workDirectory);
             const nextState: UnitState = this.executingFromState === "turn-a" ? "turn-b" : "turn-a";
             this.executingFromState = null;
             this.transition("executing", nextState);
@@ -816,17 +729,15 @@ export class DeliberationUnit {
 
     if (toolName === "spawnChild") {
       const task = args.task as string;
-      const { childPath, childWorkDir } = DeliberationUnit.findNextChildSlot(this.workspaceRoot, this.level, this.scope.path);
       const childLevel = this.level === "L0" ? "L1" as const : "L2" as const;
+      const existingChildIds = new Set(this.children.keys());
+      const childPath = DeliberationUnit.findNextChildSlot(this.level, this.scope.path, existingChildIds);
       const childId = DeliberationUnit.buildUnitId(childLevel, childPath);
       this.childCounter = childPath[childPath.length - 1];
 
-      mkdirSync(childWorkDir, { recursive: true });
-      DeliberationUnit.ensureGitRepo(childWorkDir);
       const child = this.createChildUnit(childId, childLevel, childPath);
 
       this.children.set(childId, child);
-      this.mountedChildren.add(childId);
 
       const taskPreview = task.length > 100 ? task.slice(0, 100) + "..." : task;
       this.ledger.appendSystemMessage(`Child unit ${childId} started with the following task: ${taskPreview}`, this.buildDeferredVisibilityMeta());
@@ -838,11 +749,11 @@ export class DeliberationUnit {
       const message = args.message as string;
       const child = this.children.get(childId);
 
-      if (!child || !this.isChildMounted(childId)) {
-        const visibleChildren = [...this.mountedChildren].join(", ") || "none";
-        this.ledger.appendSystemMessage(`The message could not be delivered to child unit ${childId} because no such currently visible child unit exists. Currently visible child units: ${visibleChildren}`, this.buildDeferredVisibilityMeta());
+      if (!child) {
+        const childIds = [...this.children.keys()].join(", ") || "none";
+        this.ledger.appendSystemMessage(`The message could not be delivered to child unit ${childId} because no such child unit exists. Current child units: ${childIds}`, this.buildDeferredVisibilityMeta());
         this.notifyDurableStateChange();
-        this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not currently visible` });
+        this.emit({ type: "warning", scope: this.scope, message: `sendToChild failed: child ${childId} not found` });
         return;
       }
 
@@ -855,27 +766,6 @@ export class DeliberationUnit {
       this.ledger.appendSystemMessage(`The following message was sent to child unit ${childId}: ${message.length > 100 ? message.slice(0, 100) + "..." : message}`, this.buildDeferredVisibilityMeta());
       this.notifyDurableStateChange();
       this.emit({ type: "child-message-sent", scope: child.scope, message });
-    } else if (toolName === "unmountChild") {
-      const childId = args.childId as string;
-      const child = this.children.get(childId);
-
-      if (!child || !this.isChildMounted(childId)) {
-        const visibleChildren = [...this.mountedChildren].join(", ") || "none";
-        this.ledger.appendSystemMessage(`Child unit ${childId} could not be unmounted because it is not in the current visible child set. Currently visible child units: ${visibleChildren}`, this.buildDeferredVisibilityMeta());
-        this.notifyDurableStateChange();
-        this.emit({ type: "warning", scope: this.scope, message: `unmountChild failed: child ${childId} not currently visible` });
-        return;
-      }
-
-      if (child.getState() !== "idle") {
-        this.ledger.appendSystemMessage(`Child unit ${childId} could not be unmounted because it was in state "${child.getState()}" rather than idle.`, this.buildDeferredVisibilityMeta());
-        this.notifyDurableStateChange();
-        this.emit({ type: "warning", scope: this.scope, message: `unmountChild failed: child ${childId} not idle` });
-        return;
-      }
-
-      this.mountedChildren.delete(childId);
-      this.notifyDurableStateChange();
     }
   }
 

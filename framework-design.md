@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-13
-version: 4.0
+version: 5.0
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -27,7 +27,7 @@ version: 4.0
 | [`framework-design/protocol-and-runtime.md`](./framework-design/protocol-and-runtime.md) | 协议与运行时专题 | proposal-vote、阻塞/非阻塞、副作用落账、向上通信、控制平面 |
 | [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
-| [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
+| [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、全局/项目双层知识空间、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -98,6 +98,8 @@ Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge
 - `AGENT.md` 的职责是帮助理解目录，而不是约束 agent 行为；它不是目录级 manifest 或 system prompt。
 - 传统 `skill` 不再作为独立存储本体存在，而是被重新吸收为可行动知识区域的一种组织结果。
 - 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计。
+- **Agent 不持有文件系统领地**：Agent 是纯运行时线程（P10），上下文在内存 + SQLite 中，对文件系统只有读写操作。知识存在于共享的文件系统中，不属于任何 agent。
+- **双层根目录**：知识空间由 globalRoot（`~/.elenchus/`）和 projectRoot（cwd/git root）共同定义。全局根存储跨项目知识、运行时状态；项目根是 bash cwd 和项目知识产物位置。详见 [`framework-design/workspace-ownership-analysis.md`](./framework-design/workspace-ownership-analysis.md) 和 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §9。
 - 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md)。
 
 #### 2.4.1 双通道通信：消息 + 知识文件
@@ -113,9 +115,9 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 | **核心职能** | 信号 / 触发 / 协调 | 知识传递 / 工作产物 / 长期记忆 |
 
 - **消息通道**用于 agent 之间的即时沟通与工作触发。消息到达即触发接收方开始工作，承载信号、协调意图和轻量摘要。
-- **知识通道**通过文件系统中的 `.md` 文件实现跨单元、跨轮次的持久化知识共享。子 agent 将工作记录、经验总结等保存为 `.md` 文件，在向上回报中提供文件路径以便父 agent 按需读取。
+- **知识通道**通过文件系统中的 `.md` 文件实现跨单元、跨轮次的持久化知识共享。Agent 将工作记录、经验总结等保存为 `.md` 文件，在向上回报中提供文件路径以便其他 agent 按需读取。知识文件存放在项目中有意义的位置，不属于任何特定 agent。
 - 消息通道不应承载详细工作成果；知识通道不应承担即时触发职责。两者互补，不互相替代。
-- 父 agent 可读取子 agent 目录下的 `.md` 文件，但应以引用 + 按需读取为主，避免大规模数据冗余（复制）。若父 agent 需要整合子 agent 知识，应产出自己的理解/摘要，而非镜像子 agent 文件。
+- Agent 读取其他 agent 产出的知识文件时，应以引用 + 按需读取为主，避免大规模数据冗余（复制）。若需要整合知识，应产出自己的理解/摘要，而非镜像原始文件。
 
 此设计遵循 **P27（双通道通信）** 原则。详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §11-12 与 [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) §5.1。
 
@@ -203,17 +205,30 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - Agent A / Agent B 的认知风格差异
 - 当前可用工具列表（所有层级现在拥有相同工具集）
 - **层级角色策略**：通过 prompt 注入层级角色定义，约束工具使用范围（如 L0 仅用于信息获取与知识维护）
-- 知识视图（Knowledge View）：通过 system prompt 注入工作空间根目录路径、AGENT.md 导航机制和知识空间边界约束
+- 知识视图（Knowledge View）：通过 system prompt 注入全局根目录路径、项目根目录路径、AGENT.md 导航机制和知识空间边界约束
 
-知识视图将外部先验知识统一为文件系统上的可导航认知视图：AGENT.md 作为局部知识入口页，工作空间根目录的 AGENT.md 内容每轮动态注入 system prompt。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
+知识视图将外部先验知识统一为文件系统上的可导航认知视图，采用双层根目录架构：**globalRoot**（`~/.elenchus/`，固定，跨项目）和 **projectRoot**（cwd/git root，项目级）。全局 AGENT.md 和项目 AGENT.md 内容每轮动态注入 system prompt。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
 
-同时，框架采用 **无状态Agent + 外部化知识** 模型：知识不应沉淀为某个实例不可替代的隐藏积累，而应通过父层注入与外部资源传递。
+同时，框架采用 **无状态Agent + 外部化知识** 模型（P10）：Agent 是纯运行时线程，不持有文件系统领地。知识存在于共享的文件系统中，不属于任何 agent。Agent 的运行时上下文（ConversationLedger、CompressionSnapshot、FSM state）保存在内存与 SQLite 中；文件系统中的知识产物是共享世界的组成部分，任何 agent 都可以读写。
 `spawnChild` 提供的是子任务的初始 brief，而不是“完整上下文已经一次性传完”的保证；后续上下文通过两个通道持续流动：**消息通道**（`report`、`yield`、`sendToChild`）负责即时协调与工作触发，**知识通道**（.md 文件）负责持久化工作成果与经验传递。
 
 对于复杂任务，父层可在多个 turn 中逐步形成多个 delegated workstream，而不必把所有子问题强行压进单一 child workflow。新消息到来时，应判断它更适合通过 `sendToChild` 并入既有 child 的工作流，还是更适合作为新的独立工作流生成新的 child。
 
-父层也可对一个 `idle` child 执行**解除挂载**，使其从父 agent 的当前可见上下文中消失，以减少 context 负担。解除挂载不表示终止、完成或删除；程序中仍保留父子从属关系。若该 child 之后产生新的 `upward-message`，它应自动重新挂载，并以轻量 runtime 广播提示该可见性恢复已经发生。
-冷启动恢复与运行时可见性语义故意不同：已解除挂载的 child 仍会保留在磁盘持久化状态中，但默认不会在重启时恢复进 active runtime graph；恢复只覆盖当前仍应继续协作的 mounted 子图。
+### 4.3.1 子 Agent 生命周期：固定 Slot 池
+
+父 agent 拥有固定数量的协调 slot（N），每个 child 占用一个 slot，无论其处于何种状态（active/idle/sleeping）。所有 child 始终对父 agent 可见——不存在隐藏/dormant 状态。
+
+当所有 N 个 slot 已满时，父 agent 无法创建新 child，需通过**协作式调度**回收 slot：
+1. 父 agent 通过 `sendToChild` 请求某个 child 收尾当前工作并 yield
+2. child 保存工作产物到文件系统，yield 进入 idle
+3. 父 agent 通过 `sendToChild` 向该 idle child 分配新任务
+
+框架不提供强制重置子 agent 上下文的机制。当 child 从旧任务过渡到新任务时，三层自调节机制确保过渡自然：
+- **任务亲和性**：父 agent 倾向于将相关任务分配给有相关上下文的 child
+- **压缩自调节**：旧上下文与新任务无关时，context 压力触发 `compressContext`，child 自然聚焦新任务
+- **知识外化**：旧任务的工作产物已在文件系统中，child 不需要"记住"旧任务
+
+此设计取代了之前的 unmount/remount 模型。详细推理见 [`framework-design/workspace-ownership-analysis.md`](./framework-design/workspace-ownership-analysis.md) 第七节。
 
 ### 4.4 `commitLog` 可见性边界
 
@@ -260,14 +275,14 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - `TurnA/TurnB -> Idle`：批准 `yield` 或 `sleep`
 - `* -> Terminated`：父层强制终止
 
-对 `report`、`spawnChild`、`sendToChild`、`unmountChild`、`compressContext` 等非阻塞式提议，状态机正常轮转，不进入 `Executing`。
+对 `report`、`spawnChild`、`sendToChild`、`compressContext` 等非阻塞式提议，状态机正常轮转，不进入 `Executing`。
 
 ### 5.3 工具面摘要
 
 当前工具面可分为三类：
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
-- **Child management**：`spawnChild`、`sendToChild`、`unmountChild`、`sleep`
+- **Child management**：`spawnChild`、`sendToChild`、`sleep`
 - **Environment**：`bash`、`readFile`、`writeFile`
 
 可用性规则已随 L0 工具扩展而简化：
@@ -300,7 +315,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | P7 | 通信载荷非结构化，记录封套结构化 | Conversation Model |
 | P8 | 阻塞性由操作对象决定 | Protocol and Runtime |
 | P9 | 层级同构 | Hierarchy and Layers |
-| P10 | 无状态Agent | Hierarchy and Layers |
+| P10 | 无状态Agent（不持有文件系统领地；上下文可保留但可压缩，知识在文件系统中） | Hierarchy and Layers / Knowledge View |
 | P11 | 公共事实完整性优先于当前压缩 | Conversation Model |
 | P12 | 公共事实广播与控制指令分离 | Conversation Model |
 | P13 | 异步Unit Runtime事件也属于公共事实 | Protocol and Runtime |
@@ -337,22 +352,26 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | Knowledge View | 文件系统上的可导航认知视图。skill、memory、脚本、中间结果等统一属于同一外部资源空间，不再按存储本体分裂为独立子系统；AGENT.md 是局部知识入口页 |
 | 知识通道（Knowledge Channel） | Agent 之间通过文件系统中的 .md 文件进行持久化知识共享的通信通道；与消息通道互补，承载工作产物、长期记忆与跨轮次知识传递 |
 | 消息通道（Message Channel） | Agent 之间通过 ConversationLedger 进行即时沟通与工作触发的通信通道；承载信号、协调意图与轻量摘要 |
-| Agent 工作空间（Agent Workspace） | 每个 agent unit 在文件系统中拥有的专属工作目录，用于存放该 unit 的知识产物（.md 文件）；按 agent 归属组织，允许跨 agent 读取但不鼓励直接更改 |
+| 双层知识空间（Two-Root Knowledge Space） | 文件系统上所有 agent 共同读写的知识世界，由两个根目录定义：globalRoot（`~/.elenchus/`）存储跨项目知识与运行时状态，projectRoot（cwd/git root）是 bash cwd 与项目知识产物位置。Agent 不持有任何目录；知识产物按作用范围存放于全局或项目中有意义的位置 |
 | 层级角色策略（Layer Role Policy） | 通过 prompt 注入的层级角色定义，约束各层级对共享工具集的使用范围；如 L0 的环境工具仅用于信息获取与知识维护，不用于直接任务执行 |
 | AGENT.md | 目录级局部知识入口页 / 语义着陆页。帮助 agent 以低成本理解目录：用途、边界、入口、关联。不采用强制固定结构，不充当目录级 manifest 或行为约束文件；不同目录下的 AGENT.md 可以互相引用 |
-| `.elenchus` 运行目录 | 当前嵌入式 SQLite 持久化后端在运行目录下使用的状态目录；默认数据库文件为 `.elenchus/state.db` |
+| `~/.elenchus/` 全局根目录 | 应用级固定目录，独立于 CLI 启动位置。存储全局 AGENT.md、跨项目知识产物（`knowledge/`）、按项目隔离的运行时状态（`projects/<hash>/state.db`） |
 | Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
 | 开发期重建（Development-time Rebuild） | 当前 SQLite schema 在快速演进阶段采取的版本升级策略：schema 不匹配时直接重建本地数据库，而不是执行兼容迁移 |
 | CompressionTaskManager | 管理 unit 级压缩任务生命周期的运行时组件，负责活动任务状态、重复抑制与有限重试 |
 | 提议（Proposal） | Agent 通过工具调用提出的、需要另一侧表决的动作请求 |
 | 表决（Vote） | 对待决 proposal 的 APPROVE 或 REJECT 判定 |
-| 解除挂载（Unmount Child） | 父层对一个 `idle` child 执行的可见性管理动作：该 child 从父 agent 的当前上下文中消失，但程序中仍保留父子从属关系；后续只有新的 `upward-message` 可以触发自动重新挂载 |
+| 协调 Slot（Coordination Slot） | 父 agent 用于管理子单元的固定位置。每个 child 占用一个 slot，无论其状态。Slot 满时需通过协作式调度（sendToChild → yield → reassign）回收 |
+| 协作式调度（Cooperative Scheduling） | 当所有 slot 已满时，父 agent 通过 sendToChild 请求 child 收尾并 yield，然后分配新任务的 slot 回收方式。不提供强制重置子 agent 上下文的机制 |
 | proposedStep | proposal-producing tool call 上的短语义字段，表达“该动作对任务推进的意义” |
 | committedStep | proposal 获批后固化的已提交步骤 |
 | commitLog | 归属于 Agent Unit 的已提交步骤的历史序列，表示该单元正式接受过哪些任务推进步骤，而非成功历史 |
 
 ## 版本历史
 
+- **v7.0 (2026-04-18)**：子 Agent 生命周期从 unmount/remount 模型迁移到固定 Slot 池模型。移除 `unmountChild` 工具、mounted/dormant 可见性维度。父 agent 拥有固定数量协调 slot，所有 child 始终可见。Slot 回收通过协作式调度（sendToChild → yield → reassign）。不提供强制上下文重置，依赖任务亲和性 + 压缩自调节 + 知识外化三层机制。更新 §4.3.1、§5.2、§5.3、术语表、原则索引（P10 扩展）。同步更新 `workspace-ownership-analysis.md` 第七节。
+- **v6.0 (2026-04-17)**：引入双层根目录架构：globalRoot（`~/.elenchus/`）+ projectRoot（cwd/git root）。全局根存储跨项目知识（`knowledge/`）、按项目运行时状态（`projects/<hash>/state.db`）、全局 AGENT.md；项目根是 bash cwd 与项目知识产物位置。Prompt 注入改为全局 + 项目双 AGENT.md。Session 持久化从 `<projectRoot>/.elenchus/state.db` 迁移到 `~/.elenchus/projects/<hash>/state.db`。术语表更新：共享知识空间 → 双层知识空间，`.elenchus` 运行目录 → `~/.elenchus/` 全局根目录。同步更新 §2.4、§4.3、文档地图、术语表。
+- **v5.0 (2026-04-17)**：移除 per-agent workspace 概念，Agent 不再持有文件系统领地。从 P10 第一性原理推导：Agent = 纯运行时线程，知识存在于共享文件系统中。所有 agent 的 bash cwd 统一为 workspaceRoot。知识产物存放在项目中有意义的位置而非 per-agent 目录。冲突管理依赖 L0 协调 + proposal-vote + git，而非结构隔离。新增 `workspace-ownership-analysis.md` 推理链文档记录设计推导过程。同步更新总纲中 §2.4、§4.3、原则索引（P10 扩展）、术语表（Agent 工作空间 → 共享知识空间）。[Superseded by v6.0]
 - **v4.0 (2026-04-16)**：引入双通道通信架构（消息通道 + 知识通道），新增 P27（双通道通信）与 P28（L0 角色策略约束）原则。L0 获得完整环境工具能力，通过 prompt 策略约束用途为信息获取与知识空间维护；层级同构原则（P9）从“工具集差异 = 行为差异”演变为“完整能力 + 角色策略差异 = 行为差异”。新增 agent 工作空间概念，每个 agent unit 管理自己的目录，知识通过 .md 文件跨单元共享。同步更新总纲中 §1.2、§2.4、§4.1-4.3、§5.3、原则索引、术语表。
 - **v3.9 (2026-04-14)**：将知识空间方向从"探索中"收敛为正式设计。新增专题文档 `knowledge-view.md` 替代旧 `skill-system.md`；知识视图定义为文件系统上的可导航认知视图，AGENT.md 作为局部知识入口页替代旧 skill manifest；传统 skill 被重新吸收为可行动知识区域的组织结果。同步更新总纲中文档地图、§2.4、§5.3、术语表。
 - **v3.8 (2026-04-13)**：在总纲中记录统一 knowledge space 的方向：开始探索将 installable skills 与长期记忆收敛到同一外部知识底座中，并引入 `Resident Knowledge` 作为常驻知识入口术语。明确当前仍未决定 `Resident Knowledge` 是统一集合还是分散节点摘要视图，也未决定 knowledge space 是否完全由文件系统独占实现；同时预留后续 knowledge anti-entropy 专题用于处理知识膨胀、漂移、腐烂与清理问题。

@@ -2,6 +2,8 @@
 // CLI is now a presentation adapter over the application session API.
 
 import { cwd } from "node:process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import * as readline from "node:readline";
 import { createSession } from "../../application/runtime.js";
 import { createPiAiLlmClient } from "../../adapters/llm/pi-ai-client.js";
@@ -28,14 +30,16 @@ export async function main(): Promise<void> {
   printBanner(config.level, config.verbose);
   printStartupInfo(config.provider, config.modelName, config.baseUrl, config.level);
 
-  const workspaceRoot = cwd();
+  const globalRoot = join(homedir(), ".elenchus");
+  const projectRoot = cwd();
 
   const session = createSession({
     llmClient,
     toolExecutor: new LocalNodeToolExecutor(),
-    workspaceRoot,
+    globalRoot,
+    projectRoot,
     level: config.level,
-    persistence: new SqliteSessionPersistence({ workspaceRoot }),
+    persistence: new SqliteSessionPersistence({ globalRoot, projectRoot }),
     onSystemEvent: (event: SystemEvent) => {
       renderEvent(event, config.verbose);
     },

@@ -141,25 +141,37 @@ Parent-child collaboration should therefore be understood as iterative rather th
 
 For complex work, the parent may gradually form multiple delegated workstreams across turns rather than forcing every subproblem into a single child unit. When new information arrives, the parent should judge whether it belongs inside an existing child workflow and should be sent through `sendToChild`, or whether it opens a distinct enough line of work that a new child unit would provide clearer separation and better coordination.
 
-### 5.3 Unmount and Remount
+### 5.3 Fixed Slot Pool and Cooperative Scheduling
 
-The parent may also choose to **unmount** an `idle` child unit. Unmounting means that the child disappears from the parent agent's current visible context and no longer consumes parent context budget, while the program still preserves the parent-child affiliation. If that child later emits a new `upward-message`, it should automatically remount into the parent's visible child set.
+The parent has a fixed number of coordination slots (N). Each child occupies one slot regardless of its state (active, idle, sleeping). All children are always visible to the parent — there is no hidden/dormant state.
 
-Cold-start recovery intentionally uses a narrower rule than runtime visibility management: unmounted children remain preserved in durable storage, but they are not restored into the active runtime graph on startup. Recovery only rematerializes the mounted child subtree that should continue active coordination after restart.
+When all N slots are occupied, the parent cannot create new children. Instead, it uses **cooperative scheduling** to recover slots:
+1. The parent sends a message to an existing child via `sendToChild`, requesting it to wrap up its current work and yield.
+2. The child saves its work products to the file system, then yields and enters idle state.
+3. The parent assigns a new task to this idle child via `sendToChild` with a new brief.
 
-## 6. No Special Lifecycle Policy for Children
+The framework does not provide a forced context-reset mechanism. When a child transitions from an old task to a new one, three self-regulating mechanisms ensure the transition is natural:
+- **Task affinity**: the parent naturally tends to assign related tasks to children with relevant context.
+- **Compression self-regulation**: when old context is irrelevant to the new task, context pressure triggers `compressContext`, and the child naturally focuses on the new task.
+- **Knowledge externalization**: old task work products are already in the file system; the child does not need to "remember" them.
 
-The framework should not hardcode whether a child is one-shot, reusable, or long-lived.
+This design replaces the previous unmount/remount model. The reasoning is documented in [workspace-ownership-analysis.md](./workspace-ownership-analysis.md) §7.
 
-That is an autonomy decision for the parent unit, not a baked-in lifecycle restriction.
+## 6. Child Lifecycle: Fixed Slot Pool
+
+The framework defines a fixed upper bound on the number of children a parent may have. This replaces the previous unmount/remount visibility model with a simpler cognitive model for the parent agent: "I have N children, each is either busy or idle."
+
+Key properties:
+- **Fixed slot count**: the parent has N coordination slots; each child occupies one slot regardless of state.
+- **Always visible**: all children are always visible to the parent. No hidden/dormant state, no remount edge cases.
+- **Cooperative slot recovery**: when all slots are full, the parent requests a child to yield via `sendToChild`, then reassigns the slot with a new task brief.
+- **No forced context reset**: the child retains its context between tasks. Self-regulation through task affinity, compression, and knowledge externalization makes forced reset unnecessary.
+- **Autonomy preserved**: the framework does not hardcode whether a child is one-shot, reusable, or long-lived. That remains the parent's decision.
 
 This preserves flexibility for:
-
-- recurring delegated collaborators
-- one-off atomic subtask workers
-- temporarily sleeping child units
-
-At the current stage, child reuse should remain lightweight. Unmounting is not completion, archival deletion, or forced termination. It is a parent-side visibility decision: an `idle` child can be removed from the parent's current working set, and later re-enter that working set only if new upward coordination from that child makes it relevant again.
+- recurring delegated collaborators (child yields, gets new related task)
+- one-off atomic subtask workers (child yields, gets unrelated task; old context compresses naturally)
+- temporarily sleeping child units (sleep still available)
 
 ## 7. Prompt Isomorphism and Layer Role Policy
 
@@ -190,10 +202,10 @@ That means:
 - knowledge should be injected or externalized rather than accumulated as irreplaceable hidden history
 - the parent naturally acts as a knowledge curator when spawning children
 
-The knowledge externalization direction has now been concretized through the **agent workspace** model and **dual-channel communication** (P27):
+The knowledge externalization direction has now been concretized through the **shared file system** model and **dual-channel communication** (P27):
 
-- each agent unit manages its own workspace directory on the file system
-- knowledge artifacts (.md files) in the workspace persist across turns and survive context compression
+- agents do not own file system territory; they operate on a shared file system with dual roots (globalRoot + projectRoot)
+- knowledge artifacts (.md files) persist across turns and survive context compression
 - the message channel carries signals and triggers; the knowledge channel carries durable work products
 - `spawnChild(task)` provides an initial brief, while ongoing context flows through both channels
 - the framework relies on continued exchange through `report`/`yield`/`sendToChild` (message channel) and .md file sharing (knowledge channel) whenever context needs to keep flowing across the layer boundary
@@ -257,10 +269,11 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
-- **v4.0 (2026-04-16)**: L0 gains environment tools with role policy constraint (P28). Layer isomorphism (P9) evolves from tool-set difference to role-policy difference. Add dual-channel communication (P27): message channel + knowledge channel via .md files. Add agent workspace model: each unit manages its own directory, knowledge shared through .md files. Restructure §5 into §5.1 (dual-channel), §5.2 (iterative coordination), §5.3 (unmount/remount). Update §7 prompt isomorphism to include layer role policy. Update §8 to reflect concrete knowledge externalization through workspace model.
+- **v5.0 (2026-04-18)**: Replace unmount/remount model with fixed slot pool model. Parent has N coordination slots; all children always visible; slot recovery through cooperative scheduling (sendToChild → yield → reassign). No forced context reset; three self-regulating mechanisms (task affinity, compression, knowledge externalization). Update §5.3, §6, §8, changelog.
+- **v4.0 (2026-04-16)**: L0 gains environment tools with role policy constraint (P28). Layer isomorphism (P9) evolves from tool-set difference to role-policy difference. Add dual-channel communication (P27): message channel + knowledge channel via .md files. Add agent workspace model: each unit manages its own directory, knowledge shared through .md files. Restructure §5 into §5.1 (dual-channel), §5.2 (iterative coordination), §5.3 (unmount/remount). Update §7 prompt isomorphism to include layer role policy. Update §8 to reflect concrete knowledge externalization through workspace model. [Superseded by v5.0 for §5.3 and §6]
 - **v3.5 (2026-04-13)**: Extended the externalized-knowledge discussion toward a unified knowledge-space direction. Introduced `Resident Knowledge` as the current term for the small default resident knowledge surface, while explicitly recording that its assembly model and the ultimate storage substrate both remain undecided.
-- **v3.4 (2026-04-12)**: Added restart-time child recovery semantics. Unmounted children remain on disk as durable history, but cold-start recovery rebuilds only the mounted active child subtree rather than reviving every historically affiliated child.
-- **v3.3 (2026-04-12)**: Added child unmount/remount semantics. A parent may unmount an `idle` child so it disappears from the parent agent's current visible context while parent-child affiliation remains in the program. New upward communication from that child automatically remounts it into the parent's visible child set.
+- **v3.4 (2026-04-12)**: Added restart-time child recovery semantics. Unmounted children remain on disk as durable history, but cold-start recovery rebuilds only the mounted active child subtree rather than reviving every historically affiliated child. [Superseded by v5.0]
+- **v3.3 (2026-04-12)**: Added child unmount/remount semantics. [Superseded by v5.0]
 - **v3.2 (2026-04-12)**: Added explicit parent-child routing guidance: parent units may gradually build multiple child workstreams across turns, and should decide whether new information belongs in an existing child workflow via `sendToChild` or should instead motivate a new child unit when the line of work is sufficiently separate.
 - **v3.1 (2026-04-12)**: Clarified that `spawnChild` provides an initial brief rather than a one-shot full-context transfer. Parent-child collaboration is now explicitly described as iterative: children should use `report` at key coordination points and may use `yield` to request more information when local context is insufficient.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed layer, delegation, knowledge-model, and commit-log semantics while the overview remains the canonical entry point and index.

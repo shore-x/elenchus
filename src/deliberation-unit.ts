@@ -2,6 +2,8 @@
 // Compatibility wrapper over the new layered core implementation.
 
 import { cwd } from "node:process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type Model } from "@mariozechner/pi-ai";
 import { PiAiLlmClient } from "./adapters/llm/pi-ai-client.js";
 import { LocalNodeToolExecutor } from "./adapters/tools/local-node-tool-executor.js";
@@ -20,7 +22,8 @@ export class DeliberationUnit extends CoreDeliberationUnit {
     super({
       llmClient: new PiAiLlmClient(options.model),
       toolExecutor: new LocalNodeToolExecutor(),
-      workspaceRoot: cwd(),
+      globalRoot: join(homedir(), ".elenchus"),
+      projectRoot: cwd(),
       level: options.level,
       path: options.path,
       onSystemEvent: options.onSystemEvent,
