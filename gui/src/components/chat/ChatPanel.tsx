@@ -1,7 +1,7 @@
 // Elenchus GUI - Chat Panel Component
 // Displays conversation messages for a selected unit with input area (L0 only).
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { ConversationMessage, SessionInfo, AgentTreeNode, AgentId, ProposalStatus } from "../../lib/types";
 
 interface ChatPanelProps {
@@ -9,22 +9,19 @@ interface ChatPanelProps {
   sessionInfo: SessionInfo | null;
   messages: ConversationMessage[];
   onSendMessage: (content: string) => Promise<void>;
+  onSelectUnit: (unitId: string) => void;
 }
 
-function agentColor(agent: AgentId): string {
-  return agent === "agent-a" ? "text-cyan-600" : "text-amber-600";
-}
-
-function agentBg(agent: AgentId): string {
-  return agent === "agent-a" ? "bg-cyan-50 border-cyan-200" : "bg-amber-50 border-amber-200";
+function agentTagClass(agent: AgentId): string {
+  return agent === "agent-a" ? "bg-stone-100 text-stone-600" : "bg-stone-200 text-stone-700";
 }
 
 function proposalStatusBadge(status: ProposalStatus): { label: string; cls: string } {
   switch (status) {
-    case "pending": return { label: "pending", cls: "bg-yellow-100 text-yellow-700" };
-    case "approved": return { label: "approved", cls: "bg-green-100 text-green-700" };
-    case "rejected": return { label: "rejected", cls: "bg-red-100 text-red-700" };
-    case "superseded": return { label: "superseded", cls: "bg-gray-100 text-gray-500" };
+    case "pending": return { label: "pending", cls: "bg-stone-100 text-stone-600" };
+    case "approved": return { label: "approved", cls: "bg-stone-200 text-stone-700" };
+    case "rejected": return { label: "rejected", cls: "bg-stone-300 text-stone-700" };
+    case "superseded": return { label: "superseded", cls: "bg-stone-50 text-stone-500" };
   }
 }
 
@@ -34,8 +31,8 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
   switch (message.kind) {
     case "incoming_message":
       return (
-        <div className="flex justify-end mb-2">
-          <div className="max-w-[80%] bg-indigo-500 text-white rounded-2xl rounded-br-sm px-3 py-2 text-sm">
+        <div className="flex justify-end mb-3">
+          <div className="max-w-[80%] bg-stone-100 text-gray-800 rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed">
             {message.content}
           </div>
         </div>
@@ -43,12 +40,12 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "agent_message":
       return (
-        <div className="flex justify-start mb-2">
-          <div className={`max-w-[80%] border rounded-2xl rounded-bl-sm px-3 py-2 text-sm ${agentBg(message.authoredBy)}`}>
-            <span className={`font-semibold text-xs ${agentColor(message.authoredBy)}`}>
+        <div className="flex justify-start mb-3">
+          <div className="max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed">
+            <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
               {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
             </span>
-            <div className="mt-0.5 text-gray-800 whitespace-pre-wrap">{message.content}</div>
+            <div className="mt-1 text-gray-800 whitespace-pre-wrap">{message.content}</div>
           </div>
         </div>
       );
@@ -56,23 +53,23 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
     case "proposal_message": {
       const badge = proposalStatusBadge(message.status);
       return (
-        <div className="mb-2">
+        <div className="mb-3">
           <div
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white cursor-pointer hover:bg-gray-50"
+            className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50"
             onClick={() => setExpanded(!expanded)}
           >
             <div className="flex items-center gap-2">
-              <span className={`font-semibold text-xs ${agentColor(message.authoredBy)}`}>
+              <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
                 {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
               </span>
-              <span className="font-medium text-gray-700">propose:</span>
+              <span className="font-medium text-gray-600">propose:</span>
               <span className="text-gray-600">{message.toolName}</span>
-              <span className={`text-xs px-1.5 py-0.5 rounded ${badge.cls}`}>{badge.label}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
               <span className="text-xs text-gray-400 ml-auto">{expanded ? "▾" : "▸"}</span>
             </div>
             <div className="text-gray-500 text-xs mt-1">{message.proposedStep}</div>
             {expanded && (
-              <pre className="mt-2 text-xs bg-gray-50 rounded p-2 overflow-x-auto text-gray-600">
+              <pre className="mt-2 text-xs bg-stone-50 rounded-lg p-3 overflow-x-auto text-gray-600">
                 {JSON.stringify(message.args, null, 2)}
               </pre>
             )}
@@ -83,16 +80,16 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "vote_message":
       return (
-        <div className="mb-1">
+        <div className="mb-2">
           <div
-            className="text-sm cursor-pointer hover:bg-gray-50 rounded px-2 py-1"
+            className="text-sm leading-relaxed cursor-pointer hover:bg-stone-100 rounded-lg px-3 py-1.5"
             onClick={() => setExpanded(!expanded)}
           >
-            <span className={`font-semibold text-xs ${agentColor(message.authoredBy)}`}>
+            <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
               {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
             </span>
-            <span className={`ml-1 text-xs font-medium ${message.approve ? "text-green-600" : "text-red-600"}`}>
-              {message.approve ? "✓ Approve" : "✗ Reject"}
+            <span className={`ml-1 text-xs font-medium ${message.approve ? "text-stone-600" : "text-stone-500"}`}>
+              {message.approve ? "Approve" : "Reject"}
             </span>
             <span className="text-gray-500 text-xs ml-2">
               {expanded ? message.reason : message.reason.slice(0, 80) + (message.reason.length > 80 ? "..." : "")}
@@ -103,21 +100,21 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "tool_result_message":
       return (
-        <div className="mb-2">
+        <div className="mb-3">
           <div
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 cursor-pointer hover:bg-gray-100"
+            className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-100/80"
             onClick={() => setExpanded(!expanded)}
           >
             <div className="flex items-center gap-2">
-              <span className={`font-medium ${message.success ? "text-green-600" : "text-red-600"}`}>
-                {message.success ? "✓" : "✗"}
+              <span className={`font-medium ${message.success ? "text-stone-600" : "text-stone-500"}`}>
+                {message.success ? "Success" : "Failed"}
               </span>
               <span className="text-gray-700">{message.toolName}</span>
               <span className="text-xs text-gray-400">{(message.durationMs / 1000).toFixed(1)}s</span>
               <span className="text-xs text-gray-400 ml-auto">{expanded ? "▾" : "▸"}</span>
             </div>
             {expanded && (
-              <pre className="mt-2 text-xs bg-white rounded p-2 overflow-x-auto max-h-60 overflow-y-auto text-gray-600 border border-gray-200">
+              <pre className="mt-2 text-xs bg-white rounded-lg p-3 overflow-x-auto max-h-60 overflow-y-auto text-gray-600 border border-stone-200">
                 {message.output}
               </pre>
             )}
@@ -127,15 +124,15 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "child_report_message":
       return (
-        <div className="mb-2">
+        <div className="mb-3">
           <div
-            className="border-l-4 border-indigo-300 bg-indigo-50/50 rounded-r-lg px-3 py-2 text-sm cursor-pointer hover:bg-indigo-50"
+            className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50"
             onClick={() => setExpanded(!expanded)}
           >
             <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-indigo-600">{message.childId}</span>
-              <span className={`text-xs px-1.5 py-0.5 rounded ${
-                message.deliveryMode === "yield" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+              <span className="text-xs font-medium text-gray-600">{message.childId}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"
               }`}>
                 {message.deliveryMode}
               </span>
@@ -152,10 +149,10 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "upward_message":
       return (
-        <div className="mb-2">
-          <div className="border-l-4 border-purple-300 bg-purple-50/50 rounded-r-lg px-3 py-2 text-sm">
-            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-              message.deliveryMode === "yield" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+        <div className="mb-3">
+          <div className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed">
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+              message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"
             }`}>
               {message.deliveryMode}
             </span>
@@ -166,8 +163,8 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
     case "system_message":
       return (
-        <div className="flex justify-center mb-2">
-          <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-3 py-1">{message.content}</span>
+        <div className="flex justify-center mb-3">
+          <span className="text-xs text-stone-500 bg-stone-100 rounded-full px-3 py-1">{message.content}</span>
         </div>
       );
   }
@@ -191,9 +188,19 @@ function buildBreadcrumb(sessionInfo: SessionInfo | null, unitId: string | null)
   return crumbs;
 }
 
-export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage }: ChatPanelProps) {
+type SendKeyMode = "cmd-enter" | "enter";
+
+const SEND_KEY_LABEL: Record<SendKeyMode, string> = {
+  "cmd-enter": "⌘↵",
+  "enter": "↵",
+};
+
+export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit }: ChatPanelProps) {
   const [input, setInput] = useState("");
+  const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>("cmd-enter");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const isL0 = unitId === sessionInfo?.unitId;
   const crumbs = buildBreadcrumb(sessionInfo, unitId);
 
@@ -201,40 +208,65 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage }: Chat
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dropdownOpen]);
+
+  const handleSend = useCallback(() => {
     if (!input.trim()) return;
     onSendMessage(input.trim());
     setInput("");
-  };
+  }, [input, onSendMessage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const isCmd = e.metaKey || e.ctrlKey;
+    if (sendKeyMode === "cmd-enter") {
+      // Cmd+Enter sends, plain Enter is newline
+      if (e.key === "Enter" && isCmd && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    } else {
+      // Enter sends, Cmd+Enter is newline
+      if (e.key === "Enter" && !isCmd && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
     }
-  };
+  }, [sendKeyMode, handleSend]);
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 bg-white">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-200/80 bg-white/80 backdrop-blur-sm">
         {crumbs.map((crumb, i) => (
           <span key={crumb.unitId} className="flex items-center gap-2 text-sm">
-            {i > 0 && <span className="text-gray-300">›</span>}
-            <span className={i === crumbs.length - 1 ? "font-medium text-gray-800" : "text-gray-400 hover:text-gray-600 cursor-pointer"}>
+            {i > 0 && <span className="text-stone-300">›</span>}
+            <span
+              className={i === crumbs.length - 1 ? "font-medium text-gray-700" : "text-gray-500 hover:text-gray-700 cursor-pointer hover:underline"}
+              onClick={() => onSelectUnit(crumb.unitId)}
+            >
               {crumb.label}
             </span>
           </span>
         ))}
         {unitId && sessionInfo && (
-          <span className="ml-auto text-xs text-gray-400">
+          <span className="ml-auto text-xs text-stone-400">
             {sessionInfo.level} · {sessionInfo.state}
           </span>
         )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex-1 overflow-y-auto px-4 py-3 bg-[var(--color-bg)]">
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 text-sm mt-8">No messages yet</div>
         ) : (
@@ -245,27 +277,53 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage }: Chat
 
       {/* Input */}
       {isL0 ? (
-        <div className="border-t border-gray-200 bg-white px-4 py-3">
+        <div className="border-t border-stone-200/80 bg-white/80 backdrop-blur-sm px-4 py-3">
           <div className="flex gap-2">
             <textarea
-              className="flex-1 resize-none border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-300 focus:ring-1 focus:ring-indigo-200"
+              className="flex-1 resize-none border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-stone-400 focus:ring-1 focus:ring-stone-200"
               rows={2}
               placeholder="Type your message..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button
-              className="self-end px-4 py-2 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600 disabled:opacity-50"
-              onClick={handleSend}
-              disabled={!input.trim()}
-            >
-              Send
-            </button>
+            <div ref={dropdownRef} className="relative self-end flex">
+              <button
+                className="px-3 py-2 bg-stone-700 text-white rounded-l-lg text-sm font-medium hover:bg-stone-600 disabled:opacity-50 min-w-[5.5rem]"
+                onClick={handleSend}
+                disabled={!input.trim()}
+              >
+                Send <span className="text-stone-300 text-xs ml-0.5 inline-block w-[1.5em] text-center">{SEND_KEY_LABEL[sendKeyMode]}</span>
+              </button>
+              <button
+                className={`px-1.5 py-2 bg-stone-700 text-white rounded-r-lg text-sm font-medium hover:bg-stone-600 border-l border-stone-600 ${!input.trim() ? "opacity-50" : ""}`}
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+              >
+                ▾
+              </button>
+              {dropdownOpen && (
+                <div className="absolute bottom-full right-0 mb-1 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[160px] z-10">
+                  <button
+                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "cmd-enter" ? "text-stone-700 font-medium" : "text-gray-600"}`}
+                    onClick={() => { setSendKeyMode("cmd-enter"); setDropdownOpen(false); }}
+                  >
+                    <span>⌘+Enter 发送</span>
+                    {sendKeyMode === "cmd-enter" && <span className="text-xs text-stone-500">●</span>}
+                  </button>
+                  <button
+                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "enter" ? "text-stone-700 font-medium" : "text-gray-600"}`}
+                    onClick={() => { setSendKeyMode("enter"); setDropdownOpen(false); }}
+                  >
+                    <span>Enter 发送</span>
+                    {sendKeyMode === "enter" && <span className="text-xs text-stone-500">●</span>}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : (
-        <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 text-center text-xs text-gray-400">
+        <div className="border-t border-stone-200 bg-stone-50 px-4 py-3 text-center text-xs text-stone-400">
           This is a child unit conversation view. Messages can only be sent from the L0 layer.
           Use the breadcrumb navigation to return to L0.
         </div>

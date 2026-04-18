@@ -293,6 +293,7 @@ export default function App() {
         sessionInfo={sessionInfo}
         messages={messages}
         onSendMessage={handleSendMessage}
+        onSelectUnit={setSelectedUnitId}
       />
 
       {/* Right Panel */}

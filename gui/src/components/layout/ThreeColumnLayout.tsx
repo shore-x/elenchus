@@ -54,13 +54,13 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
   return (
     <div ref={containerRef} className="flex h-full w-full overflow-hidden">
       {/* Left Panel */}
-      <div style={{ width: leftWidth, minWidth: MIN_LEFT }} className="flex-shrink-0 h-full overflow-hidden border-r border-gray-200 bg-white">
+      <div style={{ width: leftWidth, minWidth: MIN_LEFT }} className="flex-shrink-0 h-full overflow-hidden border-r border-stone-200 bg-white">
         {children[0]}
       </div>
 
       {/* Left Resize Handle */}
       <div
-        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-indigo-200 active:bg-indigo-300 transition-colors"
+        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-stone-300 active:bg-stone-400 transition-colors"
         onMouseDown={(e) => onMouseDown("left", e)}
       />
 
@@ -71,12 +71,12 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
 
       {/* Right Resize Handle */}
       <div
-        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-indigo-200 active:bg-indigo-300 transition-colors"
+        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-stone-300 active:bg-stone-400 transition-colors"
         onMouseDown={(e) => onMouseDown("right", e)}
       />
 
       {/* Right Panel */}
-      <div style={{ width: rightWidth, minWidth: MIN_RIGHT }} className="flex-shrink-0 h-full overflow-hidden border-l border-gray-200 bg-white">
+      <div style={{ width: rightWidth, minWidth: MIN_RIGHT }} className="flex-shrink-0 h-full overflow-hidden border-l border-stone-200 bg-white">
         {children[2]}
       </div>
     </div>

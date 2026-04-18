@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
+    "dev": "./dev.sh",
     "build": "tsc",
     "prepare": "npm run build",
     "check": "tsc --noEmit"

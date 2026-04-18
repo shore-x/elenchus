@@ -142,25 +142,42 @@ The built application is output to `gui/src-tauri/target/release/bundle/`:
 
 ### Dev Mode (Frontend Only)
 
-If you only want to iterate on the React UI without Tauri, you need to start the sidecar manually:
+Use the one-command dev script to start both the sidecar backend and Vite frontend:
 
 ```bash
-# Terminal 1: Start the sidecar server from the project root
-npx tsx src/interfaces/web/main.ts --serve \
-  --provider anthropic \
-  --model claude-sonnet-4-20250514 \
-  --api-key "sk-ant-..." \
-  --project-root ~/Elenchus
-# Optional: --base-url https://your-proxy.example.com
-# Note the ELENCHUS_PORT=<port> output
+# Set your API key (provider-specific env vars also work)
+ANTHROPIC_API_KEY=sk-ant-... ./dev.sh
 
-# Terminal 2: Start the frontend
-cd gui
-VITE_SIDECAR_PORT=<port> npm run dev
-# Open http://localhost:1420
+# Or via npm
+ANTHROPIC_API_KEY=sk-ant-... npm run dev
+
+# Specify a different provider
+ELENCHUS_PROVIDER=openai ELENCHUS_API_KEY=sk-... ./dev.sh
+
+# Full configuration
+ELENCHUS_PROVIDER=anthropic \
+ELENCHUS_MODEL=claude-sonnet-4-20250514 \
+ELENCHUS_API_KEY=sk-ant-... \
+ELENCHUS_BASE_URL=https://your-proxy.example.com \
+ELENCHUS_PROJECT_ROOT=~/Elenchus \
+./dev.sh
 ```
 
-Alternatively, without `VITE_SIDECAR_PORT`, the onboarding page will prompt for the sidecar port after configuration.
+The script auto-discovers the sidecar port and injects it into the Vite dev server. Press Ctrl+C to shut down both processes cleanly.
+
+**Environment variables** (all optional):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ELENCHUS_PROVIDER` | `anthropic` | LLM provider |
+| `ELENCHUS_MODEL` | `claude-sonnet-4-20250514` | Model name |
+| `ELENCHUS_API_KEY` | — | API key (or use provider-specific like `ANTHROPIC_API_KEY`) |
+| `ELENCHUS_BASE_URL` | — | Base URL for third-party providers |
+| `ELENCHUS_PROJECT_ROOT` | `$(pwd)` | Agent working directory |
+| `ELENCHUS_LEVEL` | — | Agent level: L0, L1, L2 |
+| `ELENCHUS_WORKSPACE_ROOT` | `~/Elenchus` | Workspace storage directory |
+
+Alternatively, you can start the sidecar and Vite manually in two terminals (the onboarding page will prompt for the sidecar port if `VITE_SIDECAR_PORT` is not set).
 
 ## Development
 

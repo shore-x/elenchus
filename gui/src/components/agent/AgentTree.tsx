@@ -14,13 +14,13 @@ function stateDotClass(state: UnitState): string {
   switch (state) {
     case "turn-a":
     case "turn-b":
-      return "bg-green-500 animate-pulse";
+      return "bg-stone-500 animate-pulse";
     case "executing":
-      return "bg-orange-500 animate-pulse";
+      return "bg-stone-700 animate-pulse";
     case "idle":
     case "terminated":
     default:
-      return "bg-gray-400";
+      return "bg-stone-300";
   }
 }
 
@@ -42,15 +42,15 @@ function TreeNode({ node, selectedUnitId, onSelectUnit, depth }: {
   return (
     <div>
       <div
-        className={`flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-gray-50 rounded text-sm ${
-          isSelected ? "bg-indigo-50 text-indigo-700" : "text-gray-700"
+        className={`flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-stone-50 rounded text-sm ${
+          isSelected ? "bg-stone-100 text-gray-800" : "text-gray-700"
         }`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={() => onSelectUnit(node.unitId)}
       >
         {hasChildren ? (
           <button
-            className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600"
+            className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-stone-600"
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
           >
             {expanded ? "▾" : "▸"}

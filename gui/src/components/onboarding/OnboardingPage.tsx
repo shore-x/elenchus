@@ -92,14 +92,14 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg)]">
-      <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-stone-200 p-8">
         <h1 className="text-2xl font-bold text-gray-800 mb-1">Welcome to Elenchus</h1>
         <p className="text-sm text-gray-500 mb-6">Configure your LLM provider to get started.</p>
 
         {/* Provider */}
         <label className="block text-sm font-medium text-gray-700 mb-1">LLM Provider</label>
         <select
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-indigo-300"
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-stone-400"
           value={provider}
           onChange={(e) => { setProvider(e.target.value); setModelName(""); }}
         >
@@ -111,7 +111,7 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
         {/* Model */}
         <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
         <select
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-indigo-300"
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-stone-400"
           value={modelName}
           onChange={(e) => setModelName(e.target.value)}
         >
@@ -125,7 +125,7 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
         <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
         <input
           type="password"
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-indigo-300"
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-stone-400"
           placeholder="Enter your API key..."
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
@@ -137,7 +137,7 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
         </label>
         <input
           type="text"
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-indigo-300"
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-stone-400"
           placeholder="https://..."
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
@@ -149,7 +149,7 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
         </label>
         <input
           type="text"
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-indigo-300"
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:border-stone-400"
           placeholder={projectRoot || "~/Elenchus"}
           value={projectRoot}
           onChange={(e) => setProjectRoot(e.target.value)}
@@ -162,7 +162,7 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
 
         {/* Submit */}
         <button
-          className="w-full py-2.5 bg-indigo-500 text-white rounded-lg text-sm font-medium hover:bg-indigo-600 disabled:opacity-50"
+          className="w-full py-2.5 bg-stone-800 text-white rounded-lg text-sm font-medium hover:bg-stone-700 disabled:opacity-50"
           onClick={handleSubmit}
           disabled={submitting || !apiKey}
         >

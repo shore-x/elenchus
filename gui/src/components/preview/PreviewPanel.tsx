@@ -19,21 +19,21 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
   return (
     <div className="flex flex-col h-full">
       {/* Tab Bar */}
-      <div className="flex items-center border-b border-gray-200 bg-gray-50 min-h-[32px]">
+      <div className="flex items-center border-b border-stone-200 bg-stone-50 min-h-[32px]">
         <div className="flex flex-1 overflow-x-auto">
           {tabs.map((tab, i) => (
             <div
               key={tab.path}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-gray-200 whitespace-nowrap ${
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-stone-200 whitespace-nowrap ${
                 i === activeTab
-                  ? "bg-white text-gray-800 font-medium border-b-2 border-b-indigo-500"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                  ? "bg-white text-gray-800 font-medium border-b-2 border-b-stone-400"
+                  : "text-gray-500 hover:text-gray-700 hover:bg-stone-100"
               }`}
               onClick={() => onSelectTab(i)}
             >
               <span>{tab.name}</span>
               <button
-                className="ml-1 text-gray-300 hover:text-gray-500"
+                className="ml-1 text-stone-300 hover:text-stone-500"
                 onClick={(e) => { e.stopPropagation(); onCloseTab(i); }}
               >
                 ×
@@ -43,7 +43,7 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
         </div>
         {isMarkdown && content && (
           <button
-            className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border-l border-gray-200"
+            className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border-l border-stone-200"
             onClick={onToggleRender}
           >
             {content.renderAsMarkdown ? "Source" : "Render"}
@@ -58,7 +58,7 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
             Double-click a file in the workspace to preview
           </div>
         ) : content.renderAsMarkdown ? (
-          <div className="prose prose-sm max-w-none p-4 prose-headings:text-gray-800 prose-p:text-gray-700 prose-a:text-indigo-600">
+          <div className="markdown-body p-6">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {content.content}
             </ReactMarkdown>

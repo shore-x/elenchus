@@ -30,7 +30,7 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
           onClick={() => setExpanded(!expanded)}
         >
           <span className="text-xs text-gray-400">{expanded ? "▾" : "▸"}</span>
-          <span className="text-xs">📁</span>
+          <span className="text-xs text-stone-400 font-medium">/</span>
           <span>{node.name}</span>
         </div>
         {expanded && node.children?.map((child) => (
@@ -48,14 +48,14 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
 
   return (
     <div
-      className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer hover:bg-gray-50 rounded text-sm ${
-        isOpen ? "underline text-indigo-600" : "text-gray-700"
+      className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer hover:bg-stone-50 rounded text-sm ${
+        isOpen ? "underline text-gray-800" : "text-gray-700"
       }`}
       style={{ paddingLeft: `${depth * 16 + 8}px` }}
-      onDoubleClick={() => onOpenFile(node.path, node.name)}
+      onClick={() => onOpenFile(node.path, node.name)}
     >
       <span className="w-4" />
-      <span className="text-xs">📄</span>
+      <span className="text-xs text-stone-400">—</span>
       <span className="truncate">{node.name}</span>
     </div>
   );
@@ -64,17 +64,17 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
 export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths }: WorkspaceDirProps) {
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-100">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-stone-100">
         <span className="font-semibold text-gray-600 text-xs uppercase tracking-wider">Workspace</span>
-        <div className="flex rounded-md border border-gray-200 overflow-hidden text-xs">
+        <div className="flex rounded-md border border-stone-200 overflow-hidden text-xs">
           <button
-            className={`px-2 py-0.5 ${mode === "docs" ? "bg-indigo-50 text-indigo-600" : "text-gray-500 hover:bg-gray-50"}`}
+            className={`px-2 py-0.5 ${mode === "docs" ? "bg-stone-100 text-gray-800" : "text-gray-500 hover:bg-stone-50"}`}
             onClick={() => onModeChange("docs")}
           >
             Docs
           </button>
           <button
-            className={`px-2 py-0.5 ${mode === "all" ? "bg-indigo-50 text-indigo-600" : "text-gray-500 hover:bg-gray-50"}`}
+            className={`px-2 py-0.5 ${mode === "all" ? "bg-stone-100 text-gray-800" : "text-gray-500 hover:bg-stone-50"}`}
             onClick={() => onModeChange("all")}
           >
             All
