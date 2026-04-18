@@ -85,12 +85,92 @@ export ELENCHUS_LEVEL="L1"
 elenchus
 ```
 
+## GUI (Tauri Desktop App)
+
+Elenchus provides a Tauri v2 desktop GUI with a three-column layout (Agent Tree, Chat Panel, Preview Panel).
+
+### Architecture
+
+The GUI consists of two processes:
+
+- **Tauri Shell (Rust)**: Manages window lifecycle, spawns the sidecar, persists configuration.
+- **Sidecar (Node.js)**: Runs the core Elenchus deliberation engine, exposes a REST API + WebSocket event stream on `127.0.0.1:<random-port>`. The sidecar prints `ELENCHUS_PORT=<port>` to stdout on startup so the Tauri shell can discover it.
+
+The workspace directory (`~/Elenchus` by default) stores session data in `~/Elenchus/.elenchus-state/`:
+
+| File | Purpose |
+|------|---------|
+| `state.db` | SQLite database with session history, unit snapshots, messages |
+| `workspace-config.json` | LLM provider/model/baseUrl/projectRoot (no API key) |
+
+### Prerequisites
+
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri backend)
+- Node.js ≥ 18
+
+### Development
+
+```bash
+# Install GUI dependencies
+cd gui && npm install
+
+# Start dev mode (Vite HMR + Tauri window)
+npm run tauri dev
+```
+
+On first launch (no existing workspace), the onboarding page collects LLM provider, model, API key, and project directory. On subsequent launches:
+
+1. If the workspace has existing session data and the API key is saved, the sidecar auto-starts and resumes the previous session.
+2. If session data exists but the API key is missing (e.g. first GUI launch after CLI usage), the onboarding page appears with provider/model/project directory pre-filled — only the API key is needed.
+
+### Build & Release
+
+```bash
+cd gui
+
+# Build production bundle
+npm run tauri build
+```
+
+The built application is output to `gui/src-tauri/target/release/bundle/`:
+
+| Platform | Output |
+|----------|--------|
+| macOS    | `.dmg` and `.app` in `bundle/macos/` |
+| Windows  | `.msi` and `.exe` in `bundle/msi/` |
+| Linux    | `.deb` and `.AppImage` in `bundle/deb/` |
+
+### Dev Mode (Frontend Only)
+
+If you only want to iterate on the React UI without Tauri, you need to start the sidecar manually:
+
+```bash
+# Terminal 1: Start the sidecar server from the project root
+npx tsx src/interfaces/web/main.ts --serve \
+  --provider anthropic \
+  --model claude-sonnet-4-20250514 \
+  --api-key "sk-ant-..." \
+  --project-root ~/Elenchus
+# Optional: --base-url https://your-proxy.example.com
+# Note the ELENCHUS_PORT=<port> output
+
+# Terminal 2: Start the frontend
+cd gui
+VITE_SIDECAR_PORT=<port> npm run dev
+# Open http://localhost:1420
+```
+
+Alternatively, without `VITE_SIDECAR_PORT`, the onboarding page will prompt for the sidecar port after configuration.
+
 ## Development
 
 ```bash
-# Run directly from source (no build needed)
+# Run CLI directly from source (no build needed)
 npm start
 
 # Type-check without emitting
 npm run check
+
+# Type-check GUI frontend
+cd gui && npx tsc --noEmit
 ```

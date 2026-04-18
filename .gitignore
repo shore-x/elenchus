@@ -139,3 +139,8 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .elenchus/
 .DS_Store
+
+# GUI (Tauri) build artifacts
+gui/src-tauri/target/
+gui/dist/
+gui/node_modules/

@@ -112,6 +112,31 @@ export class DeliberationUnit {
     return this.unitId;
   }
 
+  getLevel(): ToolLevel {
+    return this.level;
+  }
+
+  getOnSystemEvent(): OnSystemEvent {
+    return this.onSystemEvent;
+  }
+
+  setOnSystemEvent(handler: OnSystemEvent): void {
+    this.onSystemEvent = handler;
+  }
+
+  findUnitById(unitId: string): DeliberationUnit | null {
+    if (this.unitId === unitId) {
+      return this;
+    }
+    for (const child of this.children.values()) {
+      const found = child.findUnitById(unitId);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
+
   appendSystemNotice(content: string): void {
     this.ledger.appendSystemMessage(content, this.buildDeferredVisibilityMeta());
     this.notifyDurableStateChange();

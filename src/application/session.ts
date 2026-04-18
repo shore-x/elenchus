@@ -73,6 +73,18 @@ export class DeliberationSession {
     return this.unit.getCommittedSteps(limit);
   }
 
+  getUnitId(): string {
+    return this.unit.getUnitId();
+  }
+
+  exportSnapshot() {
+    return this.unit.exportSnapshot();
+  }
+
+  getRootUnit(): DeliberationUnit {
+    return this.unit;
+  }
+
   private persist(): void {
     if (!this.persistence) {
       return;
