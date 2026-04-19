@@ -51,7 +51,7 @@ interface PreviewPanelProps {
   activeTab: number;
   onSelectTab: (index: number) => void;
   onCloseTab: (index: number) => void;
-  content: { content: string; extension: string; renderAsMarkdown: boolean } | null;
+  content: { content: string; extension: string; renderAsMarkdown: boolean; fileDeleted?: boolean } | null;
   onToggleRender: () => void;
   scrollToLine?: number;
   onAddRef?: (ref: FileReference) => void;
@@ -440,6 +440,31 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
         {!content ? (
           <div className="flex items-center justify-center h-full text-sm text-gray-400">
             Click a file in the workspace to preview
+          </div>
+        ) : content.fileDeleted ? (
+          <div className="flex flex-col h-full">
+            <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-700 text-xs">
+              <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+              <span>This file has been deleted or moved. The content below is the last known version.</span>
+            </div>
+            <div className="flex-1 overflow-y-auto opacity-60 pointer-events-none">
+              {content.renderAsMarkdown ? (
+                <div className="markdown-body p-6">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+                    {content.content}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <div className="code-table text-sm font-mono text-gray-700">
+                  {lines.map((line, i) => (
+                    <div key={i + 1} className="code-row">
+                      <div className="line-number">{i + 1}</div>
+                      <div className="code-line" data-line={i + 1}>{line}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         ) : content.renderAsMarkdown ? (
           <div className="markdown-body p-6">

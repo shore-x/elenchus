@@ -102,6 +102,7 @@ Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge
 - **单目的地知识空间**：知识只有一个目的地——工作所在的位置。Agent 不需要做"全局还是项目"的范围判断，知识写在工作自然归属的位置。发现通过消息通道（report + 绝对路径）和导航（AGENT.md），不通过存储分区。
 - **逻辑领地模型**：Elenchus agent 集体 = 用户的合作者，拥有统一的工作空间（workspaceRoot）。项目边界是 agent 分工的结果，不是系统结构的前提。L0 可同时协调多个项目，每个 child 的 cwd 是其任务所属项目的根（从 task brief 自动推断）。
 - **workspaceRoot**（用户可配置，默认 `~/Elenchus/`）：工作空间根目录，L0 的 bash cwd，存放 AGENT.md 导航页和框架状态（`.elenchus-state/state.db`）。不是 agent 的写入目的地——agent 写在工作所在的项目位置。
+- **GUI 文件变更感知**：Sidecar 通过 `FsWatcher` 监听 workspaceRoot 目录变更（100ms 防抖），通过 WebSocket 广播 `fs-change` 事件。GUI 前端自动刷新目录树；预览面板在文件更新时自动重载，在文件删除时保留 tab 并显示警告横幅。监听仅在 sidecar 端（非 Tauri Rust 层），保持单事件通道。仅解决 GUI 层时效性；agent 间时效性仍依赖 `report` 消息。详见 [`knowledge-view.md`](./framework-design/knowledge-view.md) §10.6。
 - 详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) 和 [`workspace-ownership-analysis.md`](./workspace-ownership-analysis.md) §8-9。
 
 #### 2.4.1 双通道通信：消息 + 知识文件
@@ -191,7 +192,7 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 
 Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
-- **L0**：协调层，负责理解、拆分与汇总。L0 拥有环境工具能力，但通过 prompt 策略约束其用途为信息获取与知识空间维护，不直接执行任务。
+- **L0**：协调层，负责理解、拆分、汇总与子产出质量审视。L0 拥有环境工具能力，但通过 prompt 策略约束其用途为信息获取、知识空间维护与子产出审视，不直接执行任务。收到子单元汇报后，L0 的双 agent 应先审议子产出质量，再决定接受或反馈修正（P31）。
 - **L1**：主力规划+执行层，既能管理子单元，也能使用环境工具执行任务。
 - **L2**：叶子执行层，只做环境操作，不再继续派生子单元。
 
@@ -208,7 +209,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - 共享协作协议
 - Agent A / Agent B 的认知风格差异
 - 当前可用工具列表（所有层级现在拥有相同工具集）
-- **层级角色策略**：通过 prompt 注入层级角色定义，约束工具使用范围（如 L0 仅用于信息获取与知识维护）
+- **层级角色策略**：通过 prompt 注入层级角色定义，约束工具使用范围（如 L0 仅用于信息获取、知识维护与子产出审视）
 - 知识视图（Knowledge View）：通过 system prompt 注入全局根目录路径、项目根目录路径、AGENT.md 导航机制和知识空间边界约束
 
 知识视图将外部先验知识统一为文件系统上的可导航认知视图，采用**单目的地 + 逻辑领地**架构：**workspaceRoot**（用户可配置，默认 `~/Elenchus/`）是工作空间根目录和 L0 的 bash cwd。每个 child 的 projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 system prompt；child 的项目 AGENT.md 通过 readFile 按需读取。详细设计见 [`knowledge-view.md`](./framework-design/knowledge-view.md)。
@@ -341,6 +342,8 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | P28 | L0 角色策略约束 | Hierarchy and Layers |
 | P29 | 消息通道对话风格 | Conversation Model |
 | P30 | 纯读操作可豁免投票 | Protocol and Runtime |
+| P31 | 子产出审议 | Hierarchy and Layers |
+| P32 | 审议审视优先 | Hierarchy and Layers |
 
 ## 附录B 术语表
 
@@ -360,11 +363,11 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | 知识通道（Knowledge Channel） | Agent 之间通过文件系统中的 .md 文件进行持久化知识共享的通信通道；与消息通道互补，承载工作产物、长期记忆与跨轮次知识传递 |
 | 消息通道（Message Channel） | Agent 之间通过 ConversationLedger 进行即时沟通与工作触发的通信通道；承载信号、协调意图与轻量摘要 |
 | 单目的地知识空间（Single-Destination Knowledge Space） | 知识只有一个目的地——工作所在的位置。Agent 不做"全局还是项目"的范围判断，知识写在工作自然归属的位置。发现通过消息通道和导航，不通过存储分区 |
-| 层级角色策略（Layer Role Policy） | 通过 prompt 注入的层级角色定义，约束各层级对共享工具集的使用范围；如 L0 的环境工具仅用于信息获取与知识维护，不用于直接任务执行 |
+| 层级角色策略（Layer Role Policy） | 通过 prompt 注入的层级角色定义，约束各层级对共享工具集的使用范围；如 L0 的环境工具仅用于信息获取、知识维护与子产出审视，不用于直接任务执行 |
 | 逻辑领地（Logical Territory） | 项目留在文件系统原位，框架适应用户的目录布局。workspaceRoot 是逻辑概念上的领地根，不要求物理上包含所有项目 |
 | 合作者模型（Collaborator Model） | Elenchus agent 集体被视为与用户平等的合作者，拥有统一工作空间，可同时协调多个项目。跨项目可见性是协调前提而非噪声 |
 | AGENT.md | 目录级局部知识入口页 / 语义着陆页。帮助 agent 以低成本理解目录：用途、边界、入口、关联。不采用强制固定结构，不充当目录级 manifest 或行为约束文件；不同目录下的 AGENT.md 可以互相引用 |
-| workspaceRoot | 工作空间根目录（用户可配置，默认 `~/Elenchus/`）。L0 的 bash cwd，存放 AGENT.md 导航页和框架状态（`.elenchus-state/state.db`）。不是 agent 的写入目的地 |
+| workspaceRoot | 工作空间根目录（用户可配置，默认 `~/Elenchus/`）。L0 的 bash cwd，存放 AGENT.md 导航页与跨项目持久上下文（用户偏好、项目约定）和框架状态（`.elenchus-state/state.db`）。跨项目信息自然归属于此 |
 | Schema Version | SQLite 持久化 schema 的显式版本号，当前由 `schema_meta` 管理，用于判断本地数据库是否需要重建 |
 | 开发期重建（Development-time Rebuild） | 当前 SQLite schema 在快速演进阶段采取的版本升级策略：schema 不匹配时直接重建本地数据库，而不是执行兼容迁移 |
 | CompressionTaskManager | 管理 unit 级压缩任务生命周期的运行时组件，负责活动任务状态、重复抑制与有限重试 |
@@ -378,6 +381,8 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v9.2 (2026-04-19)**：新增 P31（子产出审议）与 P32（审议审视优先）原则。L0 职责从两项扩展为三项：协调、知识维护、子产出质量审视。扩展 L0 readFile 许可范围以包含子 agent 产出文件。扩展 workspaceRoot AGENT.md 角色为导航页 + 跨项目持久上下文（用户偏好、项目约定）。同步更新 `hierarchy-and-layers.md`、`knowledge-view.md`。
+- **v9.1 (2026-04-19)**：新增 GUI 文件变更感知：Sidecar `FsWatcher` 监听 workspaceRoot，广播 `fs-change` ServerEvent；前端自动刷新目录树与预览面板；文件删除时保留 tab 显示警告。同步更新 `knowledge-view.md` §10.6。
 - **v9.0 (2026-04-19)**：新增 P30（纯读操作可豁免投票）原则：`readFile` proposal 自动批准，无需伙伴投票，但仍经过 Executing 状态并将结果作为公共事实记录。`readFile` 新增 `offset`/`limit` 行号参数支持按行范围读取。同步更新 `protocol-and-runtime.md`、`state-machine-and-tools.md`。
 - **v8.1 (2026-04-19)**：新增 P29（消息通道对话风格）原则：消息通道载荷应保持自然对话语言，结构化产出写入 .md 文件并通过知识通道共享。同步更新 §2.4.1、§2.5、原则索引、术语表；同步更新 `conversation-model.md`。
 - **v8.0 (2026-04-18)**：知识空间从双根模型迁移到单目的地 + 逻辑领地模型。消除"全局 vs 项目"的范围判断——知识只写在工作所在的位置。workspaceRoot（用户可配置，默认 `~/Elenchus/`）取代 `~/.elenchus/` 作为工作空间根目录。L0 bash cwd = workspaceRoot；child projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 prompt。SQLite state.db 移至 workspaceRoot 下。移除 `~/.elenchus/knowledge/` 作为 agent 写入目的地。引入合作者模型：agent 集体 = 用户的合作者，跨项目可见性是协调前提。术语表更新：双层知识空间 → 单目的地知识空间，全局根目录 → workspaceRoot。同步更新 `workspace-ownership-analysis.md` §8-9、`knowledge-view.md`。

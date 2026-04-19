@@ -157,4 +157,9 @@ export interface UnitTreeChangeEvent {
   type: "unit-tree-change";
 }
 
-export type ServerEvent = SystemEvent | UnitTreeChangeEvent;
+export interface FsChangeEvent {
+  type: "fs-change";
+  changes: Array<{ path: string; kind: "create" | "update" | "delete" }>;
+}
+
+export type ServerEvent = SystemEvent | UnitTreeChangeEvent | FsChangeEvent;

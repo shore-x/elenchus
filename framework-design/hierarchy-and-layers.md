@@ -79,13 +79,34 @@ The current architecture uses three fixed levels:
 - **has environment tools** (bash, readFile, writeFile), but constrained by **layer role policy** (P28) to use them only for:
   - **information acquisition**: reading files, listing directories, searching content to understand the current state of work
   - **knowledge space maintenance**: writing/updating .md files in its own workspace, organizing knowledge structure
+  - **child output review**: reading child-produced work artifacts (reports, analysis documents, deliverables) to evaluate their quality, completeness, and alignment with the assigned task
   - must **not** use environment tools to directly execute tasks; task execution should be delegated to child units
-- `readFile` is **auto-approved** (P30): proposals execute immediately without partner vote, but L0's role policy still constrains what files it should read (knowledge artifacts only, not source code for substantive understanding)
+- `readFile` is **auto-approved** (P30): proposals execute immediately without partner vote, but L0's role policy still constrains what files it should read (knowledge artifacts and child work products only, not source code for substantive understanding)
 - can enter `Executing` state when using environment tools for permitted purposes
 
-> **原则 P28（L0 角色策略约束）**：L0 拥有完整的环境工具能力，但通过 prompt 注入的角色策略约束其用途为信息获取与知识空间维护。L0 不应使用环境工具直接执行任务；任务执行应通过子单元委派。若 L0 发现自己在用工具直接解决问题而不是分配问题，应停下来创建子 agent。
+L0 has **three responsibilities**:
+1. **coordinating work across child units** — task decomposition, delegation, and scheduling
+2. **maintaining the knowledge space** — keeping the workspace navigable and well-organized for all agents
+3. **reviewing child output quality** — scrutinizing child-produced work products, identifying gaps and deficiencies, and providing corrective feedback via `sendToChild`
+
+The third responsibility is what distinguishes L0 from a mere task dispatcher. The dual-agent deliberation mechanism inside the parent unit is the natural vehicle for quality review: when a child reports or yields with work products, the two L0 agents should discuss the output's quality before accepting it or sending feedback. This extends the framework's core principle — that structured dialogue surfaces weaknesses — from intra-unit deliberation to cross-unit quality assurance.
+
+> **原则 P28（L0 角色策略约束）**：L0 拥有完整的环境工具能力，但通过 prompt 注入的角色策略约束其用途为信息获取、知识空间维护与子产出审视。L0 不应使用环境工具直接执行任务；任务执行应通过子单元委派。若 L0 发现自己在用工具直接解决问题而不是分配问题，应停下来创建子 agent。
 
 The dual-agent proposal-vote mechanism serves as a second line of defense: the partner agent (Verifier) is explicitly guided in the prompt to reject tool uses that exceed L0's role scope. However, this is a soft constraint, not a hard enforcement — both agents may agree to bypass it under efficiency pressure. Note that `readFile` is auto-approved (P30) and does not go through the vote step; L0's readFile role compliance therefore relies entirely on prompt guidance rather than partner vote rejection.
+
+### 4.1.1 Child Output Review (P31)
+
+When a child unit sends a `report` or `yield` that references work products (documents, analysis, code changes), L0 should treat these as **work products to be reviewed**, not merely as coordination signals to be acknowledged.
+
+The expected review pattern is:
+1. **Read**: use `readFile` to examine the child's actual work product (not just the summary in the report message)
+2. **Deliberate**: discuss the product's quality within the dual-agent unit — identify gaps, inaccuracies, incomplete coverage, or misalignment with the assigned task
+3. **Respond**: either accept the output (and update the knowledge space accordingly) or send corrective feedback via `sendToChild` specifying what needs improvement
+
+This pattern extends the framework's deliberation advantage from intra-unit to cross-unit quality assurance. Without it, child reports are accepted at face value and the parent becomes a passive task dispatcher rather than an active quality gate.
+
+> **原则 P31（子产出审议）**：父单元收到子单元的工作汇报后，应将子产出视为待审视的工作产品而非仅需确认的协调信号。父单元的双 agent 应在内部讨论子产出的质量与不足，再决定接受或通过 sendToChild 反馈修正要求。这是框架"通过讨论发现弱点"原则从 unit 内部向跨 unit 质量保证的自然延伸。
 
 ### 4.2 L1
 
@@ -105,11 +126,29 @@ Together these layers cover the full chain:
 - planning and validation
 - atomic execution
 
-## 5. Parent/Child Coordination Semantics
+## 5. Deliberation Scrutiny (P32)
+
+The framework's core value proposition is that structured dialogue between two agents surfaces weaknesses that a single agent would miss. However, this advantage is only realized when both agents actively scrutinize rather than default to agreement.
+
+> **原则 P32（审议审视优先）**：在双 agent 审议中，有根据的质疑与保留比顺畅的同意对 unit 更有价值。APPROVE 应是审视后的结论，而非默认状态。Agent 不应出于效率压力或配合倾向而跳过质疑步骤。
+
+This principle applies at two levels:
+
+**Intra-unit scrutiny**: within a dual-agent unit, both agents should treat their partner's claims, proposals, and conclusions as candidates for challenge rather than automatic acceptance. Agent B in particular should not silently approve after internal verification — it should surface its concerns in dialogue first, so the unit's shared reasoning benefits from the scrutiny.
+
+**Cross-unit scrutiny (P31 child output review)**: when a parent unit receives child work products, the same scrutiny discipline applies. The parent should not accept child reports at face value; instead, the two parent agents should discuss the output's quality before accepting or providing feedback.
+
+Prompt-level guidance for this principle includes:
+- Making explicit that well-grounded dissent is more valuable than smooth agreement
+- Requiring that concerns be expressed in dialogue before a vote, not just internally noted
+- Framing child reports as work products to review, not signals to acknowledge
+- Discouraging the pattern of quickly agreeing to maintain conversational flow
+
+## 6. Parent/Child Coordination Semantics
 
 Parent and child interact through **two complementary channels**:
 
-### 5.1 Dual-Channel Communication
+### 6.1 Dual-Channel Communication
 
 > **原则 P27（双通道通信）**：Agent 之间的协作依赖两个本质不同的通信通道——消息通道与知识通道——两者互补，不互相替代。
 
@@ -134,7 +173,7 @@ The message channel should not carry detailed work results; the knowledge channe
 2. Send `report` or `yield` with a lightweight summary + the .md file path
 3. Parent reads the .md file only when it needs the detail
 
-### 5.2 Iterative Coordination
+### 6.2 Iterative Coordination
 
 Multiple children may exist concurrently. Because child spawning is non-blocking, upward child reports can arrive asynchronously at the parent ledger.
 
@@ -142,7 +181,7 @@ Parent-child collaboration should therefore be understood as iterative rather th
 
 For complex work, the parent may gradually form multiple delegated workstreams across turns rather than forcing every subproblem into a single child unit. When new information arrives, the parent should judge whether it belongs inside an existing child workflow and should be sent through `sendToChild`, or whether it opens a distinct enough line of work that a new child unit would provide clearer separation and better coordination.
 
-### 5.3 Fixed Slot Pool and Cooperative Scheduling
+### 6.3 Fixed Slot Pool and Cooperative Scheduling
 
 The parent has a fixed number of coordination slots (N). Each child occupies one slot regardless of its state (active, idle, sleeping). All children are always visible to the parent — there is no hidden/dormant state.
 
@@ -158,7 +197,7 @@ The framework does not provide a forced context-reset mechanism. When a child tr
 
 This design replaces the previous unmount/remount model. The reasoning is documented in [workspace-ownership-analysis.md](./workspace-ownership-analysis.md) §7.
 
-## 6. Child Lifecycle: Fixed Slot Pool
+## 7. Child Lifecycle: Fixed Slot Pool
 
 The framework defines a fixed upper bound on the number of children a parent may have. This replaces the previous unmount/remount visibility model with a simpler cognitive model for the parent agent: "I have N children, each is either busy or idle."
 
@@ -174,7 +213,7 @@ This preserves flexibility for:
 - one-off atomic subtask workers (child yields, gets unrelated task; old context compresses naturally)
 - temporarily sleeping child units (sleep still available)
 
-## 7. Prompt Isomorphism and Layer Role Policy
+## 8. Prompt Isomorphism and Layer Role Policy
 
 Different layers do not need different prompt logic families.
 
@@ -191,7 +230,7 @@ Since all layers now share the same tool set, the layer orientation section carr
 
 This avoids overfitting layer behavior into prompt wording when the role policy already conveys the actionable constraints.
 
-## 8. Stateless Agent, Externalized Knowledge
+## 9. Stateless Agent, Externalized Knowledge
 
 The framework deliberately prefers an AI-native model over a human-style expert-routing model.
 
@@ -220,7 +259,7 @@ The longer-term direction is to externalize not only ad hoc task context, but a 
 - the framework currently does **not** assume that knowledge must be stored as one canonical file or one explicit set; it may instead emerge from distributed knowledge nodes and a separately assembled resident view
 - the framework also does **not** yet commit to the file system as the only possible implementation substrate, even though the current direction remains file-system-friendly and text-centric
 
-## 9. Commit Log as Parent-Visible Progress Boundary
+## 10. Commit Log as Parent-Visible Progress Boundary
 
 The framework deliberately limits what a parent sees from child work.
 
@@ -236,17 +275,17 @@ The parent should **not** currently observe:
 
 This yields the `commitLog` boundary.
 
-### 9.1 Terminology
+### 10.1 Terminology
 
 - **`proposedStep`**: the task-advancing meaning of a proposal-producing tool call
 - **`committedStep`**: the step after partner approval solidifies it as an accepted commitment
 - **`commitLog`**: the unit-level sequence of committed steps
 
-### 9.2 Semantic Rule
+### 10.2 Semantic Rule
 
 `proposedStep` should describe what the step contributes to task progress, not merely restate tool arguments.
 
-### 9.3 Commit Boundary
+### 10.3 Commit Boundary
 
 Approval is the commitment boundary. If a proposal is approved, its `proposedStep` enters `commitLog` even if later execution fails.
 
@@ -255,13 +294,13 @@ So `commitLog` is:
 - accepted-step history
 - not success history
 
-### 9.4 Ownership
+### 10.4 Ownership
 
 `commitLog` belongs to the **Agent Unit**, not to one individual agent.
 
 This matters because what becomes committed is no longer private intent; it is a jointly accepted step of the dual-agent unit.
 
-## 10. Related Detailed Documents
+## 11. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
 - Compression model: [context-compression.md](./context-compression.md)
@@ -272,6 +311,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v6.0 (2026-04-19)**: Add L0 third responsibility: child output quality review (P31). Expand L0 readFile scope to include child work products. Add deliberation scrutiny principle (P32): well-grounded dissent is more valuable than smooth agreement; applies both intra-unit and cross-unit. Renumber §5-§10 to §6-§11.
 - **v5.2 (2026-04-19)**: Update L0 environment tool notes for readFile auto-approval (P30). readFile proposals execute immediately without partner vote; L0 role compliance for readFile now relies on prompt guidance rather than vote rejection. Update §4.1, P28 note.
 - **v5.1 (2026-04-18)**: Migrate from dual-root to single-destination + logical territory model. Replace globalRoot + projectRoot with workspaceRoot (user-configurable, default `~/Elenchus/`). L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Update §8.
 - **v5.0 (2026-04-18)**: Replace unmount/remount model with fixed slot pool model. Parent has N coordination slots; all children always visible; slot recovery through cooperative scheduling (sendToChild → yield → reassign). No forced context reset; three self-regulating mechanisms (task affinity, compression, knowledge externalization). Update §5.3, §6, §8, changelog.

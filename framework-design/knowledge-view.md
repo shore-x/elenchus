@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Knowledge View"
 date: 2026-04-15
-version: 4.0
+version: 6.0
 ---
 
 # Knowledge View
@@ -217,7 +217,7 @@ The **workspaceRoot** (user-configurable, default `~/Elenchus/`) is the root of 
 
 - The workspaceRoot absolute path is injected into the system prompt so the agent always knows where it is.
 - **Knowledge has a single destination**: agents write knowledge where the work naturally belongs — in the project directory, at a meaningful location in the project structure. There is no separate "global knowledge" directory for agents to write to.
-- The workspaceRoot AGENT.md serves as the **navigation hub** for the agent's entire working world, indexing active projects and cross-project context.
+- The workspaceRoot AGENT.md serves as the **navigation hub and cross-project persistent context** for the agent's entire working world, indexing active projects, cross-project context, user preferences, and project conventions.
 - Agents may **read and write files anywhere** on the host system when a task requires it.
 - This is a prompt-level soft constraint, not a code-level enforcement, consistent with the overall knowledge-view philosophy.
 
@@ -230,7 +230,7 @@ A fixed prompt section inserted into every agent's system prompt, after Layer Or
 - The workspaceRoot absolute path (dynamically substituted)
 - The knowledge-view mechanism: AGENT.md as local entry page, no enforced schema, natural cognitive housekeeping
 - **Single-destination principle**: knowledge is written where the work naturally belongs. There is no separate "global knowledge" directory. Discovery happens through the message channel (report + absolute paths) and navigation (AGENT.md), not through storage partitioning.
-- **Writing guidance**: AGENT.md should be a quick-orientation entry point, not exhaustive documentation. Good content includes directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, and an `Updated:` timestamp. Agents should avoid putting temporary task notes, detailed implementation logic, full API documentation, or conversation logs into AGENT.md. The root AGENT.md is explicitly flagged as injected into the system prompt every turn, so agents understand its length directly reduces available context budget.
+- **Writing guidance**: AGENT.md should be a quick-orientation entry point, not exhaustive documentation. Good content includes directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, user preferences and project conventions (for the workspaceRoot AGENT.md), and an `Updated:` timestamp. Agents should avoid putting temporary task notes, detailed implementation logic, full API documentation, or conversation logs into AGENT.md. The root AGENT.md is explicitly flagged as injected into the system prompt every turn, so agents understand its length directly reduces available context budget — and that content written there becomes visible to all agents across all layers.
 - The knowledge space boundary constraint described in §8.1
 - Guidance to check for AGENT.md when exploring new directories
 
@@ -240,7 +240,7 @@ This section does not reproduce the full design principles. It conveys just enou
 
 Immediately after the Knowledge View Guideline, the system prompt injects the content of the **workspaceRoot AGENT.md**:
 
-1. **WorkspaceRoot AGENT.md** (`<workspaceRoot>/AGENT.md`): the navigation hub for the agent's entire working world — indexes active projects, cross-project context, and coordination state.
+1. **WorkspaceRoot AGENT.md** (`<workspaceRoot>/AGENT.md`): the navigation hub and cross-project persistent context for the agent's entire working world — indexes active projects, cross-project context, coordination state, user preferences, and project conventions.
 
 This file is read synchronously from disk each time `buildSystemPrompt` is called, so any agent modifications take effect from the next turn.
 
@@ -299,7 +299,7 @@ Key properties:
 
 - **workspaceRoot** is user-configurable (default `~/Elenchus/`). It is L0's bash cwd and the location for framework infrastructure.
 - **`.elenchus-state/`** stores runtime state (SQLite). This is framework-managed infrastructure, not an agent write target.
-- **`AGENT.md`** is the navigation hub for the agent's entire working world. It indexes active projects and provides cross-project context. It is the only AGENT.md injected into the system prompt.
+- **`AGENT.md`** is the navigation hub and cross-project persistent context for the agent's entire working world. It indexes active projects, provides cross-project context, and records user preferences and project conventions that should persist across sessions and be visible to all agents. It is the only AGENT.md injected into the system prompt, which means content written here benefits every agent in the hierarchy.
 - **No `knowledge/` directory**: there is no separate global knowledge directory. Agents write knowledge where the work naturally belongs — in the project structure. Cross-project patterns are noted in the workspaceRoot AGENT.md or in the relevant project's documentation.
 
 ### 9.3 Per-child projectRoot as bash cwd
@@ -321,9 +321,10 @@ Knowledge artifacts within the project are placed at meaningful locations in the
 The primary knowledge artifact format is **.md files**. Agents place them where the work naturally belongs:
 
 - **Project knowledge** → within the project structure at meaningful locations (findings, module-level AGENT.md, docs)
-- **Cross-project observations** → noted in the workspaceRoot AGENT.md or in the relevant project's documentation
+- **Cross-project observations** → noted in the workspaceRoot AGENT.md
+- **User preferences and project conventions** → recorded in the workspaceRoot AGENT.md, since these are cross-project persistent context that should be visible to all agents via system prompt injection
 
-There is no "global knowledge directory" for agents to write to. The workspaceRoot AGENT.md may reference cross-project patterns, but detailed knowledge lives in the projects where the work happens.
+There is no "global knowledge directory" for agents to write to. The workspaceRoot AGENT.md is the natural destination for information that does not belong to any single project but should persist and be visible across the entire hierarchy. Detailed knowledge lives in the projects where the work happens.
 
 The agent's context window + compression snapshot serves as the in-memory staging area; the file system is for published knowledge. If an artifact has value, it goes to a meaningful location; if it has no value, it should not be written.
 
@@ -420,6 +421,32 @@ Files are static snapshots. When a child updates a .md file, the parent has no a
 
 ---
 
+### 10.6 GUI-side file change awareness
+
+The staleness problem described in §10.5 applies to agent-to-agent knowledge sharing. For the **GUI layer**, the sidecar provides real-time file change awareness so the human operator always sees current state:
+
+**Watcher architecture**:
+- The sidecar runs an `FsWatcher` on `workspaceRoot` using Node.js built-in `fs.watch(_, { recursive: true })` — zero external dependency, stable on macOS.
+- Watch scope is `workspaceRoot` only (not projectRoot or other directories). This is consistent with the single-destination model: the workspaceRoot is the agent's working world root.
+- The `.elenchus-state/` directory is excluded from watching — it is sidecar-managed infrastructure with frequent writes that are not meaningful for the GUI.
+
+**Event model**:
+- Rapid events are debounced into 100ms batch windows to avoid flooding.
+- Each batch is broadcast as a `fs-change` WebSocket event: `{ type: "fs-change", changes: Array<{ path, kind }> }` where `kind` is `create | update | delete`.
+- The `kind` is disambiguated from Node.js `fs.watch` event types: `"change"` → `update`; `"rename"` → existence check → `create` or `delete`.
+- `fs-change` is a `ServerEvent` (like `unit-tree-change`), not a `SystemEvent` — it originates from the sidecar infrastructure, not from agent deliberation.
+
+**Frontend behavior**:
+- **Workspace tree**: any `fs-change` triggers a full tree refresh via the REST API.
+- **Preview panel**: if the currently previewed file receives `update`, its content is re-fetched; if `delete`, the preview enters a **deleted-file state** — the tab is preserved (not auto-closed) and an amber warning banner is shown above the last-known content rendered in read-only/faded mode. This preserves the user's ability to see what was there before deletion.
+- **Design rationale for preserving deleted tabs**: the user may need to reference the last-known content (e.g., to understand what was lost, or to recreate it). Auto-closing would discard this information.
+
+**Why sidecar-side, not Tauri Rust-side**: the sidecar already owns the WebSocket broadcaster. Adding a second event channel through Tauri's native event system would require the frontend to listen on two channels and merge events, increasing complexity without benefit. The single-channel approach keeps the event model simple.
+
+This mechanism addresses §10.5 staleness for the GUI layer only. Agent-to-agent staleness remains as described there — agents should use `report` messages to notify partners of significant file changes.
+
+---
+
 ## 11. Deliberately Excluded from Current Scope
 
 To maintain design simplicity and principle-level stability, the following are **explicitly not included** in this document:
@@ -447,7 +474,7 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 6. **Cross-reference principle**: AGENT.md files in different directories may reference each other to support cross-directory knowledge connectivity.
 7. **Skill-reabsorption principle**: Skill no longer exists as an independent storage ontology; it is reabsorbed as an organizational result of actionable knowledge regions.
 8. **Prompt-realization principle**: The knowledge view is realized through prompt injection (static guideline + dynamic workspaceRoot AGENT.md), not through code-level enforcement or schema validation.
-9. **Single-destination principle**: Knowledge has one destination — where the work naturally belongs. There is no separate "global knowledge" directory. Discovery happens through the message channel and navigation, not through storage partitioning.
+9. **Single-destination principle**: Knowledge has one destination — where the work naturally belongs. There is no separate "global knowledge" directory. Cross-project persistent information (user preferences, project conventions) naturally belongs in the workspaceRoot AGENT.md, since its scope spans all projects. Discovery happens through the message channel and navigation, not through storage partitioning.
 10. **Scope-restraint principle**: Current scope is limited to the knowledge-view storage model and prompt injection; governance, anti-entropy, and auto-maintenance are deferred.
 11. **Logical-territory principle**: Projects remain at their physical locations; the workspaceRoot is a logical concept that does not need to physically contain all projects. L0 coordinates multiple projects simultaneously; each child's cwd is inferred from its task brief.
 12. **Knowledge-channel-complement principle**: The knowledge channel (.md files) complements the message channel (ConversationLedger); they carry different communication loads and must not substitute for each other.
@@ -459,6 +486,8 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 
 ## Change Log
 
+- **v6.1 (2026-04-19)**: Expand workspaceRoot AGENT.md role from pure navigation hub to navigation hub + cross-project persistent context. Add user preferences and project conventions as valid content for root AGENT.md. Update single-destination principle: cross-project information naturally belongs in workspaceRoot AGENT.md. Update Writing Guidance to note root AGENT.md content is visible to all agents across all layers.
+- **v6.0 (2026-04-19)**: Add §10.6 GUI-side file change awareness. Sidecar `FsWatcher` monitors workspaceRoot (not projectRoot) using Node.js built-in `fs.watch(_, { recursive: true })` with 100ms debounce, broadcasting `fs-change` ServerEvent via WebSocket. `.elenchus-state/` excluded from watching. Frontend auto-refreshes workspace tree on any change; preview panel auto-refreshes on update, shows amber warning + last-known content on delete (tab preserved, not auto-closed). Watcher on sidecar side (not Tauri Rust) to keep single event channel.
 - **v5.0 (2026-04-18)**: Migrate from two-root architecture to single-destination + logical territory model. Eliminate `~/.elenchus/knowledge/` as agent write target — knowledge is written where the work naturally belongs. workspaceRoot (user-configurable, default `~/Elenchus/`) replaces `~/.elenchus/` as the working world root. L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Only workspaceRoot AGENT.md injected into prompt (child project AGENT.md read on demand). SQLite state.db moved to workspaceRoot/.elenchus-state/. Replace two-root-knowledge principle with single-destination principle and logical-territory principle. Update §8 (prompt injection), §9 (knowledge space), §10 (knowledge sharing), §12 (principles).
 - **v4.0 (2026-04-17)**: Introduce two-root architecture: globalRoot (`~/.elenchus/`) + projectRoot (cwd/git root). Global root stores cross-project knowledge (`knowledge/`), per-project state (`projects/<hash>/state.db`), and global AGENT.md. Project root is bash cwd and site for project-specific knowledge artifacts. Prompt injection now includes both global and project AGENT.md. Session persistence moved from `<projectRoot>/.elenchus/state.db` to `~/.elenchus/projects/<hash>/state.db`. Replace shared-knowledge-space principle with two-root-knowledge principle. [Superseded by v5.0]
 - **v3.0 (2026-04-17)**: Redesign §9 from per-agent workspace to shared knowledge space. [Superseded by v4.0]

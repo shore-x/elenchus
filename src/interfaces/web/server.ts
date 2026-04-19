@@ -9,6 +9,7 @@ import type { DeliberationSession } from "../../application/session.js";
 import type { SystemEvent } from "../../core/types.js";
 import { handleApiRequest } from "./api-handlers.js";
 import { WsBroadcaster, type ServerEvent } from "./ws-broadcaster.js";
+import { FsWatcher, type FsChange } from "./fs-watcher.js";
 
 export interface SidecarServerOptions {
   session: DeliberationSession;
@@ -20,11 +21,15 @@ export class SidecarServer {
   private readonly wss: WebSocketServer;
   private readonly broadcaster: WsBroadcaster;
   private readonly session: DeliberationSession;
+  private readonly fsWatcher: FsWatcher;
   private port: number = 0;
 
   constructor(options: SidecarServerOptions) {
     this.session = options.session;
     this.broadcaster = new WsBroadcaster();
+    this.fsWatcher = new FsWatcher(options.workspaceRoot, (changes) => {
+      this.broadcaster.broadcast({ type: "fs-change", changes });
+    });
 
     // HTTP server
     this.httpServer = createServer(async (req, res) => {
@@ -43,6 +48,7 @@ export class SidecarServer {
   }
 
   start(): Promise<number> {
+    this.fsWatcher.start();
     return new Promise((resolve, reject) => {
       this.httpServer.listen(0, "127.0.0.1", () => {
         const addr = this.httpServer.address();
@@ -58,6 +64,7 @@ export class SidecarServer {
   }
 
   close(): void {
+    this.fsWatcher.close();
     this.broadcaster.closeAll();
     this.wss.close();
     this.httpServer.close();

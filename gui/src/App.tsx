@@ -19,7 +19,7 @@ export default function App() {
   const [fsMode, setFsMode] = useState<"docs" | "all">("docs");
   const [previewTabs, setPreviewTabs] = useState<{ path: string; name: string }[]>([]);
   const [activePreviewTab, setActivePreviewTab] = useState<number>(-1);
-  const [previewContent, setPreviewContent] = useState<{ content: string; extension: string; renderAsMarkdown: boolean } | null>(null);
+  const [previewContent, setPreviewContent] = useState<{ content: string; extension: string; renderAsMarkdown: boolean; fileDeleted?: boolean } | null>(null);
   const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
   const [fileRefs, setFileRefs] = useState<FileReference[]>([]);
   const [workspaceConfig, setWorkspaceConfig] = useState<{ provider: string; modelName: string; baseUrl?: string; projectRoot: string } | null>(null);
@@ -177,6 +177,32 @@ export default function App() {
     if (event.type === "unit-tree-change" || event.type === "child-spawned" || event.type === "state-transition") {
       api.getSessionInfo().then((info: SessionInfo | null) => { if (info) setSessionInfo(info); });
     }
+
+    if (event.type === "fs-change") {
+      // Refresh the file tree
+      api.getFsTree(fsMode).then((tree: FsTreeNode[]) => setFsTree(tree));
+
+      // Check if any open preview tab is affected
+      const deletedPaths = new Set(event.changes.filter(c => c.kind === "delete").map(c => c.path));
+      const updatedPaths = new Set(event.changes.filter(c => c.kind === "update").map(c => c.path));
+
+      const currentTab = previewTabs[activePreviewTab];
+      if (currentTab) {
+        if (deletedPaths.has(currentTab.path)) {
+          setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
+        } else if (updatedPaths.has(currentTab.path)) {
+          api.readFile(currentTab.path).then((result: FileContent | null) => {
+            if (result) {
+              setPreviewContent({
+                content: result.content,
+                extension: result.extension,
+                renderAsMarkdown: result.extension === ".md",
+              });
+            }
+          });
+        }
+      }
+    }
   }, [ws.lastEvent]);
 
   // Load preview file content
@@ -193,6 +219,9 @@ export default function App() {
           extension: result.extension,
           renderAsMarkdown: result.extension === ".md",
         });
+      } else {
+        // File no longer exists
+        setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
       }
     });
   }, [activePreviewTab, previewTabs]);
