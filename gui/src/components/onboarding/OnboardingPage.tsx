@@ -52,33 +52,34 @@ interface OnboardingPageProps {
     baseUrl?: string;
     projectRoot?: string;
   };
+  error?: string | null;
 }
 
-export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProps){
+export function OnboardingPage({ onComplete, initialConfig, error }: OnboardingPageProps){
   const [provider, setProvider] = useState(initialConfig?.provider ?? "anthropic");
   const [modelName, setModelName] = useState(initialConfig?.modelName ?? "claude-sonnet-4-20250514");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(initialConfig?.baseUrl ?? "");
   const [projectRoot, setProjectRoot] = useState(initialConfig?.projectRoot ?? "");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const models = KNOWN_MODELS[provider] ?? [];
 
   const handleSubmit = async () => {
     if (!provider || !modelName || !apiKey) {
-      setError("Provider, model, and API key are required.");
+      setLocalError("Provider, model, and API key are required.");
       return;
     }
 
     // Ollama doesn't require an API key but needs a base URL
     if (provider === "ollama" && !baseUrl) {
-      setError("Ollama requires a base URL (e.g. http://localhost:11434)");
+      setLocalError("Ollama requires a base URL (e.g. http://localhost:11434)");
       return;
     }
 
     setSubmitting(true);
-    setError(null);
+    setLocalError(null);
 
     onComplete({
       provider,
@@ -156,8 +157,8 @@ export function OnboardingPage({ onComplete, initialConfig }: OnboardingPageProp
         />
 
         {/* Error */}
-        {error && (
-          <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</div>
+        {(error || localError) && (
+          <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{error ?? localError}</div>
         )}
 
         {/* Submit */}

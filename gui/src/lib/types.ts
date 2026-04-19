@@ -22,6 +22,12 @@ export interface FsTreeNode {
   children?: FsTreeNode[];
 }
 
+export interface FileReference {
+  path: string;
+  startLine: number;
+  endLine: number;
+}
+
 export interface ConversationMessageBase {
   id: string;
   turnAuthored: number;

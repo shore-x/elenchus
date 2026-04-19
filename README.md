@@ -4,17 +4,17 @@ Dual-Agent Deliberation Framework for LLM Hallucination Mitigation.
 
 Two AI agents (Generator + Verifier) engage in Socratic dialogue with a proposal-vote mechanism, ensuring every action is critically examined before execution.
 
-## Build & Install
+## CLI Usage
 
 ```bash
 # Install dependencies
 npm install
 
-# Compile TypeScript to dist/
-npm run build
+# Run directly from source (no build needed)
+npm start
 
-# Link as a global CLI command
-npm link
+# Or compile and link as a global command
+npm run build && npm link
 ```
 
 After `npm link`, you can run `elenchus` from **any directory**:
@@ -108,39 +108,7 @@ The workspace directory (`~/Elenchus` by default) stores session data in `~/Elen
 - [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri backend)
 - Node.js ≥ 18
 
-### Development
-
-```bash
-# Install GUI dependencies
-cd gui && npm install
-
-# Start dev mode (Vite HMR + Tauri window)
-npm run tauri dev
-```
-
-On first launch (no existing workspace), the onboarding page collects LLM provider, model, API key, and project directory. On subsequent launches:
-
-1. If the workspace has existing session data and the API key is saved, the sidecar auto-starts and resumes the previous session.
-2. If session data exists but the API key is missing (e.g. first GUI launch after CLI usage), the onboarding page appears with provider/model/project directory pre-filled — only the API key is needed.
-
-### Build & Release
-
-```bash
-cd gui
-
-# Build production bundle
-npm run tauri build
-```
-
-The built application is output to `gui/src-tauri/target/release/bundle/`:
-
-| Platform | Output |
-|----------|--------|
-| macOS    | `.dmg` and `.app` in `bundle/macos/` |
-| Windows  | `.msi` and `.exe` in `bundle/msi/` |
-| Linux    | `.deb` and `.AppImage` in `bundle/deb/` |
-
-### Dev Mode (Frontend Only)
+### Dev Mode
 
 Use the one-command dev script to start both the sidecar backend and Vite frontend:
 
@@ -165,7 +133,35 @@ ELENCHUS_PROJECT_ROOT=~/Elenchus \
 
 The script auto-discovers the sidecar port and injects it into the Vite dev server. Press Ctrl+C to shut down both processes cleanly.
 
-**Environment variables** (all optional):
+Alternatively, you can start the sidecar and Vite manually in two terminals (the onboarding page will prompt for the sidecar port if `VITE_SIDECAR_PORT` is not set).
+
+### Build & Release
+
+The sidecar is bundled as a standalone binary (via esbuild + pkg) and packaged into the Tauri app via `externalBin`. You must build the sidecar **before** running `tauri build`.
+
+```bash
+# 1. Install dependencies (first time only)
+npm install
+cd gui && npm install && cd ..
+
+# 2. Build sidecar binary
+bash scripts/build-sidecar.sh
+
+# 3. Build Tauri app
+cd gui && npm run tauri build && cd ..
+```
+
+The built application is output to `gui/src-tauri/target/release/bundle/`:
+
+| Platform | Output |
+|----------|--------|
+| macOS    | `.dmg` and `.app` in `bundle/macos/` |
+| Windows  | `.msi` and `.exe` in `bundle/msi/` |
+| Linux    | `.deb` and `.AppImage` in `bundle/deb/` |
+
+> **Note:** The sidecar binary must be rebuilt whenever the core engine (`src/`) changes. The build script places the binary at `gui/src-tauri/binaries/elenchus-sidecar-<target-triple>`.
+
+**Environment variables** (all optional, used by `dev.sh` and CLI):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -177,15 +173,10 @@ The script auto-discovers the sidecar port and injects it into the Vite dev serv
 | `ELENCHUS_LEVEL` | — | Agent level: L0, L1, L2 |
 | `ELENCHUS_WORKSPACE_ROOT` | `~/Elenchus` | Workspace storage directory |
 
-Alternatively, you can start the sidecar and Vite manually in two terminals (the onboarding page will prompt for the sidecar port if `VITE_SIDECAR_PORT` is not set).
-
 ## Development
 
 ```bash
-# Run CLI directly from source (no build needed)
-npm start
-
-# Type-check without emitting
+# Type-check core engine
 npm run check
 
 # Type-check GUI frontend

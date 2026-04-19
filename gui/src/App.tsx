@@ -7,7 +7,7 @@ import { WorkspaceDir } from "./components/workspace/WorkspaceDir";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { PreviewPanel } from "./components/preview/PreviewPanel";
 import { OnboardingPage } from "./components/onboarding/OnboardingPage";
-import type { FsTreeNode, ConversationMessage, SessionInfo, FileContent } from "./lib/types";
+import type { FsTreeNode, ConversationMessage, SessionInfo, FileContent, FileReference } from "./lib/types";
 
 export default function App() {
   const [sidecarPort, setSidecarPort] = useState<number | null>(null);
@@ -20,6 +20,8 @@ export default function App() {
   const [previewTabs, setPreviewTabs] = useState<{ path: string; name: string }[]>([]);
   const [activePreviewTab, setActivePreviewTab] = useState<number>(-1);
   const [previewContent, setPreviewContent] = useState<{ content: string; extension: string; renderAsMarkdown: boolean } | null>(null);
+  const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
+  const [fileRefs, setFileRefs] = useState<FileReference[]>([]);
   const [workspaceConfig, setWorkspaceConfig] = useState<{ provider: string; modelName: string; baseUrl?: string; projectRoot: string } | null>(null);
 
   const api = useApi(sidecarPort);
@@ -197,17 +199,35 @@ export default function App() {
 
   const handleSendMessage = useCallback(async (content: string) => {
     await api.sendMessage(content);
+    setFileRefs([]);
   }, [api]);
 
-  const handleOpenFile = useCallback((path: string, name: string) => {
+  const handleAddReference = useCallback((ref: FileReference) => {
+    setFileRefs((prev) => {
+      const exists = prev.some((r) => r.path === ref.path && r.startLine === ref.startLine && r.endLine === ref.endLine);
+      if (exists) return prev;
+      return [...prev, ref];
+    });
+  }, []);
+
+  const handleRemoveRef = useCallback((index: number) => {
+    setFileRefs((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleOpenFile = useCallback((path: string, name: string, startLine?: number) => {
     const existingIndex = previewTabs.findIndex(t => t.path === path);
     if (existingIndex >= 0) {
       setActivePreviewTab(existingIndex);
-      return;
+    } else {
+      const newTabs = [...previewTabs, { path, name }];
+      setPreviewTabs(newTabs);
+      setActivePreviewTab(newTabs.length - 1);
     }
-    const newTabs = [...previewTabs, { path, name }];
-    setPreviewTabs(newTabs);
-    setActivePreviewTab(newTabs.length - 1);
+    if (startLine !== undefined) {
+      setScrollToLine(startLine);
+      // Reset after a tick so future clicks to same line still trigger scroll
+      setTimeout(() => setScrollToLine(undefined), 100);
+    }
   }, [previewTabs]);
 
   const handleCloseTab = useCallback((index: number) => {
@@ -220,6 +240,8 @@ export default function App() {
     }
   }, [previewTabs, activePreviewTab]);
 
+  const [configError, setConfigError] = useState<string | null>(null);
+
   const handleConfigComplete = useCallback(async (config: {
     provider: string;
     modelName: string;
@@ -227,6 +249,8 @@ export default function App() {
     baseUrl?: string;
     projectRoot: string;
   }) => {
+    setConfigError(null);
+
     // Try Tauri mode first
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -234,35 +258,18 @@ export default function App() {
       setSidecarPort(port);
       setIsConfigured(true);
       return;
-    } catch {
-      // Not in Tauri — browser-only dev mode
-    }
-
-    // Browser-only fallback: save config to localStorage, connect to sidecar via env port
-    localStorage.setItem("elenchus_config", JSON.stringify(config));
-    const envPort = parseInt((import.meta as any).env?.VITE_SIDECAR_PORT ?? "0", 10);
-    if (envPort > 0) {
-      setSidecarPort(envPort);
-      setIsConfigured(true);
-    } else {
-      // Prompt user for sidecar port
-      const portStr = window.prompt(
-        "Not running in Tauri. Enter the sidecar port (start sidecar manually with: npx tsx src/interfaces/web/main.ts --serve --provider <provider> --model <model> --project-root <path>)",
-        "3000"
-      );
-      if (portStr) {
-        const port = parseInt(portStr, 10);
-        if (port > 0) {
-          setSidecarPort(port);
-          setIsConfigured(true);
-        }
-      }
+    } catch (err: any) {
+      // Tauri invoke failed — show the error
+      const msg = err?.toString?.() ?? String(err);
+      console.error("[start_sidecar]", msg);
+      setConfigError(`Failed to start sidecar: ${msg}`);
+      return;
     }
   }, []);
 
   // Show onboarding if not configured
   if (!isConfigured) {
-    return <OnboardingPage onComplete={handleConfigComplete} initialConfig={workspaceConfig ?? undefined} />;
+    return <OnboardingPage onComplete={handleConfigComplete} initialConfig={workspaceConfig ?? undefined} error={configError} />;
   }
 
   return (
@@ -294,6 +301,9 @@ export default function App() {
         messages={messages}
         onSendMessage={handleSendMessage}
         onSelectUnit={setSelectedUnitId}
+        onOpenFile={handleOpenFile}
+        refs={fileRefs}
+        onRemoveRef={handleRemoveRef}
       />
 
       {/* Right Panel */}
@@ -308,6 +318,8 @@ export default function App() {
             setPreviewContent({ ...previewContent, renderAsMarkdown: !previewContent.renderAsMarkdown });
           }
         }}
+        scrollToLine={scrollToLine}
+        onAddReference={handleAddReference}
       />
     </ThreeColumnLayout>
   );

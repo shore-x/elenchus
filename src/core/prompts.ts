@@ -73,6 +73,7 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 ## Message Format
 - Your partner's messages appear as [Agent A]: ... or [Agent B]: ...
 - Incoming messages from outside the unit appear as [Incoming Message]
+- User messages may include file references like \`@dir/file.ts:10-20\` (short path + line range). This means the user is pointing your attention to those specific lines. Use \`readFile\` with the full absolute path and relevant line range to examine the referenced content.
 - Shared public facts appear as [Public Fact][...]
 - Current-turn control instructions appear as [Directive]
 - Memory snapshots and non-real-time child summaries appear as [Context Snapshot]

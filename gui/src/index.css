@@ -215,3 +215,108 @@ body {
   text-decoration: line-through;
   color: #656d76;
 }
+
+/* Inline content rendering (chat messages) */
+code.inline-code {
+  padding: 0.15em 0.35em;
+  font-size: 87.5%;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  background-color: rgba(175, 184, 193, 0.2);
+  border-radius: 4px;
+  color: #1f2328;
+}
+
+button.file-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.5em;
+  font-size: 87.5%;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  background-color: #dbeafe;
+  border: none;
+  border-radius: 9999px;
+  color: #1e40af;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s;
+}
+
+button.file-link:hover {
+  background-color: #bfdbfe;
+}
+
+/* PreviewPanel line numbers */
+.line-numbers {
+  padding: 1rem 0.5rem 1rem 1rem;
+  text-align: right;
+  color: #a8a29e;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  user-select: none;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.code-content {
+  padding: 1rem 1rem 1rem 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.code-content .code-line {
+  min-height: 1.5em;
+  line-height: 1.5;
+}
+
+/* ChatPanel reference chips */
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15em 0.5em;
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  background-color: #dbeafe;
+  border: 1px solid #bfdbfe;
+  border-radius: 9999px;
+  color: #1e40af;
+  white-space: nowrap;
+}
+
+.ref-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-size: 0.875em;
+  line-height: 1;
+  color: #3b82f6;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background-color 0.15s;
+}
+
+.ref-chip-remove:hover {
+  background-color: #bfdbfe;
+  color: #1e40af;
+}
+
+/* PreviewPanel floating reference button */
+.ref-float-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  background-color: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: background-color 0.15s;
+}
+
+.ref-float-btn:hover {
+  background-color: #bfdbfe;
+}

@@ -13,6 +13,7 @@ use tauri_plugin_shell::{process::CommandChild, ShellExt};
 use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct LlmConfig {
     provider: String,
     model_name: String,
@@ -24,6 +25,7 @@ struct LlmConfig {
 /// Workspace-level config persisted alongside session data (no API key).
 /// Stored at ~/Elenchus/.elenchus-state/workspace-config.json
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct WorkspaceConfig {
     provider: String,
     model_name: String,
@@ -160,14 +162,10 @@ async fn start_sidecar(
     store.set("llm_config", serde_json::to_value(&config).map_err(|e| e.to_string())?);
     let _ = store.save();
 
-    // Resolve sidecar entry: npx tsx src/interfaces/web/main.ts --serve
-    let _project_root = std::env::current_dir()
-        .map_err(|e| format!("Cannot get cwd: {e}"))?;
-
-    let mut cmd = app.shell().command("npx");
+    // Use Tauri sidecar (externalBin) to spawn the bundled sidecar binary
+    let mut cmd = app.shell().sidecar("elenchus-sidecar")
+        .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
     cmd = cmd.args([
-        "tsx",
-        "src/interfaces/web/main.ts",
         "--serve",
         "--provider",
         &config.provider,
