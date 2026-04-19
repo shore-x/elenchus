@@ -5,23 +5,20 @@ import { useState, useRef, useCallback, type ReactNode } from "react";
 
 const MIN_LEFT = 180;
 const MIN_CENTER = 300;
-const MIN_RIGHT = 200;
 const DEFAULT_LEFT = 240;
-const DEFAULT_RIGHT = 400;
 
 export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNode, ReactNode] }) {
   const [leftWidth, setLeftWidth] = useState(DEFAULT_LEFT);
-  const [rightWidth, setRightWidth] = useState(DEFAULT_RIGHT);
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef<"left" | "right" | null>(null);
+  const dragging = useRef<"left" | null>(null);
   const startX = useRef(0);
   const startWidth = useRef(0);
 
-  const onMouseDown = useCallback((handle: "left" | "right", e: React.MouseEvent) => {
+  const onMouseDown = useCallback((handle: "left", e: React.MouseEvent) => {
     e.preventDefault();
     dragging.current = handle;
     startX.current = e.clientX;
-    startWidth.current = handle === "left" ? leftWidth : rightWidth;
+    startWidth.current = leftWidth;
 
     const onMouseMove = (ev: MouseEvent) => {
       if (!containerRef.current) return;
@@ -29,11 +26,8 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
       const delta = ev.clientX - startX.current;
 
       if (dragging.current === "left") {
-        const newLeft = Math.max(MIN_LEFT, Math.min(startWidth.current + delta, containerWidth - MIN_CENTER - rightWidth));
+        const newLeft = Math.max(MIN_LEFT, Math.min(startWidth.current + delta, containerWidth - MIN_CENTER * 2));
         setLeftWidth(newLeft);
-      } else if (dragging.current === "right") {
-        const newRight = Math.max(MIN_RIGHT, Math.min(startWidth.current - delta, containerWidth - MIN_CENTER - leftWidth));
-        setRightWidth(newRight);
       }
     };
 
@@ -49,7 +43,7 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
     document.addEventListener("mouseup", onMouseUp);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-  }, [leftWidth, rightWidth]);
+  }, [leftWidth]);
 
   return (
     <div ref={containerRef} className="flex h-full w-full overflow-hidden">
@@ -69,14 +63,8 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
         {children[1]}
       </div>
 
-      {/* Right Resize Handle */}
-      <div
-        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-stone-300 active:bg-stone-400 transition-colors"
-        onMouseDown={(e) => onMouseDown("right", e)}
-      />
-
       {/* Right Panel */}
-      <div style={{ width: rightWidth, minWidth: MIN_RIGHT }} className="flex-shrink-0 h-full overflow-hidden border-l border-stone-200 bg-white">
+      <div className="flex-1 min-w-[300px] h-full overflow-hidden border-l border-stone-200 bg-white">
         {children[2]}
       </div>
     </div>

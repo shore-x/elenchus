@@ -27,8 +27,15 @@ function renderProposalDetail(proposal: ProposalCall): string {
       return `Preservation requirements:\n---\n${String(proposal.args.requirements)}\n---`;
     case "bash":
       return `Command: \`${proposal.args.command}\``;
-    case "readFile":
-      return `File path: \`${proposal.args.path}\``;
+    case "readFile": {
+      const offset = proposal.args.offset as number | undefined;
+      const limit = proposal.args.limit as number | undefined;
+      const hasRange = offset !== undefined || limit !== undefined;
+      const start = offset ?? 1;
+      const end = limit !== undefined ? start + limit - 1 : "end";
+      const rangeInfo = hasRange ? ` (lines ${start}-${end})` : "";
+      return `File path: \`${proposal.args.path}\`${rangeInfo}`;
+    }
     case "writeFile":
       return `File path: \`${proposal.args.path}\`\nContent:\n---\n${String(proposal.args.content)}\n---`;
     case "sleep":

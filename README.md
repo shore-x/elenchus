@@ -137,7 +137,6 @@ Alternatively, you can start the sidecar and Vite manually in two terminals (the
 
 ### Build & Release
 
-The sidecar is bundled as a standalone binary (via esbuild + pkg) and packaged into the Tauri app via `externalBin`. You must build the sidecar **before** running `tauri build`.
 
 ```bash
 # 1. Install dependencies (first time only)

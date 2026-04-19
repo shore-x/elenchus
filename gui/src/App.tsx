@@ -276,20 +276,21 @@ export default function App() {
     <ThreeColumnLayout>
       {/* Left Panel */}
       <div className="flex flex-col h-full">
-        <div className="flex-1 min-h-0 overflow-y-auto border-b border-gray-200">
+        <div className="h-1/2 min-h-0 overflow-y-auto border-b border-gray-200">
           <AgentTree
             tree={sessionInfo?.tree ?? null}
             selectedUnitId={selectedUnitId}
             onSelectUnit={setSelectedUnitId}
           />
         </div>
-        <div className="h-[40%] min-h-[120px] overflow-y-auto">
+        <div className="h-1/2 min-h-0 overflow-y-auto">
           <WorkspaceDir
             tree={fsTree}
             mode={fsMode}
             onModeChange={setFsMode}
             onOpenFile={handleOpenFile}
             openFilePaths={previewTabs.map(t => t.path)}
+            activeFilePath={previewTabs[activePreviewTab]?.path}
           />
         </div>
       </div>
@@ -319,7 +320,7 @@ export default function App() {
           }
         }}
         scrollToLine={scrollToLine}
-        onAddReference={handleAddReference}
+        onAddRef={handleAddReference}
       />
     </ThreeColumnLayout>
   );

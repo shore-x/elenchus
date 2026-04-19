@@ -80,11 +80,12 @@ The current architecture uses three fixed levels:
   - **information acquisition**: reading files, listing directories, searching content to understand the current state of work
   - **knowledge space maintenance**: writing/updating .md files in its own workspace, organizing knowledge structure
   - must **not** use environment tools to directly execute tasks; task execution should be delegated to child units
+- `readFile` is **auto-approved** (P30): proposals execute immediately without partner vote, but L0's role policy still constrains what files it should read (knowledge artifacts only, not source code for substantive understanding)
 - can enter `Executing` state when using environment tools for permitted purposes
 
 > **原则 P28（L0 角色策略约束）**：L0 拥有完整的环境工具能力，但通过 prompt 注入的角色策略约束其用途为信息获取与知识空间维护。L0 不应使用环境工具直接执行任务；任务执行应通过子单元委派。若 L0 发现自己在用工具直接解决问题而不是分配问题，应停下来创建子 agent。
 
-The dual-agent proposal-vote mechanism serves as a second line of defense: the partner agent (Verifier) is explicitly guided in the prompt to reject tool uses that exceed L0's role scope. However, this is a soft constraint, not a hard enforcement — both agents may agree to bypass it under efficiency pressure.
+The dual-agent proposal-vote mechanism serves as a second line of defense: the partner agent (Verifier) is explicitly guided in the prompt to reject tool uses that exceed L0's role scope. However, this is a soft constraint, not a hard enforcement — both agents may agree to bypass it under efficiency pressure. Note that `readFile` is auto-approved (P30) and does not go through the vote step; L0's readFile role compliance therefore relies entirely on prompt guidance rather than partner vote rejection.
 
 ### 4.2 L1
 
@@ -271,6 +272,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v5.2 (2026-04-19)**: Update L0 environment tool notes for readFile auto-approval (P30). readFile proposals execute immediately without partner vote; L0 role compliance for readFile now relies on prompt guidance rather than vote rejection. Update §4.1, P28 note.
 - **v5.1 (2026-04-18)**: Migrate from dual-root to single-destination + logical territory model. Replace globalRoot + projectRoot with workspaceRoot (user-configurable, default `~/Elenchus/`). L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Update §8.
 - **v5.0 (2026-04-18)**: Replace unmount/remount model with fixed slot pool model. Parent has N coordination slots; all children always visible; slot recovery through cooperative scheduling (sendToChild → yield → reassign). No forced context reset; three self-regulating mechanisms (task affinity, compression, knowledge externalization). Update §5.3, §6, §8, changelog.
 - **v4.0 (2026-04-16)**: L0 gains environment tools with role policy constraint (P28). Layer isomorphism (P9) evolves from tool-set difference to role-policy difference. Add dual-channel communication (P27): message channel + knowledge channel via .md files. Add agent workspace model: each unit manages its own directory, knowledge shared through .md files. Restructure §5 into §5.1 (dual-channel), §5.2 (iterative coordination), §5.3 (unmount/remount). Update §7 prompt isomorphism to include layer role policy. Update §8 to reflect concrete knowledge externalization through workspace model. [Superseded by v5.0 for §5.3 and §6]

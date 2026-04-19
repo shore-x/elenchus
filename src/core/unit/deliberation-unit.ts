@@ -52,7 +52,7 @@ export class DeliberationUnit {
   private executingFromState: "turn-a" | "turn-b" | null = null;
   private children = new Map<string, DeliberationUnit>();
   private childCounter = 0;
-  static readonly MAX_CHILDREN = 8;
+  static readonly MAX_CHILDREN = 9;
   private sleepTimer: ReturnType<typeof setTimeout> | null = null;
   private sleepDeadlineMs: number | null = null;
   private consecutiveEmptyTurns = 0;
@@ -325,7 +325,7 @@ export class DeliberationUnit {
   private static findNextChildSlot(parentLevel: ToolLevel, parentPath: number[], existingChildIds: Set<string>): number[] {
     const childLevel = parentLevel === "L0" ? "L1" as const : "L2" as const;
 
-    for (let i = 1; i <= 999; i++) {
+    for (let i = 1; i <= DeliberationUnit.MAX_CHILDREN; i++) {
       const childPath = [...parentPath, i];
       const padded = childPath.map((s) => String(s).padStart(2, "0"));
       const candidateId = `${childLevel}-${padded.join("-")}`;
@@ -567,6 +567,7 @@ export class DeliberationUnit {
       const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
 
       const hasChildren = this.hasChildren();
+      const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
       const pendingProposal = this.getPendingProposal();
       const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
@@ -594,6 +595,7 @@ export class DeliberationUnit {
           turnMessages,
           hasPendingFromOther,
           hasChildren,
+          canSpawnChild,
         );
       } catch (err) {
         this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
@@ -716,6 +718,41 @@ export class DeliberationUnit {
         });
         this.notifyDurableStateChange();
         this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: proposal.toolName, args: proposal.args });
+
+        // Auto-approve path (P30): read-only tools bypass partner vote
+        const resolvedTool = getBuiltInToolRegistry(this.level).get(proposal.toolName);
+        if (resolvedTool?.autoApprove) {
+          const autoApprovedProposal = this.getPendingProposal();
+          if (autoApprovedProposal) {
+            this.ledger.markProposalApproved(autoApprovedProposal.messageId);
+            this.recordCommittedStep(autoApprovedProposal);
+            this.ledger.appendSystemMessage(
+              `${proposal.toolName} proposal auto-approved (read-only operations do not require partner vote, P30)`,
+              this.buildDeferredVisibilityMeta(),
+            );
+            this.notifyDurableStateChange();
+
+            // Execute as blocking tool (same path as vote-approved blocking tools)
+            this.executingFromState = this.state as "turn-a" | "turn-b";
+            this.transition(this.state, "executing");
+            this.emit({ type: "tool-executing", scope: this.scope, toolName: autoApprovedProposal.toolName, args: autoApprovedProposal.args });
+            const execResult = await this.toolExecutor.execute(autoApprovedProposal.toolName, autoApprovedProposal.args, { cwd: this.projectRoot, level: this.level });
+            this.ledger.appendToolResultMessage({
+              proposalId: autoApprovedProposal.messageId,
+              toolName: proposal.toolName,
+              success: execResult.success,
+              output: execResult.output,
+              durationMs: execResult.durationMs,
+              ...this.buildDeferredVisibilityMeta(),
+            });
+            this.notifyDurableStateChange();
+            this.emit({ type: "tool-result", scope: this.scope, toolName: proposal.toolName, success: execResult.success, output: execResult.output, durationMs: execResult.durationMs });
+            const autoNextState: UnitState = this.executingFromState === "turn-a" ? "turn-b" : "turn-a";
+            this.executingFromState = null;
+            this.transition("executing", autoNextState);
+            continue;
+          }
+        }
       }
 
       const nextState: UnitState = this.state === "turn-a" ? "turn-b" : "turn-a";
@@ -753,6 +790,16 @@ export class DeliberationUnit {
     }
 
     if (toolName === "spawnChild") {
+      if (this.children.size >= DeliberationUnit.MAX_CHILDREN) {
+        this.ledger.appendSystemMessage(
+          `Cannot spawn child: maximum child count (${DeliberationUnit.MAX_CHILDREN}) reached. ` +
+          `Use sendToChild to send additional context to the most relevant existing child instead.`,
+          this.buildDeferredVisibilityMeta(),
+        );
+        this.notifyDurableStateChange();
+        this.emit({ type: "warning", scope: this.scope, message: `spawnChild rejected: child limit (${DeliberationUnit.MAX_CHILDREN}) reached` });
+        return;
+      }
       const task = args.task as string;
       const childLevel = this.level === "L0" ? "L1" as const : "L2" as const;
       const existingChildIds = new Set(this.children.keys());

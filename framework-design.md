@@ -146,7 +146,7 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 
 ### 3.1 总体结论
 
-框架采用 **proposal-vote** 作为统一行动协议：除 `vote` 外，所有工具调用都先形成 proposal，必须经另一侧 `APPROVE` 才能生效。
+框架采用 **proposal-vote** 作为统一行动协议：除 `vote` 外，所有工具调用都先形成 proposal，必须经另一侧 `APPROVE` 才能生效。**例外（P30）**：`readFile` 等纯读操作自动批准，无需伙伴投票。
 
 工具的阻塞性由操作对象决定：
 
@@ -288,7 +288,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 - **Protocol**：`vote`、`yield`、`report`、`compressContext`
 - **Child management**：`spawnChild`、`sendToChild`、`sleep`
-- **Environment**：`bash`、`readFile`、`writeFile`
+- **Environment**：`bash`、`readFile`（auto-approved, P30）、`writeFile`
 
 可用性规则已随 L0 工具扩展而简化：
 
@@ -340,6 +340,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | P27 | 双通道通信 | Knowledge View / Hierarchy and Layers |
 | P28 | L0 角色策略约束 | Hierarchy and Layers |
 | P29 | 消息通道对话风格 | Conversation Model |
+| P30 | 纯读操作可豁免投票 | Protocol and Runtime |
 
 ## 附录B 术语表
 
@@ -377,6 +378,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v9.0 (2026-04-19)**：新增 P30（纯读操作可豁免投票）原则：`readFile` proposal 自动批准，无需伙伴投票，但仍经过 Executing 状态并将结果作为公共事实记录。`readFile` 新增 `offset`/`limit` 行号参数支持按行范围读取。同步更新 `protocol-and-runtime.md`、`state-machine-and-tools.md`。
 - **v8.1 (2026-04-19)**：新增 P29（消息通道对话风格）原则：消息通道载荷应保持自然对话语言，结构化产出写入 .md 文件并通过知识通道共享。同步更新 §2.4.1、§2.5、原则索引、术语表；同步更新 `conversation-model.md`。
 - **v8.0 (2026-04-18)**：知识空间从双根模型迁移到单目的地 + 逻辑领地模型。消除"全局 vs 项目"的范围判断——知识只写在工作所在的位置。workspaceRoot（用户可配置，默认 `~/Elenchus/`）取代 `~/.elenchus/` 作为工作空间根目录。L0 bash cwd = workspaceRoot；child projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 prompt。SQLite state.db 移至 workspaceRoot 下。移除 `~/.elenchus/knowledge/` 作为 agent 写入目的地。引入合作者模型：agent 集体 = 用户的合作者，跨项目可见性是协调前提。术语表更新：双层知识空间 → 单目的地知识空间，全局根目录 → workspaceRoot。同步更新 `workspace-ownership-analysis.md` §8-9、`knowledge-view.md`。
 - **v7.0 (2026-04-18)**：子 Agent 生命周期从 unmount/remount 模型迁移到固定 Slot 池模型。移除 `unmountChild` 工具、mounted/dormant 可见性维度。父 agent 拥有固定数量协调 slot，所有 child 始终可见。Slot 回收通过协作式调度（sendToChild → yield → reassign）。不提供强制上下文重置，依赖任务亲和性 + 压缩自调节 + 知识外化三层机制。更新 §4.3.1、§5.2、§5.3、术语表、原则索引（P10 扩展）。同步更新 `workspace-ownership-analysis.md` 第七节。

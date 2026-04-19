@@ -1,6 +1,7 @@
 // Elenchus - Local Node Tool Executor
 // Executes approved blocking tools (Bash, ReadFile, WriteFile) in the local Node environment.
 // At L0, bash commands are restricted to an information-gathering whitelist as a hard constraint.
+// readFile supports offset/limit for line-range reading (P30); output includes line numbers.
 
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -65,10 +66,40 @@ async function executeBash(command: string, cwd?: string): Promise<{ success: bo
   });
 }
 
-async function executeReadFile(path: string): Promise<{ success: boolean; output: string }> {
+async function executeReadFile(path: string, offset?: number, limit?: number): Promise<{ success: boolean; output: string }> {
   try {
     const content = await readFile(path, "utf-8");
-    return { success: true, output: truncateOutput(content) };
+    const allLines = content.split("\n");
+    // Remove trailing empty line from split if file ends with newline
+    if (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+      allLines.pop();
+    }
+    const totalLines = allLines.length;
+
+    const startLine = Math.max(1, Math.floor(offset ?? 1));
+    const maxLines = limit !== undefined ? Math.max(1, Math.floor(limit)) : undefined;
+
+    const startIdx = startLine - 1; // convert to 0-indexed
+    const selectedLines = maxLines !== undefined
+      ? allLines.slice(startIdx, startIdx + maxLines)
+      : allLines.slice(startIdx);
+
+    if (selectedLines.length === 0) {
+      return { success: true, output: `(empty range: file has ${totalLines} line${totalLines === 1 ? "" : "s"}, requested start at line ${startLine})` };
+    }
+
+    const endLine = startLine + selectedLines.length - 1;
+    const width = String(endLine).length;
+    const numbered = selectedLines.map((line, i) => {
+      const lineNum = String(startLine + i).padStart(width, " ");
+      return `${lineNum} | ${line}`;
+    }).join("\n");
+
+    const header = totalLines > selectedLines.length
+      ? `(lines ${startLine}-${endLine} of ${totalLines})\n`
+      : "";
+
+    return { success: true, output: truncateOutput(header + numbered) };
   } catch (err: any) {
     return { success: false, output: `Failed to read file: ${err.message}` };
   }
@@ -98,7 +129,11 @@ export class LocalNodeToolExecutor implements ToolExecutor {
         }
         break;
       case "readFile":
-        result = await executeReadFile(args.path as string);
+        result = await executeReadFile(
+          args.path as string,
+          args.offset as number | undefined,
+          args.limit as number | undefined,
+        );
         break;
       case "writeFile":
         result = await executeWriteFile(args.path as string, args.content as string);

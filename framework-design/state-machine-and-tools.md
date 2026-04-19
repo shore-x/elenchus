@@ -107,7 +107,7 @@ The tool surface is intentionally simple.
 ### 5.3 Environment Tools
 
 - `bash`
-- `readFile`
+- `readFile` (auto-approved, P30)
 - `writeFile`
 
 (`installSkill` was removed in v1.2 of the knowledge-view redesign; skill installation is no longer a separate tool.)
@@ -124,7 +124,7 @@ The tool surface is intentionally simple.
 | SendToChild | ✓（条件） | ✓（条件） | ✗ |
 | Sleep | ✓ | ✓ | ✗ |
 | Bash | ✓（角色策略约束） | ✓ | ✓ |
-| ReadFile | ✓（角色策略约束） | ✓ | ✓ |
+| ReadFile | ✓（角色策略约束, auto-approved） | ✓（auto-approved） | ✓（auto-approved） |
 | WriteFile | ✓（角色策略约束） | ✓ | ✓ |
 
 Rules in summary:
@@ -167,8 +167,22 @@ L0 now has access to `bash`, `readFile`, and `writeFile`, but with a **role poli
 - **Permitted uses**: information acquisition (reading files, listing directories, searching content) and knowledge space maintenance (writing/updating .md files in its own workspace)
 - **Prohibited uses**: directly executing tasks that should be delegated to child units
 - **Self-awareness prompt**: if L0 finds itself using tools to directly solve a problem rather than delegating it, it should stop and create a child agent instead
-- **Partner enforcement**: the Verifier agent is guided in the prompt to reject tool uses that exceed L0's role scope
+- **Partner enforcement**: the Verifier agent is guided in the prompt to reject tool uses that exceed L0's role scope (note: `readFile` is auto-approved per P30, so partner enforcement for readFile relies on prompt guidance rather than vote rejection)
 - This is a **soft constraint** enforced through prompt policy and proposal-vote, not a hard code-level restriction
+
+### 7.5 readFile Auto-Approval (P30)
+
+`readFile` is marked `autoApprove` on the `ElenchusTool` definition. When an agent proposes a `readFile` call:
+
+1. The proposal is recorded in `ConversationLedger` as usual
+2. Runtime immediately marks it approved and writes a system message
+3. The tool executes as a normal blocking tool (enters `Executing`)
+4. The result is written back as a public fact
+5. Turn alternation continues normally
+
+No partner vote is required. The partner sees the full execution chain in the next turn.
+
+`readFile` also supports line-range reading via optional `offset` (1-indexed start line) and `limit` (max line count) parameters. This allows agents to read only the relevant section of large files, reducing context consumption.
 
 ## 8. Related Detailed Documents
 
@@ -181,6 +195,7 @@ L0 now has access to `bash`, `readFile`, and `writeFile`, but with a **role poli
 
 ## Change Log
 
+- **v6.0 (2026-04-19)**: Add P30 (pure read operations may bypass voting). `readFile` is now auto-approved and marked in §5.3, §6 table, and §7.5. L0 role policy (§7.4) updated to note that readFile enforcement relies on prompt guidance rather than vote rejection. `readFile` gains `offset`/`limit` parameters for line-range reading.
 - **v5.0 (2026-04-18)**: Remove `unmountChild` from child-management tools. Child lifecycle now uses fixed slot pool model — all children always visible, no unmount/remount. Updated §5.2, §6 availability table, §7 tool-surface notes, changelog.
 - **v4.0 (2026-04-16)**: L0 gains environment tools (bash, readFile, writeFile) with role policy constraint (P28). Tool availability table updated: L0 environment tools marked with role policy constraint. L0 can now reach `Executing` state. Removed `installSkill` from tool list (already removed in code, doc now catches up). Added §7.5 L0 Environment Tool Role Policy. Updated rules summary to reflect all-layer environment tool availability.
 - **v3.3 (2026-04-13)**: Added the built-in blocking environment tool `installSkill` to the detailed tool surface. Documented it as an L1/L2-only hot-install mechanism for valid local skill-package directories, with next-turn capability visibility after successful installation.

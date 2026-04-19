@@ -10,16 +10,18 @@ interface WorkspaceDirProps {
   onModeChange: (mode: "docs" | "all") => void;
   onOpenFile: (path: string, name: string) => void;
   openFilePaths: string[];
+  activeFilePath?: string;
 }
 
-function FileNode({ node, onOpenFile, openFilePaths, depth }: {
+function FileNode({ node, onOpenFile, openFilePaths, activeFilePath, depth }: {
   node: FsTreeNode;
   onOpenFile: (path: string, name: string) => void;
   openFilePaths: string[];
+  activeFilePath?: string;
   depth: number;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const isOpen = openFilePaths.includes(node.path);
+  const isActive = node.path === activeFilePath;
 
   if (node.isDirectory) {
     return (
@@ -30,7 +32,7 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
           onClick={() => setExpanded(!expanded)}
         >
           <span className="text-xs text-gray-400">{expanded ? "▾" : "▸"}</span>
-          <span className="text-xs text-stone-400 font-medium">/</span>
+          <svg className="w-3.5 h-3.5 text-stone-400 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5V5.5A1.5 1.5 0 0 0 14.5 4H7.707L6.354 2.646A.5.5 0 0 0 6 2H1.5z"/></svg>
           <span>{node.name}</span>
         </div>
         {expanded && node.children?.map((child) => (
@@ -39,6 +41,7 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
             node={child}
             onOpenFile={onOpenFile}
             openFilePaths={openFilePaths}
+            activeFilePath={activeFilePath}
             depth={depth + 1}
           />
         ))}
@@ -48,20 +51,20 @@ function FileNode({ node, onOpenFile, openFilePaths, depth }: {
 
   return (
     <div
-      className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer hover:bg-stone-50 rounded text-sm ${
-        isOpen ? "underline text-gray-800" : "text-gray-700"
+      className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer rounded text-sm ${
+        isActive ? "bg-stone-100 text-gray-800" : "hover:bg-stone-50 text-gray-700"
       }`}
       style={{ paddingLeft: `${depth * 16 + 8}px` }}
       onClick={() => onOpenFile(node.path, node.name)}
     >
       <span className="w-4" />
-      <span className="text-xs text-stone-400">—</span>
+      <span className="text-stone-300 text-xs">·</span>
       <span className="truncate">{node.name}</span>
     </div>
   );
 }
 
-export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths }: WorkspaceDirProps) {
+export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths, activeFilePath }: WorkspaceDirProps) {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-stone-100">
@@ -91,6 +94,7 @@ export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePat
               node={node}
               onOpenFile={onOpenFile}
               openFilePaths={openFilePaths}
+              activeFilePath={activeFilePath}
               depth={0}
             />
           ))

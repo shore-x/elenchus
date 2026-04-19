@@ -43,8 +43,9 @@ export class AgentTurn {
     messages: LlmMessage[],
     hasPendingFromOther: boolean,
     hasChildren: boolean = false,
+    canSpawnChild: boolean = true,
   ): Promise<TurnResult> {
-    const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren);
+    const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren, canSpawnChild);
 
     const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
 

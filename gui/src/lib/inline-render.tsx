@@ -47,7 +47,7 @@ function hasFileExtension(path: string): boolean {
 
 // Absolute path: starts with /, has at least one / separator, and the last segment has a known extension
 // Optional line range suffix: :digits or :digits-digits
-const BARE_PATH_RE = /(\/[^\s`*]+?[^\s`*])\/([^\s`*/]+)\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|scala|clj|hs|elm|dart|lua|r|html|htm|css|scss|less|vue|svelte|json|yaml|yml|toml|ini|env|xml|graphql|gql|sh|bash|zsh|fish|ps1|bat|cmd|md|mdx|txt|rst|adoc|org|tex|csv|tsv|sql|lock|cfg|conf|dockerfile|makefile|cmake|gitignore|envrc|editorconfig|wasm|proto|thrift|avsc)(?::(\d+(?:-\d+)?))?/g;
+const BARE_PATH_RE = /@?(\/[^\s`*]+?[^\s`*])\/([^\s`*/]+)\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|scala|clj|hs|elm|dart|lua|r|html|htm|css|scss|less|vue|svelte|json|yaml|yml|toml|ini|env|xml|graphql|gql|sh|bash|zsh|fish|ps1|bat|cmd|md|mdx|txt|rst|adoc|org|tex|csv|tsv|sql|lock|cfg|conf|dockerfile|makefile|cmake|gitignore|envrc|editorconfig|wasm|proto|thrift|avsc)(?::(\d+(?:-\d+)?))?/g;
 
 function isFilePath(text: string): boolean {
   return text.startsWith("/") && text.includes("/") && hasFileExtension(text);
@@ -146,7 +146,8 @@ function parseSegments(text: string): Segment[] {
 
       for (const pp of pathParts) {
         if (pp.isPath) {
-          const { path: barePath, lineRange } = stripLineRange(pp.fullPath);
+          const cleanPath = pp.fullPath.startsWith("@") ? pp.fullPath.slice(1) : pp.fullPath;
+          const { path: barePath, lineRange } = stripLineRange(cleanPath);
           segments.push({ type: "file-path", fullPath: barePath, displayName: shortenPath(barePath), lineRange });
         } else if (pp.text) {
           segments.push({ type: "text", value: pp.text });

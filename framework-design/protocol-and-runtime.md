@@ -28,7 +28,7 @@ Current persistence and recovery use the run-directory-local SQLite database `.e
 ## Relevant Overview Sections
 
 - `framework-design.md` / Chapter 3 summary
-- `framework-design.md` / Principles index: P2, P6, P8, P13, P21, P24, P25
+- `framework-design.md` / Principles index: P2, P6, P8, P13, P21, P24, P25, P30
 
 ---
 
@@ -43,7 +43,9 @@ Therefore, tool invocation is not immediate execution. For every proposal-produc
 - approval becomes the commitment boundary
 - runtime then performs the corresponding effect according to the tool category
 
-This preserves the dual-agent value of cross-checking before commitment.
+**Exception (P30)**: tools marked `autoApprove` bypass the vote step. `readFile` is the current example: it is a read-only operation with no consequential side effects, so the proposal is auto-approved immediately after being recorded. The proposal, auto-approval system message, and tool result are all still recorded in the ledger as public facts.
+
+This preserves the dual-agent value of cross-checking before commitment, while recognizing that pure read operations do not carry commitment risk.
 
 ## 2. Agent Autonomy
 
@@ -76,6 +78,30 @@ Blocking tools such as `bash`, `readFile`, and `writeFile` follow this pattern:
 6. unit returns to the opposite agent's turn
 
 During `Executing`, no agent is active.
+
+### 4.1 Auto-Approved Blocking Tools (P30)
+
+`readFile` is a blocking tool that is auto-approved: it does not require the partner's vote.
+
+> **原则 P30（纯读操作可豁免投票）**：对环境的纯读操作不产生 consequential 副作用，其 proposal 可自动批准而无需伙伴 agent 投票。自动批准仍经过 Executing 状态，执行结果仍作为公共事实写入 ConversationLedger。
+
+Auto-approved blocking tools follow a modified execution path:
+
+1. proposal is recorded in `ConversationLedger` with full detail
+2. runtime immediately marks the proposal as approved and records a system message noting the auto-approval
+3. unit enters `Executing`
+4. tool runs synchronously
+5. structured `tool_result_message` is written back as public fact
+6. unit returns to the opposite agent's turn
+
+The partner agent sees the full execution chain (proposal → auto-approval → result) in the next turn's visible context, preserving information transparency. The only difference from the normal blocking path is that no vote step occurs, saving two turns of dialogue overhead.
+
+The `autoApprove` flag on `ElenchusTool` is the mechanism for marking such tools. The criteria for `autoApprove` eligibility are strict:
+- the operation must be **purely read-only** with no consequential side effects
+- the operation must be **deterministic** in its observable effects (same input → same output)
+- the operation must not affect any external state that other agents or systems depend on
+
+`bash` does not qualify (command space is open and may have side effects). `writeFile` does not qualify (modifies external state). `readFile` qualifies because it only reads file content into the conversation context.
 
 ## 5. Non-Blocking Tool Execution
 
@@ -212,6 +238,7 @@ This keeps recovery semantically honest while still preserving durable history a
 - **v3.5 (2026-04-12)**: Added the schema-version boundary for SQLite persistence. During the current rapid-iteration phase, a schema mismatch causes the local `.elenchus/state.db` store to be rebuilt rather than migrated in place.
 - **v3.4 (2026-04-12)**: Updated the persistence implementation note from filesystem snapshots to SQLite-backed durable storage in `.elenchus/state.db`. Clarified that SQLite retains the full durable history while cold-start recovery rebuilds only the next working set.
 - **v3.3 (2026-04-12)**: Added the cold-start recovery boundary. Documented that resumable session state is stored under the run-directory-local `.elenchus/` folder, and clarified that persisted `turn-a` / `turn-b` / `executing` normalize to `idle` rather than resuming mid-turn or mid-execution.
+- **v5.0 (2026-04-19)**: Add P30 (pure read operations may bypass voting). `readFile` is now auto-approved: proposals execute immediately without partner vote, while still entering Executing state and recording results as public facts. Add `autoApprove` flag to tool definitions. Add §4.1 Auto-Approved Blocking Tools. Update §1 proposal-vote to include the P30 exception. `readFile` also gains line-range reading (`offset`/`limit` parameters) for context-efficient file access.
 - **v4.0 (2026-04-18)**: Remove `unmountChild` from non-blocking tools. Replace remount contract with fixed slot pool model: all children always visible, no remount needed. Updated §5, §7, changelog.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the non-blocking runtime model and documented the approved child remount contract. [Superseded by v4.0]
 - **v3.1 (2026-04-12)**: Reframed `report` and `yield` as one upward communication family rather than exceptional escalation paths. Clarified that `yield` is a general upward handoff that may request more information before pausing, while `report` is a routine coordination move used at key decision points when local progress can continue.

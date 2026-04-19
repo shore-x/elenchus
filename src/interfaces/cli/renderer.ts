@@ -32,8 +32,15 @@ function formatToolArgs(toolName: string, args: Record<string, unknown>): string
   switch (toolName) {
     case "bash":
       return String(args.command);
-    case "readFile":
-      return String(args.path);
+    case "readFile": {
+      const offset = args.offset as number | undefined;
+      const limit = args.limit as number | undefined;
+      const hasRange = offset !== undefined || limit !== undefined;
+      const start = offset ?? 1;
+      const end = limit !== undefined ? start + limit - 1 : "end";
+      const rangeInfo = hasRange ? `:${start}-${end}` : "";
+      return `${args.path}${rangeInfo}`;
+    }
     case "writeFile":
       return `${args.path} (${String(args.content).length} chars)`;
     case "yield":

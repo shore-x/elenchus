@@ -245,27 +245,35 @@ button.file-link:hover {
   background-color: #bfdbfe;
 }
 
-/* PreviewPanel line numbers */
-.line-numbers {
-  padding: 1rem 0.5rem 1rem 1rem;
+/* PreviewPanel raw view */
+.code-table {
+  padding: 1rem 0;
+  line-height: 1.5;
+  cursor: default;
+}
+
+.code-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.code-row .line-number {
+  flex-shrink: 0;
+  width: 3.5em;
+  padding-right: 1em;
   text-align: right;
   color: #a8a29e;
   font-size: 0.8125rem;
-  line-height: 1.5;
+  line-height: inherit;
   user-select: none;
-  flex-shrink: 0;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-.code-content {
-  padding: 1rem 1rem 1rem 0.5rem;
+.code-row .code-line {
   flex: 1;
   min-width: 0;
-}
-
-.code-content .code-line {
-  min-height: 1.5em;
-  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: inherit;
 }
 
 /* ChatPanel reference chips */
@@ -302,21 +310,81 @@ button.file-link:hover {
   color: #1e40af;
 }
 
-/* PreviewPanel floating reference button */
-.ref-float-btn {
+/* PreviewPanel drag-to-chat hint near cursor */
+.ref-drag-hint {
+  position: absolute;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #6b7280;
+  background-color: rgba(255, 255, 255, 0.9);
+  border: 1px solid #e5e7eb;
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+  user-select: none;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Custom drag chip that follows cursor during drag */
+.ref-drag-chip {
+  position: fixed;
+  z-index: 9999;
   padding: 3px 10px;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   background-color: #dbeafe;
   color: #1e40af;
   border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  cursor: pointer;
-  z-index: 10;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  transition: background-color 0.15s;
+  border-radius: 9999px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+  transform: translate(0, -50%);
+  transition: none;
 }
 
-.ref-float-btn:hover {
-  background-color: #bfdbfe;
+/* Fly-in animation chip (appended to body) */
+.ref-fly-chip {
+  position: fixed;
+  z-index: 9999;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  background-color: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  border-radius: 9999px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  transition: left 250ms cubic-bezier(0.2, 0, 0, 1),
+              top 250ms cubic-bezier(0.2, 0, 0, 1),
+              transform 250ms cubic-bezier(0.2, 0, 0, 1),
+              opacity 250ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ChatPanel drop zone active state — subtle highlight */
+.drop-zone-active {
+  box-shadow: inset 0 0 0 1.5px rgba(147, 197, 253, 0.5);
+  background-color: rgba(239, 246, 255, 0.25) !important;
+}
+
+/* Ref chip appear animation */
+.ref-chip-appear {
+  animation: ref-chip-pop 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes ref-chip-pop {
+  from {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }

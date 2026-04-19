@@ -1,6 +1,6 @@
 // Elenchus GUI - Chat Panel Component
 // Displays conversation messages for a selected unit with input area (L0 only).
-// Receives file line references from PreviewPanel via props.
+// Drop zone for PreviewPanel's custom drag-to-reference (marked via data-drop-zone).
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { ConversationMessage, SessionInfo, AgentTreeNode, AgentId, ProposalStatus, FileReference } from "../../lib/types";
@@ -18,15 +18,19 @@ interface ChatPanelProps {
 }
 
 function agentTagClass(agent: AgentId): string {
-  return agent === "agent-a" ? "bg-stone-100 text-stone-600" : "bg-stone-200 text-stone-700";
+  return agent === "agent-a" ? "bg-sky-50 text-sky-500" : "bg-indigo-50 text-indigo-500";
+}
+
+function agentBorderClass(agent: AgentId): string {
+  return agent === "agent-a" ? "border-l-2 border-sky-200" : "border-l-2 border-indigo-200";
 }
 
 function proposalStatusBadge(status: ProposalStatus): { label: string; cls: string } {
   switch (status) {
     case "pending": return { label: "pending", cls: "bg-stone-100 text-stone-600" };
-    case "approved": return { label: "approved", cls: "bg-stone-200 text-stone-700" };
-    case "rejected": return { label: "rejected", cls: "bg-stone-300 text-stone-700" };
-    case "superseded": return { label: "superseded", cls: "bg-stone-50 text-stone-500" };
+    case "approved": return { label: "approved", cls: "bg-emerald-50 text-emerald-500" };
+    case "rejected": return { label: "rejected", cls: "bg-stone-100 text-stone-400" };
+    case "superseded": return { label: "superseded", cls: "bg-stone-50 text-stone-400" };
   }
 }
 
@@ -46,7 +50,7 @@ function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; 
     case "agent_message":
       return (
         <div className="flex justify-start mb-3">
-          <div className="max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed">
+          <div className={`max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed ${agentBorderClass(message.authoredBy)}`}>
             <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
               {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
             </span>
@@ -111,7 +115,7 @@ function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; 
             onClick={() => setExpanded(!expanded)}
           >
             <div className="flex items-center gap-2">
-              <span className={`font-medium ${message.success ? "text-stone-600" : "text-stone-500"}`}>
+              <span className={`font-medium ${message.success ? "text-emerald-500" : "text-stone-400"}`}>
                 {message.success ? "Success" : "Failed"}
               </span>
               <span className="text-gray-700">{message.toolName}</span>
@@ -239,10 +243,10 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
 
     let content = text;
     if (refs.length > 0) {
-      const refLine = refs.map(formatRefForMessage).join(", ");
+      const refLine = refs.map(formatRefForMessage).join(" ");
       content = content
-        ? `${content}\n\nReferencing ${refLine}`
-        : `Referencing ${refLine}`;
+        ? `${content} ${refLine}`
+        : refLine;
     }
 
     onSendMessage(content);
@@ -267,7 +271,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
   }, [sendKeyMode, handleSend]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-drop-zone="chat-input" className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-200/80 bg-white/80 backdrop-blur-sm">
         {crumbs.map((crumb, i) => (
@@ -301,28 +305,26 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
       {/* Input */}
       {isL0 ? (
         <div
-          className="border-t border-stone-200/80 bg-white/80 backdrop-blur-sm px-4 py-3"
+          className="border-t border-stone-200/80 bg-white/80 backdrop-blur-sm px-4 py-3 transition-colors duration-150"
         >
           {/* Reference chips */}
-          {refs.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {refs.map((ref, i) => (
-                <span key={`${ref.path}:${ref.startLine}-${ref.endLine}`} className="ref-chip">
-                  @{(() => {
-                    const segs = ref.path.split("/").filter(Boolean);
-                    const short = segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
-                    return `${short}:${formatLineRange(ref.startLine, ref.endLine)}`;
-                  })()}
-                  <span
-                    className="ref-chip-remove"
-                    onClick={() => onRemoveRef(i)}
-                  >
-                    ×
-                  </span>
+          <div data-ref-chips className="flex flex-wrap gap-1.5 mb-2 min-h-[0px]">
+            {refs.length > 0 && refs.map((ref, i) => (
+              <span key={`${ref.path}:${ref.startLine}-${ref.endLine}`} className="ref-chip ref-chip-appear">
+                @{(() => {
+                  const segs = ref.path.split("/").filter(Boolean);
+                  const short = segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
+                  return `${short}:${formatLineRange(ref.startLine, ref.endLine)}`;
+                })()}
+                <span
+                  className="ref-chip-remove"
+                  onClick={() => onRemoveRef(i)}
+                >
+                  ×
                 </span>
-              ))}
-            </div>
-          )}
+              </span>
+            ))}
+          </div>
           <div className="flex gap-2">
             <textarea
               className="flex-1 resize-none border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-stone-400 focus:ring-1 focus:ring-stone-200"
