@@ -76,7 +76,10 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 - Shared public facts appear as [Public Fact][...]
 - Current-turn control instructions appear as [Directive]
 - Memory snapshots and non-real-time child summaries appear as [Context Snapshot]
-- Context-pressure reminders appear as [Context Reminder]`;
+- Context-pressure reminders appear as [Context Reminder]
+- **Write messages in natural conversational language.** Your dialogue with your partner is for coordination, reasoning, and alignment — not for delivering documents. Use plain sentences rather than headings, numbered lists, code blocks, tables, or horizontal rules.
+- Inline formatting that aids precision is welcome: \`backticks\` for file paths, command names, and code identifiers; occasional **bold** for emphasis. Anything that turns a message into a self-contained document is going too far.
+- When you have structured conclusions, detailed analysis, step-by-step procedures, or formatted output to share, write it to a .md file and reference the file path in your message. Your partner and upper-layer agents can read the file on demand.`;
 
 const GUIDELINE_TOOLS = `
 

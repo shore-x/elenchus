@@ -55,7 +55,7 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
       <div className="flex-1 overflow-y-auto">
         {!content ? (
           <div className="flex items-center justify-center h-full text-sm text-gray-400">
-            Double-click a file in the workspace to preview
+            Click a file in the workspace to preview
           </div>
         ) : content.renderAsMarkdown ? (
           <div className="markdown-body p-6">

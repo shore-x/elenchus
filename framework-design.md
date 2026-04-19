@@ -119,9 +119,10 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 - **消息通道**用于 agent 之间的即时沟通与工作触发。消息到达即触发接收方开始工作，承载信号、协调意图和轻量摘要。
 - **知识通道**通过文件系统中的 `.md` 文件实现跨单元、跨轮次的持久化知识共享。Agent 将工作记录、经验总结等保存为 `.md` 文件，在向上回报中提供文件路径以便其他 agent 按需读取。知识文件存放在项目中有意义的位置，不属于任何特定 agent。
 - 消息通道不应承载详细工作成果；知识通道不应承担即时触发职责。两者互补，不互相替代。
+- 消息通道中的载荷应保持自然对话语言风格，而非文档式 Markdown。结构化结论、详细分析、步骤化产出等应写入 .md 文件并通过知识通道共享；消息中仅引用文件路径。这遵循 **P29（消息通道对话风格）** 原则。
 - Agent 读取其他 agent 产出的知识文件时，应以引用 + 按需读取为主，避免大规模数据冗余（复制）。若需要整合知识，应产出自己的理解/摘要，而非镜像原始文件。
 
-此设计遵循 **P27（双通道通信）** 原则。详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §11-12 与 [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) §5.1。
+此设计遵循 **P27（双通道通信）** 与 **P29（消息通道对话风格）** 原则。详细设计见 [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) §11-12 与 [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) §5.1。
 
 ### 2.5 本章相关核心原则
 
@@ -134,6 +135,7 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 - **P15**：新消息边界显式化
 - **P16**：受众显式性
 - **P17-P20 / P22-P23 / P26**：压缩视图与方向命名相关原则
+- **P29**：消息通道对话风格
 
 ## 第三章 行动协议与运行时语义
 
@@ -249,6 +251,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - **P10**：无状态Agent
 - **P27**：双通道通信
 - **P28**：L0 角色策略约束
+- **P29**：消息通道对话风格
 
 ---
 ## 第五章 状态模型与工具面
@@ -336,6 +339,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | P26 | 方向命名显式化 | Conversation Model |
 | P27 | 双通道通信 | Knowledge View / Hierarchy and Layers |
 | P28 | L0 角色策略约束 | Hierarchy and Layers |
+| P29 | 消息通道对话风格 | Conversation Model |
 
 ## 附录B 术语表
 
@@ -373,6 +377,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v8.1 (2026-04-19)**：新增 P29（消息通道对话风格）原则：消息通道载荷应保持自然对话语言，结构化产出写入 .md 文件并通过知识通道共享。同步更新 §2.4.1、§2.5、原则索引、术语表；同步更新 `conversation-model.md`。
 - **v8.0 (2026-04-18)**：知识空间从双根模型迁移到单目的地 + 逻辑领地模型。消除"全局 vs 项目"的范围判断——知识只写在工作所在的位置。workspaceRoot（用户可配置，默认 `~/Elenchus/`）取代 `~/.elenchus/` 作为工作空间根目录。L0 bash cwd = workspaceRoot；child projectRoot 从 task brief 自动推断。仅 workspaceRoot AGENT.md 注入 prompt。SQLite state.db 移至 workspaceRoot 下。移除 `~/.elenchus/knowledge/` 作为 agent 写入目的地。引入合作者模型：agent 集体 = 用户的合作者，跨项目可见性是协调前提。术语表更新：双层知识空间 → 单目的地知识空间，全局根目录 → workspaceRoot。同步更新 `workspace-ownership-analysis.md` §8-9、`knowledge-view.md`。
 - **v7.0 (2026-04-18)**：子 Agent 生命周期从 unmount/remount 模型迁移到固定 Slot 池模型。移除 `unmountChild` 工具、mounted/dormant 可见性维度。父 agent 拥有固定数量协调 slot，所有 child 始终可见。Slot 回收通过协作式调度（sendToChild → yield → reassign）。不提供强制上下文重置，依赖任务亲和性 + 压缩自调节 + 知识外化三层机制。更新 §4.3.1、§5.2、§5.3、术语表、原则索引（P10 扩展）。同步更新 `workspace-ownership-analysis.md` 第七节。
 - **v6.0 (2026-04-17)**：引入双层根目录架构：globalRoot（`~/.elenchus/`）+ projectRoot（cwd/git root）。全局根存储跨项目知识（`knowledge/`）、按项目运行时状态（`projects/<hash>/state.db`）、全局 AGENT.md；项目根是 bash cwd 与项目知识产物位置。Prompt 注入改为全局 + 项目双 AGENT.md。Session 持久化从 `<projectRoot>/.elenchus/state.db` 迁移到 `~/.elenchus/projects/<hash>/state.db`。术语表更新：共享知识空间 → 双层知识空间，`.elenchus` 运行目录 → `~/.elenchus/` 全局根目录。同步更新 §2.4、§4.3、文档地图、术语表。

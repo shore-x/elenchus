@@ -27,7 +27,7 @@ It intentionally does **not** define context compression details. Compression is
 ## Relevant Overview Sections
 
 - `framework-design.md` / Chapter 2 summary
-- `framework-design.md` / Principles index: P1, P4, P7, P11, P12, P14, P15, P16, P26
+- `framework-design.md` / Principles index: P1, P4, P7, P11, P12, P14, P15, P16, P26, P29
 - `framework-design.md` / Glossary entries for `ConversationLedger`, `ConversationProjector`, `Incoming Message`, `Upward Message`
 
 ---
@@ -46,6 +46,25 @@ This yields the core communication boundary:
 > **原则 P7（通信载荷非结构化，记录封套结构化）**：Agent间传递的内容载荷保持非结构化文本；框架在unit级记录层必须使用结构化消息封套保存对话事实，以支持轮次控制、状态更新、投影与后续压缩。
 
 The important consequence is that the framework should not force agent meaning into rigid schemas too early, but it must still preserve enough structure to support runtime correctness.
+
+### 1.1 Message Channel Conversational Style (P29)
+
+P7 states that message payloads remain unstructured text, but this does not mean the *style* of that text is unconstrained. The dual-channel architecture (P27) assigns fundamentally different roles to the message channel and the knowledge channel:
+
+- **Message channel**: coordination, reasoning, alignment — ephemeral, push-based, context-budget-constrained.
+- **Knowledge channel** (.md files): structured conclusions, detailed analysis, step-by-step procedures — persistent, pull-based, on-demand.
+
+When agents write document-style Markdown in messages (headings, numbered lists, code blocks, tables, horizontal rules), they effectively use the narrow message channel to carry content that belongs in the knowledge channel. This wastes context budget on formatting tokens, creates a false sense of durable structure in an ephemeral medium, and blurs the boundary between the two channels.
+
+The correct separation is:
+
+- Messages should use **natural conversational language** — plain sentences, as in spoken dialogue between collaborators.
+- Lightweight inline formatting that aids precision is acceptable: backticks for file paths, command names, and code identifiers; occasional bold for emphasis.
+- Structured or detailed output should be written to a `.md` file and referenced by path in the message, so that consumers can read it on demand via the knowledge channel.
+
+> **原则 P29（消息通道对话风格）**：消息通道载荷应保持自然对话语言风格，而非文档式 Markdown。结构化结论、详细分析、步骤化产出等应写入 .md 文件并通过知识通道共享；消息中仅引用文件路径。这确保消息通道专注于协调与推理，不越界承载知识通道的职责。
+
+P29 is a refinement of P7 (payload unstructured) in the specific dimension of *writing style*, and a direct consequence of P27 (dual-channel communication). It does not contradict P7 — the payload remains unstructured text, but that text should be conversational rather than document-formatted.
 
 ## 2. Unified Message Model
 
@@ -219,6 +238,7 @@ should remain third-person and explicitly name `Agent A` or `Agent B` when relev
 
 ## Change Log
 
+- **v3.4 (2026-04-19)**: Added §1.1 Message Channel Conversational Style (P29). P29 refines P7 in the writing-style dimension and derives from P27: message payloads should use natural conversational language rather than document-style Markdown; structured output belongs in .md files via the knowledge channel.
 - **v3.3 (2026-04-12)**: Added the implementation boundary for SQLite-backed persistence. The durable store remains authoritative, but unit-graph integrity is maintained by the application-layer persistence logic rather than DB-level foreign keys.
 - **v3.2 (2026-04-12)**: Updated the persistence note to reflect the SQLite-backed durable store in `.elenchus/state.db`. The ledger remains the durable fact authority, while cold-start reconstructs only the next working context rather than eagerly loading the full durable history into runtime memory.
 - **v3.1 (2026-04-12)**: Clarified the persistence relationship between `ConversationLedger` and startup working-set reconstruction. The ledger remains the durable fact authority, while cold-start may reconstruct the next working context from persisted `Memory Snapshot + Recent Raw Window` without eagerly loading all historical runtime state.
