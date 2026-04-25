@@ -1,6 +1,9 @@
 // Elenchus - SQLite Session Persistence
 // Stores the full durable session history in SQLite while reconstructing only the
 // recovery working set that the runtime needs on cold start.
+// Message persistence is append-only: new messages are inserted with version=1,
+// updated messages (e.g. proposal status changes) are appended with version=last+1.
+// Context construction queries deduplicate by taking the latest version per message_id.
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -21,7 +24,7 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS: AgentId[] = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "9";
+const CURRENT_SCHEMA_VERSION = "10";
 
 interface SqliteSessionPersistenceOptions {
   workspaceRoot: string;
@@ -61,6 +64,10 @@ interface MessageRow {
 
 interface PendingProposalSeqRow {
   seq: number;
+}
+
+interface VersionRow {
+  max_version: number;
 }
 
 interface CountRow {
@@ -206,6 +213,71 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     this.db.close();
   }
 
+  appendMessage(unitId: string, seq: number, message: ConversationMessage): void {
+    const metadata = buildMessageMetadata(message);
+    this.db.prepare(`
+      INSERT INTO ledger_messages (
+        message_id, unit_id, seq, version, kind, turn_authored, visible_from_turn,
+        created_at, agent_id, proposal_status, proposal_ref_message_id,
+        tool_name, delivery_mode, success, body
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      message.id,
+      unitId,
+      seq,
+      message.kind,
+      message.turnAuthored,
+      message.visibleFromTurn,
+      message.timestamp,
+      metadata.agentId,
+      metadata.proposalStatus,
+      metadata.proposalRefMessageId,
+      metadata.toolName,
+      metadata.deliveryMode,
+      metadata.success,
+      JSON.stringify(message),
+    );
+  }
+
+  updateMessage(unitId: string, message: ConversationMessage): void {
+    const metadata = buildMessageMetadata(message);
+    const currentVersion = (this.db
+      .prepare(`SELECT MAX(version) AS max_version FROM ledger_messages WHERE message_id = ?`)
+      .get(message.id) as VersionRow | undefined)?.max_version ?? 0;
+    const nextVersion = currentVersion + 1;
+    const seq = (this.db
+      .prepare(`SELECT seq FROM ledger_messages WHERE message_id = ? AND version = ?`)
+      .get(message.id, currentVersion) as { seq: number } | undefined)?.seq;
+
+    if (seq === undefined) {
+      throw new Error(`Cannot update message ${message.id}: no previous version found in ledger_messages`);
+    }
+
+    this.db.prepare(`
+      INSERT INTO ledger_messages (
+        message_id, unit_id, seq, version, kind, turn_authored, visible_from_turn,
+        created_at, agent_id, proposal_status, proposal_ref_message_id,
+        tool_name, delivery_mode, success, body
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      message.id,
+      unitId,
+      seq,
+      nextVersion,
+      message.kind,
+      message.turnAuthored,
+      message.visibleFromTurn,
+      message.timestamp,
+      metadata.agentId,
+      metadata.proposalStatus,
+      metadata.proposalRefMessageId,
+      metadata.toolName,
+      metadata.deliveryMode,
+      metadata.success,
+      JSON.stringify(message),
+    );
+  }
+
   loadSnapshot(): DeliberationUnitSnapshot | null {
     const sessionRow = this.db
       .prepare(`SELECT session_id, root_unit_id FROM sessions WHERE session_id = ? LIMIT 1`)
@@ -329,9 +401,10 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       );
 
       CREATE TABLE IF NOT EXISTS ledger_messages (
-        message_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
         unit_id TEXT NOT NULL,
         seq INTEGER NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
         kind TEXT NOT NULL,
         turn_authored INTEGER NOT NULL,
         visible_from_turn INTEGER NOT NULL,
@@ -343,7 +416,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         delivery_mode TEXT,
         success INTEGER,
         body TEXT NOT NULL,
-        UNIQUE(unit_id, seq)
+        UNIQUE(message_id, version)
       );
 
       CREATE TABLE IF NOT EXISTS committed_steps (
@@ -378,7 +451,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         max_retries INTEGER NOT NULL
       );
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_unit_seq
+      CREATE INDEX IF NOT EXISTS idx_ledger_unit_seq
       ON ledger_messages(unit_id, seq);
 
       CREATE INDEX IF NOT EXISTS idx_ledger_unit_visible_turn
@@ -460,28 +533,6 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       ON CONFLICT(unit_id, agent_id) DO UPDATE SET
         cursor_exclusive = excluded.cursor_exclusive
     `);
-    const upsertMessage = this.db.prepare(`
-      INSERT INTO ledger_messages (
-        message_id, unit_id, seq, kind, turn_authored, visible_from_turn,
-        created_at, agent_id, proposal_status, proposal_ref_message_id,
-        tool_name, delivery_mode, success, body
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(message_id) DO UPDATE SET
-        unit_id = excluded.unit_id,
-        seq = excluded.seq,
-        kind = excluded.kind,
-        turn_authored = excluded.turn_authored,
-        visible_from_turn = excluded.visible_from_turn,
-        created_at = excluded.created_at,
-        agent_id = excluded.agent_id,
-        proposal_status = excluded.proposal_status,
-        proposal_ref_message_id = excluded.proposal_ref_message_id,
-        tool_name = excluded.tool_name,
-        delivery_mode = excluded.delivery_mode,
-        success = excluded.success,
-        body = excluded.body
-    `);
 
     for (const agentId of AGENT_IDS) {
       upsertCursor.run(
@@ -490,26 +541,6 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         toAgentCursorExclusive(ledgerSnapshot.sequenceStart, ledgerSnapshot.cursors[agentId]),
       );
     }
-
-    ledgerSnapshot.messages.forEach((message, index) => {
-      const metadata = buildMessageMetadata(message);
-      upsertMessage.run(
-        message.id,
-        unitId,
-        ledgerSnapshot.sequenceStart + index,
-        message.kind,
-        message.turnAuthored,
-        message.visibleFromTurn,
-        message.timestamp,
-        metadata.agentId,
-        metadata.proposalStatus,
-        metadata.proposalRefMessageId,
-        metadata.toolName,
-        metadata.deliveryMode,
-        metadata.success,
-        JSON.stringify(message),
-      );
-    });
   }
 
   private saveCommittedSteps(unitId: string, commitLog: readonly CommittedStep[]): void {
@@ -642,8 +673,14 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     const pendingProposalSeq = (this.db
       .prepare(`
         SELECT MIN(seq) AS seq
-        FROM ledger_messages
-        WHERE unit_id = ? AND kind = 'proposal_message' AND proposal_status = 'pending'
+        FROM (
+          SELECT seq, proposal_status, ROW_NUMBER() OVER (
+            PARTITION BY message_id ORDER BY version DESC
+          ) AS rn
+          FROM ledger_messages
+          WHERE unit_id = ? AND kind = 'proposal_message'
+        )
+        WHERE rn = 1 AND proposal_status = 'pending'
       `)
       .get(unitId) as PendingProposalSeqRow | undefined)?.seq;
     const memoryRow = this.db
@@ -665,9 +702,13 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     const sequenceStart = this.computeSequenceStart(totalMessages, memoryRow, pendingProposalSeq ?? null);
     const messages = this.db
       .prepare(`
-        SELECT body
-        FROM ledger_messages
-        WHERE unit_id = ? AND seq >= ?
+        SELECT body FROM (
+          SELECT body, seq, ROW_NUMBER() OVER (
+            PARTITION BY message_id ORDER BY version DESC
+          ) AS rn
+          FROM ledger_messages
+          WHERE unit_id = ? AND seq >= ?
+        ) WHERE rn = 1
         ORDER BY seq ASC
       `)
       .all(unitId, sequenceStart) as MessageRow[];

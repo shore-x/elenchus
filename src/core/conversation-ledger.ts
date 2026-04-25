@@ -1,5 +1,10 @@
 import { type AgentId, type AgentVisibleSnapshot, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type UpwardMessage, type VoteMessage } from "./types.js";
 
+export interface MessagePersistenceSink {
+  onMessageCreated(message: ConversationMessage, seq: number): void;
+  onMessageUpdated(message: ConversationMessage): void;
+}
+
 let nextConversationMessageId = 0;
 
 function generateConversationMessageId(): string {
@@ -14,10 +19,23 @@ export class ConversationLedger {
     "agent-a": 0,
     "agent-b": 0,
   };
+  private readonly sink: MessagePersistenceSink;
+  private suppressPersistence = false;
+
+  constructor(sink?: MessagePersistenceSink) {
+    this.sink = sink ?? {
+      onMessageCreated() {},
+      onMessageUpdated() {},
+    };
+  }
 
   private appendMessage(message: ConversationMessage): void {
+    const seq = this.sequenceStart + this.messages.length;
     this.messages.push(message);
     this.totalMessages += 1;
+    if (!this.suppressPersistence) {
+      this.sink.onMessageCreated(message, seq);
+    }
   }
 
   appendIncomingMessage(content: string, meta: LedgerMessageMeta): ConversationMessage {
@@ -236,6 +254,9 @@ export class ConversationLedger {
       if (message.kind === "proposal_message" && message.status === "pending") {
         message.status = "superseded";
         count++;
+        if (!this.suppressPersistence) {
+          this.sink.onMessageUpdated(message);
+        }
       }
     }
     return count;
@@ -255,10 +276,23 @@ export class ConversationLedger {
   }
 
   loadSnapshot(snapshot: ConversationLedgerSnapshot): void {
-    this.sequenceStart = snapshot.sequenceStart;
-    this.totalMessages = snapshot.totalMessages;
-    this.messages = snapshot.messages.map((message) => ({ ...message }));
-    this.cursors = { ...snapshot.cursors };
+    this.suppressPersistence = true;
+    try {
+      this.sequenceStart = snapshot.sequenceStart;
+      this.totalMessages = snapshot.totalMessages;
+      this.messages = snapshot.messages.map((message) => ({ ...message }));
+      this.cursors = { ...snapshot.cursors };
+    } finally {
+      this.suppressPersistence = false;
+    }
+  }
+
+  flushPendingUpdates(): void {
+    for (const message of this.messages) {
+      if (message.kind === "proposal_message" && message.status !== "pending") {
+        this.sink.onMessageUpdated(message);
+      }
+    }
   }
 
   toPendingProposal(proposalId: string): PendingProposal | null {
@@ -287,6 +321,9 @@ export class ConversationLedger {
     }
 
     proposal.status = status;
+    if (!this.suppressPersistence) {
+      this.sink.onMessageUpdated(proposal);
+    }
     return proposal;
   }
 

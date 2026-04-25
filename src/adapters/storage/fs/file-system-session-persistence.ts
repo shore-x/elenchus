@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DeliberationUnitSnapshot } from "../../../core/types.js";
+import type { ConversationMessage, DeliberationUnitSnapshot } from "../../../core/types.js";
 import type { SessionPersistenceAdapter } from "../../../application/session-persistence.js";
 
 interface PersistedSessionFile {
@@ -63,5 +63,13 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
     writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     mkdirSync(dirname(this.sessionFilePath), { recursive: true });
     renameSync(tempPath, this.sessionFilePath);
+  }
+
+  appendMessage(_unitId: string, _seq: number, _message: ConversationMessage): void {
+    // no-op: file-system persistence relies on full-snapshot saveSnapshot
+  }
+
+  updateMessage(_unitId: string, _message: ConversationMessage): void {
+    // no-op: file-system persistence relies on full-snapshot saveSnapshot
   }
 }

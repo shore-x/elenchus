@@ -39,6 +39,14 @@ export class DeliberationSession {
       onDurableStateChange: () => {
         this.persist();
       },
+      messagePersistenceSink: this.persistence ? {
+        onMessageCreated: (message, seq) => {
+          this.persistence!.appendMessage(this.unit.getUnitId(), seq, message);
+        },
+        onMessageUpdated: (message) => {
+          this.persistence!.updateMessage(this.unit.getUnitId(), message);
+        },
+      } : undefined,
     });
 
     if (restoredSnapshot) {

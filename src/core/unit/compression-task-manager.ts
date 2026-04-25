@@ -2,6 +2,8 @@
 // Manages unit-level context compression lifecycle without mutating ConversationLedger history.
 // Owns the active compression task slot, reminder threshold checks, recent-raw window boundary,
 // and limited retry handling for asynchronous Memory Snapshot refreshes.
+// registerSuccess receives the current ledger messages so that recentRawStartIndex is computed
+// against the live ledger state at completion time, not the frozen snapshot from task start.
 
 import type { ActiveCompressionTaskSnapshot, CompressionManagerSnapshot, ConversationMessage, MemorySnapshot } from "../types.js";
 
@@ -203,7 +205,7 @@ export class CompressionTaskManager {
     return { ok: true, task: cloneActiveCompressionTask(task) };
   }
 
-  registerSuccess(content: string): MemorySnapshot {
+  registerSuccess(content: string, currentMessages: readonly ConversationMessage[]): MemorySnapshot {
     if (!this.activeTask) {
       throw new Error("Cannot register compression success without an active task");
     }
@@ -216,7 +218,9 @@ export class CompressionTaskManager {
     };
 
     this.memorySnapshot = snapshot;
-    this.recentRawStartIndex = findRecentRawStartIndex(this.activeTask.sourceMessages, this.recentRawTargetChars);
+    // Compute recentRawStartIndex against the current ledger, not the frozen snapshot,
+    // so the index remains valid after async compression adds new messages.
+    this.recentRawStartIndex = findRecentRawStartIndex(currentMessages, this.recentRawTargetChars);
     this.activeTask = null;
     return { ...snapshot };
   }

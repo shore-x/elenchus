@@ -334,7 +334,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <div ref={dropdownRef} className="relative self-end flex">
+            <div ref={dropdownRef} className="relative self-center flex">
               <button
                 className="px-3 py-2 bg-stone-700 text-white rounded-l-lg text-sm font-medium hover:bg-stone-600 disabled:opacity-50 min-w-[5.5rem]"
                 onClick={handleSend}

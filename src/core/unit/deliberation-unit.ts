@@ -11,7 +11,7 @@
 import { AgentTurn } from "./agent-turn.js";
 import { getBuiltInToolRegistry } from "../tools.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
-import { ConversationLedger } from "../conversation-ledger.js";
+import { ConversationLedger, type MessagePersistenceSink } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
 import { buildCompressionSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
@@ -32,6 +32,7 @@ export interface DeliberationUnitOptions {
   unitId?: string;
   onSystemEvent?: OnSystemEvent;
   onDurableStateChange?: () => void;
+  messagePersistenceSink?: MessagePersistenceSink;
 }
 
 export class DeliberationUnit {
@@ -59,6 +60,7 @@ export class DeliberationUnit {
   private commitLog: CommittedStep[] = [];
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
+  private readonly messagePersistenceSink: MessagePersistenceSink | undefined;
   private workspaceRoot: string;
   private projectRoot: string;
   private static readonly MAX_EMPTY_TURNS = 4;
@@ -73,13 +75,14 @@ export class DeliberationUnit {
     this.workspaceRoot = options.workspaceRoot;
     this.projectRoot = options.projectRoot;
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
-    this.ledger = new ConversationLedger();
+    this.ledger = new ConversationLedger(options.messagePersistenceSink);
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
     this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot);
     this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
+    this.messagePersistenceSink = options.messagePersistenceSink;
     this.scope = {
       level: this.level,
       path: options.path ?? [],
@@ -261,6 +264,7 @@ export class DeliberationUnit {
       }
     } finally {
       this.suppressDurableStateChangeNotifications = false;
+      this.ledger.flushPendingUpdates();
     }
 
     this.notifyDurableStateChange();
@@ -388,6 +392,7 @@ export class DeliberationUnit {
       level: childLevel,
       path: childPath,
       unitId,
+      messagePersistenceSink: this.messagePersistenceSink,
       onSystemEvent: (event: SystemEvent) => {
         if (event.type === "upward-message" && this.sameScope(event.scope, child.scope)) {
           const broadcastMeta = this.buildDeferredVisibilityMeta();
@@ -532,7 +537,7 @@ export class DeliberationUnit {
         throw new Error("The compression LLM returned an empty memory snapshot.");
       }
 
-      this.compressionManager.registerSuccess(content);
+      this.compressionManager.registerSuccess(content, this.ledger.readAll());
       this.ledger.appendSystemMessage(this.buildCompressionTaskSuccessMessage(task), this.buildDeferredVisibilityMeta());
       this.notifyDurableStateChange();
     } catch (error) {
@@ -771,9 +776,11 @@ export class DeliberationUnit {
 
     if (toolName === "compressContext") {
       const requirements = String(args.requirements ?? "");
+      const allMessages = this.ledger.readAll();
+      const recentRawMessages = this.compressionManager.getRecentRawMessages(allMessages);
       const started = this.compressionManager.startTask(
         requirements,
-        this.ledger.readAll(),
+        recentRawMessages,
         this.compressionManager.getMemorySnapshot(),
       );
       if (!started.ok) {
