@@ -244,6 +244,7 @@ export type SystemEvent =
   | { type: "tool-result"; scope: UnitScope; toolName: string; success: boolean; output: string; durationMs: number }
   | { type: "child-spawned"; scope: UnitScope; task: string }
   | { type: "child-message-sent"; scope: UnitScope; message: string }
+  | { type: "incoming-message"; scope: UnitScope; content: string }
   | { type: "warning"; scope: UnitScope; message: string }
   | { type: "error"; scope: UnitScope; message: string };
 

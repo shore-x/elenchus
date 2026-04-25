@@ -93,6 +93,7 @@ export class DeliberationUnit {
     this.clearSleepState();
     this.ledger.appendIncomingMessage(content, this.buildDeferredVisibilityMeta());
     this.notifyDurableStateChange();
+    this.emit({ type: "incoming-message", scope: this.scope, content });
 
     if (this.state === "idle" && !this.loopRunning) {
       this.transition(this.state, "turn-a");

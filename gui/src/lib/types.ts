@@ -150,6 +150,7 @@ export type SystemEvent =
   | { type: "tool-result"; scope: { level: ToolLevel; path: number[] }; toolName: string; success: boolean; output: string; durationMs: number }
   | { type: "child-spawned"; scope: { level: ToolLevel; path: number[] }; task: string }
   | { type: "child-message-sent"; scope: { level: ToolLevel; path: number[] }; message: string }
+  | { type: "incoming-message"; scope: { level: ToolLevel; path: number[] }; content: string }
   | { type: "warning"; scope: { level: ToolLevel; path: number[] }; message: string }
   | { type: "error"; scope: { level: ToolLevel; path: number[] }; message: string };
 

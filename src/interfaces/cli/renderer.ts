@@ -194,6 +194,9 @@ export function renderEvent(event: SystemEvent, verbose: number): void {
     case "child-message-sent":
       process.stdout.write(`${C.blue}[Child Message] → ${formatScopeLabel(event.scope)}: ${event.message.length > 100 ? event.message.slice(0, 100) + "..." : event.message}${C.reset}\n`);
       break;
+    case "incoming-message":
+      process.stdout.write(`${C.gray}[User] ${event.content}${C.reset}\n`);
+      break;
     case "warning":
       process.stdout.write(`${C.yellow}[Warning] ${formatScopeLabel(event.scope)} ${event.message}${C.reset}\n`);
       break;

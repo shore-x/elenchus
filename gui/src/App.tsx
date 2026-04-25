@@ -167,7 +167,8 @@ export default function App() {
 
     if (event.type === "agent-message" || event.type === "proposal" || event.type === "vote" ||
         event.type === "tool-result" || event.type === "upward-message" ||
-        event.type === "state-transition" || event.type === "turn-start") {
+        event.type === "state-transition" || event.type === "turn-start" ||
+        event.type === "incoming-message") {
       // Reload messages for current unit
       if (selectedUnitId) {
         api.getUnitMessages(selectedUnitId).then((msgs: ConversationMessage[]) => setMessages(msgs));

@@ -11,7 +11,7 @@ import { SqliteSessionPersistence } from "../../adapters/storage/sqlite/sqlite-s
 import { LocalNodeToolExecutor } from "../../adapters/tools/local-node-tool-executor.js";
 import type { SystemEvent } from "../../core/types.js";
 import { readCliConfig } from "./env.js";
-import { printBanner, printInterrupted, printQueuedUserMessage, printStartupInfo, printTerminating, renderEvent } from "./renderer.js";
+import { printBanner, printInterrupted, printStartupInfo, printTerminating, renderEvent } from "./renderer.js";
 
 export async function main(): Promise<void> {
   const config = readCliConfig();
@@ -62,7 +62,6 @@ export async function main(): Promise<void> {
       return;
     }
 
-    printQueuedUserMessage();
     session.sendUserMessage(trimmed);
   });
 
