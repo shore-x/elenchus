@@ -80,7 +80,10 @@ export function registerSessionIpc(
     }
 
     const workspaceRoot = join(homedir(), "Elenchus");
-    const projectRoot = config.projectRoot ?? process.cwd();
+    const rawProjectRoot = config.projectRoot ?? process.cwd();
+    const projectRoot = rawProjectRoot.startsWith("~")
+      ? join(homedir(), rawProjectRoot.slice(1))
+      : rawProjectRoot;
 
     try {
       session = createSession({

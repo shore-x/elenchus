@@ -3015,7 +3015,8 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
       return { error: `Failed to create LLM client for ${config.provider}/${config.modelName}` };
     }
     const workspaceRoot = join(homedir(), "Elenchus");
-    const projectRoot = config.projectRoot ?? process.cwd();
+    const rawProjectRoot = config.projectRoot ?? process.cwd();
+    const projectRoot = rawProjectRoot.startsWith("~") ? join(homedir(), rawProjectRoot.slice(1)) : rawProjectRoot;
     try {
       session = createSession({
         llmClient,

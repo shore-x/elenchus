@@ -85,18 +85,19 @@ export ELENCHUS_LEVEL="L1"
 elenchus
 ```
 
-## GUI (Tauri Desktop App)
+## GUI (Electron Desktop App)
 
-Elenchus provides a Tauri v2 desktop GUI with a three-column layout (Agent Tree, Chat Panel, Preview Panel).
+Elenchus provides an Electron desktop GUI with a three-column layout (Agent Tree, Chat Panel, Preview Panel).
 
 ### Architecture
 
-The GUI consists of two processes:
+The GUI uses `electron-vite` for a three-way build:
 
-- **Tauri Shell (Rust)**: Manages window lifecycle, spawns the sidecar, persists configuration.
-- **Sidecar (Node.js)**: Runs the core Elenchus deliberation engine, exposes a REST API + WebSocket event stream on `127.0.0.1:<random-port>`. The sidecar prints `ELENCHUS_PORT=<port>` to stdout on startup so the Tauri shell can discover it.
+- **Main Process** (`electron/index.ts`): Runs the core Elenchus deliberation engine directly — no sidecar, no child_process for agent logic. Handles IPC, session management, and tool execution.
+- **Preload** (`electron/preload.ts`): Bridge between main and renderer with `contextIsolation: true`.
+- **Renderer** (`gui/src/`): React + TailwindCSS frontend.
 
-The workspace directory (`~/Elenchus` by default) stores session data in `~/Elenchus/.elenchus-state/`:
+The workspace directory (`~/Elenchus` by default) stores session data:
 
 | File | Purpose |
 |------|---------|
@@ -105,79 +106,59 @@ The workspace directory (`~/Elenchus` by default) stores session data in `~/Elen
 
 ### Prerequisites
 
-- [Rust toolchain](https://www.rust-lang.org/tools/install) (for Tauri backend)
 - Node.js ≥ 18
 
 ### Dev Mode
 
-Use the one-command dev script to start both the sidecar backend and Vite frontend:
-
 ```bash
-# Set your API key (provider-specific env vars also work)
-ANTHROPIC_API_KEY=sk-ant-... ./dev.sh
+# Install dependencies (first time only)
+npm install
 
-# Or via npm
-ANTHROPIC_API_KEY=sk-ant-... npm run dev
-
-# Specify a different provider
-ELENCHUS_PROVIDER=openai ELENCHUS_API_KEY=sk-... ./dev.sh
-
-# Full configuration
-ELENCHUS_PROVIDER=anthropic \
-ELENCHUS_MODEL=claude-sonnet-4-20250514 \
-ELENCHUS_API_KEY=sk-ant-... \
-ELENCHUS_BASE_URL=https://your-proxy.example.com \
-ELENCHUS_PROJECT_ROOT=~/Elenchus \
-./dev.sh
+# Start Electron dev mode (HMR for renderer, auto-reload for main process)
+npm run dev
 ```
 
-The script auto-discovers the sidecar port and injects it into the Vite dev server. Press Ctrl+C to shut down both processes cleanly.
+Configuration is done through the onboarding page in the GUI. The first launch will prompt for provider, model, API key, and project root.
 
-Alternatively, you can start the sidecar and Vite manually in two terminals (the onboarding page will prompt for the sidecar port if `VITE_SIDECAR_PORT` is not set).
+Press Ctrl+C to shut down. DevTools opens automatically in dev mode.
 
 ### Build & Release
-
 
 ```bash
 # 1. Install dependencies (first time only)
 npm install
-cd gui && npm install && cd ..
 
-# 2. Build sidecar binary
-bash scripts/build-sidecar.sh
+# 2. Build all three targets (main + preload + renderer)
+npm run build
 
-# 3. Build Tauri app
-cd gui && npm run tauri build && cd ..
+# 3. Package for distribution
+npm run dist
 ```
 
-The built application is output to `gui/src-tauri/target/release/bundle/`:
+The built application is output to `dist/`:
 
 | Platform | Output |
 |----------|--------|
-| macOS    | `.dmg` and `.app` in `bundle/macos/` |
-| Windows  | `.msi` and `.exe` in `bundle/msi/` |
-| Linux    | `.deb` and `.AppImage` in `bundle/deb/` |
+| macOS    | `.dmg` and `.app` in `dist/` |
+| Windows  | `.msi` and `.exe` in `dist/` |
+| Linux    | `.deb` and `.AppImage` in `dist/` |
 
-> **Note:** The sidecar binary must be rebuilt whenever the core engine (`src/`) changes. The build script places the binary at `gui/src-tauri/binaries/elenchus-sidecar-<target-triple>`.
+> **Note:** `npm run build` compiles TypeScript and bundles the renderer. `npm run dist` additionally packages it into an installer via `electron-builder`. Native modules (better-sqlite3) are automatically rebuilt.
 
-**Environment variables** (all optional, used by `dev.sh` and CLI):
+### Debugging
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ELENCHUS_PROVIDER` | `anthropic` | LLM provider |
-| `ELENCHUS_MODEL` | `claude-sonnet-4-20250514` | Model name |
-| `ELENCHUS_API_KEY` | — | API key (or use provider-specific like `ANTHROPIC_API_KEY`) |
-| `ELENCHUS_BASE_URL` | — | Base URL for third-party providers |
-| `ELENCHUS_PROJECT_ROOT` | `$(pwd)` | Agent working directory |
-| `ELENCHUS_LEVEL` | — | Agent level: L0, L1, L2 |
-| `ELENCHUS_WORKSPACE_ROOT` | `~/Elenchus` | Workspace storage directory |
+- **Renderer DevTools**: Opens automatically in dev mode. In production builds, use `View → Toggle Developer Tools` or `Cmd+Option+I`.
+- **Main process logs**: Printed to the terminal where `npm run dev` was started. Uncaught exceptions also show a dialog box.
+- **IPC inspection**: Use Electron DevTools → Console to inspect `window.electronAPI` calls.
+- **Type checking**: Run `npm run check` to verify TypeScript across the entire project.
+
+### Known Issues
+
+- **`spawn /bin/sh ENOENT`**: If the project root contains `~` (e.g. `~/Elenchus`), the tilde must be expanded to the home directory. The IPC handler now handles this automatically.
 
 ## Development
 
 ```bash
-# Type-check core engine
+# Type-check the entire project (core + electron + GUI)
 npm run check
-
-# Type-check GUI frontend
-cd gui && npx tsc --noEmit
 ```

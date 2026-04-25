@@ -423,25 +423,25 @@ Files are static snapshots. When a child updates a .md file, the parent has no a
 
 ### 10.6 GUI-side file change awareness
 
-The staleness problem described in §10.5 applies to agent-to-agent knowledge sharing. For the **GUI layer**, the sidecar provides real-time file change awareness so the human operator always sees current state:
+The staleness problem described in §10.5 applies to agent-to-agent knowledge sharing. For the **GUI layer**, the Electron main process provides real-time file change awareness so the human operator always sees current state:
 
 **Watcher architecture**:
-- The sidecar runs an `FsWatcher` on `workspaceRoot` using Node.js built-in `fs.watch(_, { recursive: true })` — zero external dependency, stable on macOS.
+- The Electron main process runs an `FsWatcher` on `workspaceRoot` using Node.js built-in `fs.watch(_, { recursive: true })` — zero external dependency, stable on macOS.
 - Watch scope is `workspaceRoot` only (not projectRoot or other directories). This is consistent with the single-destination model: the workspaceRoot is the agent's working world root.
-- The `.elenchus-state/` directory is excluded from watching — it is sidecar-managed infrastructure with frequent writes that are not meaningful for the GUI.
+- The `.elenchus-state/` directory is excluded from watching — it is framework-managed infrastructure with frequent writes that are not meaningful for the GUI.
 
 **Event model**:
 - Rapid events are debounced into 100ms batch windows to avoid flooding.
-- Each batch is broadcast as a `fs-change` WebSocket event: `{ type: "fs-change", changes: Array<{ path, kind }> }` where `kind` is `create | update | delete`.
+- Each batch is broadcast as a `fs-change` IPC event to the renderer: `{ type: "fs-change", changes: Array<{ path, kind }> }` where `kind` is `create | update | delete`.
 - The `kind` is disambiguated from Node.js `fs.watch` event types: `"change"` → `update`; `"rename"` → existence check → `create` or `delete`.
-- `fs-change` is a `ServerEvent` (like `unit-tree-change`), not a `SystemEvent` — it originates from the sidecar infrastructure, not from agent deliberation.
+- `fs-change` is an infrastructure event (like `unit-tree-change`), not a `SystemEvent` — it originates from the file watcher, not from agent deliberation.
 
 **Frontend behavior**:
-- **Workspace tree**: any `fs-change` triggers a full tree refresh via the REST API.
+- **Workspace tree**: any `fs-change` triggers a full tree refresh via the IPC data API.
 - **Preview panel**: if the currently previewed file receives `update`, its content is re-fetched; if `delete`, the preview enters a **deleted-file state** — the tab is preserved (not auto-closed) and an amber warning banner is shown above the last-known content rendered in read-only/faded mode. This preserves the user's ability to see what was there before deletion.
 - **Design rationale for preserving deleted tabs**: the user may need to reference the last-known content (e.g., to understand what was lost, or to recreate it). Auto-closing would discard this information.
 
-**Why sidecar-side, not Tauri Rust-side**: the sidecar already owns the WebSocket broadcaster. Adding a second event channel through Tauri's native event system would require the frontend to listen on two channels and merge events, increasing complexity without benefit. The single-channel approach keeps the event model simple.
+**Why main-process-side**: the Electron main process already owns the IPC channel to the renderer. The `FsWatcher` runs in the main process alongside the deliberation engine, so file change events are broadcast through the same IPC channel as system events — no need for a second event channel. The single-channel approach keeps the event model simple.
 
 This mechanism addresses §10.5 staleness for the GUI layer only. Agent-to-agent staleness remains as described there — agents should use `report` messages to notify partners of significant file changes.
 
@@ -487,7 +487,7 @@ These belong to subsequent **knowledge governance / anti-entropy** problems, not
 ## Change Log
 
 - **v6.1 (2026-04-19)**: Expand workspaceRoot AGENT.md role from pure navigation hub to navigation hub + cross-project persistent context. Add user preferences and project conventions as valid content for root AGENT.md. Update single-destination principle: cross-project information naturally belongs in workspaceRoot AGENT.md. Update Writing Guidance to note root AGENT.md content is visible to all agents across all layers.
-- **v6.0 (2026-04-19)**: Add §10.6 GUI-side file change awareness. Sidecar `FsWatcher` monitors workspaceRoot (not projectRoot) using Node.js built-in `fs.watch(_, { recursive: true })` with 100ms debounce, broadcasting `fs-change` ServerEvent via WebSocket. `.elenchus-state/` excluded from watching. Frontend auto-refreshes workspace tree on any change; preview panel auto-refreshes on update, shows amber warning + last-known content on delete (tab preserved, not auto-closed). Watcher on sidecar side (not Tauri Rust) to keep single event channel.
+- **v6.0 (2026-04-19)**: Add §10.6 GUI-side file change awareness. Electron main process `FsWatcher` monitors workspaceRoot (not projectRoot) using Node.js built-in `fs.watch(_, { recursive: true })` with 100ms debounce, broadcasting `fs-change` event via IPC. `.elenchus-state/` excluded from watching. Frontend auto-refreshes workspace tree on any change; preview panel auto-refreshes on update, shows amber warning + last-known content on delete (tab preserved, not auto-closed). Watcher on Electron main process side to keep single event channel.
 - **v5.0 (2026-04-18)**: Migrate from two-root architecture to single-destination + logical territory model. Eliminate `~/.elenchus/knowledge/` as agent write target — knowledge is written where the work naturally belongs. workspaceRoot (user-configurable, default `~/Elenchus/`) replaces `~/.elenchus/` as the working world root. L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Only workspaceRoot AGENT.md injected into prompt (child project AGENT.md read on demand). SQLite state.db moved to workspaceRoot/.elenchus-state/. Replace two-root-knowledge principle with single-destination principle and logical-territory principle. Update §8 (prompt injection), §9 (knowledge space), §10 (knowledge sharing), §12 (principles).
 - **v4.0 (2026-04-17)**: Introduce two-root architecture: globalRoot (`~/.elenchus/`) + projectRoot (cwd/git root). Global root stores cross-project knowledge (`knowledge/`), per-project state (`projects/<hash>/state.db`), and global AGENT.md. Project root is bash cwd and site for project-specific knowledge artifacts. Prompt injection now includes both global and project AGENT.md. Session persistence moved from `<projectRoot>/.elenchus/state.db` to `~/.elenchus/projects/<hash>/state.db`. Replace shared-knowledge-space principle with two-root-knowledge principle. [Superseded by v5.0]
 - **v3.0 (2026-04-17)**: Redesign §9 from per-agent workspace to shared knowledge space. [Superseded by v4.0]
