@@ -14,13 +14,8 @@ import type { FileReference } from "../../lib/types";
 // --- External link handler ---
 
 async function openExternalUrl(url: string): Promise<void> {
-  try {
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
-  } catch {
-    // Fallback for browser dev mode or if Tauri shell is unavailable
-    window.open(url, "_blank", "noopener");
-  }
+  // In Electron renderer, window.open with _blank opens in the system browser
+  window.open(url, "_blank", "noopener");
 }
 
 function isExternalUrl(href: string): boolean {

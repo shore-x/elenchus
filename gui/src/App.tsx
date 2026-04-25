@@ -1,16 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
-import { useWebSocket } from "./hooks/useWebSocket";
-import { useApi } from "./hooks/useApi";
+import { useEvents } from "./hooks/useEvents";
+import { useIpc } from "./hooks/useIpc";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
 import { AgentTree } from "./components/agent/AgentTree";
 import { WorkspaceDir } from "./components/workspace/WorkspaceDir";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { PreviewPanel } from "./components/preview/PreviewPanel";
 import { OnboardingPage } from "./components/onboarding/OnboardingPage";
-import type { FsTreeNode, ConversationMessage, SessionInfo, FileContent, FileReference } from "./lib/types";
+import type { FsTreeNode, ConversationMessage, SessionInfo, FileReference } from "./lib/types";
 
 export default function App() {
-  const [sidecarPort, setSidecarPort] = useState<number | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
@@ -24,187 +23,129 @@ export default function App() {
   const [fileRefs, setFileRefs] = useState<FileReference[]>([]);
   const [workspaceConfig, setWorkspaceConfig] = useState<{ provider: string; modelName: string; baseUrl?: string; projectRoot: string } | null>(null);
 
-  const api = useApi(sidecarPort);
-  const ws = useWebSocket(sidecarPort);
+  const ipc = useIpc();
+  const events = useEvents();
 
-  // Discover sidecar port or recover persisted config on mount
+  // On mount: try to recover existing session or persisted config
   useEffect(() => {
     (async () => {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
+      // 1. Try to get an already-running session
+      const info = await ipc.getSessionInfo();
+      if (info) {
+        setSessionInfo(info);
+        setSelectedUnitId(info.unitId);
+        setIsConfigured(true);
+        return;
+      }
 
-        // 1. Try to get already-running sidecar port
-        try {
-          const port = await invoke("get_sidecar_port") as number;
-          setSidecarPort(port);
-          setIsConfigured(true);
-          return;
-        } catch {}
-
-        // 2. Check workspace for existing session data
-        const status = await invoke("check_workspace_status") as {
-          has_session: boolean;
-          config: { provider: string; model_name: string; base_url?: string; project_root: string } | null;
-        };
-
-        if (status.has_session && status.config) {
-          // Workspace has session data — recover config and auto-start sidecar
-          // API key is not stored in workspace config, try Tauri store
-          let apiKey = "";
-          try {
-            const saved = await invoke("load_persisted_config") as {
-              provider: string; model_name: string; api_key: string;
-            } | null;
-            if (saved) apiKey = saved.api_key;
-          } catch {}
-
-          if (!apiKey) {
-            // Need API key from user — show onboarding with pre-filled fields
-            setWorkspaceConfig({
-              provider: status.config.provider,
-              modelName: status.config.model_name,
-              baseUrl: status.config.base_url ?? undefined,
-              projectRoot: status.config.project_root,
-            });
+      // 2. Check workspace for existing session data
+      const status = await ipc.checkWorkspaceStatus();
+      if (status.has_session && status.config) {
+        const persisted = await ipc.loadPersistedConfig();
+        if (persisted && persisted.api_key) {
+          const result = await ipc.startSession({
+            provider: status.config.provider,
+            modelName: status.config.model_name,
+            apiKey: persisted.api_key,
+            baseUrl: status.config.base_url,
+            projectRoot: status.config.project_root,
+          });
+          if (result && "unitId" in result) {
+            setSessionInfo(result as SessionInfo);
+            setSelectedUnitId((result as SessionInfo).unitId);
+            setIsConfigured(true);
             return;
           }
-
-          const port = await invoke("start_sidecar", {
-            config: {
-              provider: status.config.provider,
-              modelName: status.config.model_name,
-              apiKey,
-              baseUrl: status.config.base_url,
-              projectRoot: status.config.project_root,
-            }
-          }) as number;
-          setSidecarPort(port);
-          setIsConfigured(true);
-          return;
         }
 
-        // 3. No workspace session — try Tauri store config
-        const config = await invoke("load_persisted_config") as {
-          provider: string;
-          model_name: string;
-          api_key: string;
-          base_url?: string;
-          project_root: string;
-        } | null;
-        if (config) {
-          const port = await invoke("start_sidecar", {
-            config: {
-              provider: config.provider,
-              modelName: config.model_name,
-              apiKey: config.api_key,
-              baseUrl: config.base_url,
-              projectRoot: config.project_root,
-            }
-          }) as number;
-          setSidecarPort(port);
+        // Need API key from user — show onboarding with pre-filled fields
+        setWorkspaceConfig({
+          provider: status.config.provider,
+          modelName: status.config.model_name,
+          baseUrl: status.config.base_url ?? undefined,
+          projectRoot: status.config.project_root ?? "",
+        });
+        return;
+      }
+
+      // 3. No workspace session — try persisted config
+      const persisted = await ipc.loadPersistedConfig();
+      if (persisted && persisted.provider && persisted.api_key) {
+        const result = await ipc.startSession({
+          provider: persisted.provider,
+          modelName: persisted.model_name ?? persisted.modelName ?? "",
+          apiKey: persisted.api_key,
+          baseUrl: persisted.base_url ?? persisted.baseUrl,
+          projectRoot: persisted.project_root ?? persisted.projectRoot,
+        });
+        if (result && "unitId" in result) {
+          setSessionInfo(result as SessionInfo);
+          setSelectedUnitId((result as SessionInfo).unitId);
           setIsConfigured(true);
-        }
-        // else: show OnboardingPage
-      } catch {
-        // Browser-only dev mode: try env var or localStorage
-        const envPort = parseInt((import.meta as any).env?.VITE_SIDECAR_PORT ?? "0", 10);
-        if (envPort > 0) {
-          setSidecarPort(envPort);
-          setIsConfigured(true);
-        } else {
-          // Try recovering config from localStorage
-          const saved = localStorage.getItem("elenchus_config");
-          if (saved) {
-            try {
-              JSON.parse(saved);
-              const portStr = window.prompt("Enter sidecar port (or cancel to reconfigure)", "3000");
-              if (portStr) {
-                const port = parseInt(portStr, 10);
-                if (port > 0) {
-                  setSidecarPort(port);
-                  setIsConfigured(true);
-                }
-              }
-            } catch {}
-          }
         }
       }
+      // else: show OnboardingPage
     })();
   }, []);
 
-  // Check if configured on mount
-  useEffect(() => {
-    if (!sidecarPort) return;
-    api.getSessionInfo().then((info: SessionInfo | null) => {
-      if (info) {
-        setIsConfigured(true);
-        setSessionInfo(info);
-        setSelectedUnitId(info.unitId);
-      }
-    }).catch(() => {
-      // Not configured yet
-      setIsConfigured(false);
-    });
-  }, [sidecarPort]);
-
   // Load session info and FS tree when configured
   useEffect(() => {
-    if (!isConfigured || !sidecarPort) return;
-    api.getSessionInfo().then((info: SessionInfo | null) => { if (info) setSessionInfo(info); });
-    api.getFsTree(fsMode).then((tree: FsTreeNode[]) => setFsTree(tree));
-  }, [isConfigured, sidecarPort, fsMode]);
+    if (!isConfigured) return;
+    ipc.getSessionInfo().then((info) => { if (info) setSessionInfo(info); });
+    ipc.getFsTree(fsMode).then((tree) => setFsTree(tree));
+  }, [isConfigured, fsMode]);
 
   // Load messages when selected unit changes
   useEffect(() => {
-    if (!selectedUnitId || !sidecarPort) return;
-    api.getUnitMessages(selectedUnitId).then((msgs: ConversationMessage[]) => setMessages(msgs));
-  }, [selectedUnitId, sidecarPort]);
+    if (!selectedUnitId) return;
+    ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
+  }, [selectedUnitId]);
 
-  // Handle WebSocket events
+  // Handle pushed events from main process
   useEffect(() => {
-    if (!ws.lastEvent) return;
-    const event = ws.lastEvent;
+    if (!events.lastEvent) return;
+    const event = events.lastEvent;
 
     if (event.type === "agent-message" || event.type === "proposal" || event.type === "vote" ||
         event.type === "tool-result" || event.type === "upward-message" ||
         event.type === "state-transition" || event.type === "turn-start" ||
         event.type === "incoming-message") {
-      // Reload messages for current unit
       if (selectedUnitId) {
-        api.getUnitMessages(selectedUnitId).then((msgs: ConversationMessage[]) => setMessages(msgs));
+        ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
       }
     }
 
     if (event.type === "unit-tree-change" || event.type === "child-spawned" || event.type === "state-transition") {
-      api.getSessionInfo().then((info: SessionInfo | null) => { if (info) setSessionInfo(info); });
+      ipc.getSessionInfo().then((info) => { if (info) setSessionInfo(info); });
     }
 
     if (event.type === "fs-change") {
-      // Refresh the file tree
-      api.getFsTree(fsMode).then((tree: FsTreeNode[]) => setFsTree(tree));
+      ipc.getFsTree(fsMode).then((tree) => setFsTree(tree));
 
-      // Check if any open preview tab is affected
-      const deletedPaths = new Set(event.changes.filter(c => c.kind === "delete").map(c => c.path));
-      const updatedPaths = new Set(event.changes.filter(c => c.kind === "update").map(c => c.path));
+      const changes = (event as any).changes as Array<{ path: string; kind: "create" | "update" | "delete" }> | undefined;
+      if (changes) {
+        const deletedPaths = new Set(changes.filter(c => c.kind === "delete").map(c => c.path));
+        const updatedPaths = new Set(changes.filter(c => c.kind === "update").map(c => c.path));
 
-      const currentTab = previewTabs[activePreviewTab];
-      if (currentTab) {
-        if (deletedPaths.has(currentTab.path)) {
-          setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
-        } else if (updatedPaths.has(currentTab.path)) {
-          api.readFile(currentTab.path).then((result: FileContent | null) => {
-            if (result) {
-              setPreviewContent({
-                content: result.content,
-                extension: result.extension,
-                renderAsMarkdown: result.extension === ".md",
-              });
-            }
-          });
+        const currentTab = previewTabs[activePreviewTab];
+        if (currentTab) {
+          if (deletedPaths.has(currentTab.path)) {
+            setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
+          } else if (updatedPaths.has(currentTab.path)) {
+            ipc.readFile(currentTab.path).then((result) => {
+              if (result) {
+                setPreviewContent({
+                  content: result.content,
+                  extension: result.extension,
+                  renderAsMarkdown: result.extension === ".md",
+                });
+              }
+            });
+          }
         }
       }
     }
-  }, [ws.lastEvent]);
+  }, [events.lastEvent]);
 
   // Load preview file content
   useEffect(() => {
@@ -213,7 +154,7 @@ export default function App() {
       return;
     }
     const tab = previewTabs[activePreviewTab];
-    api.readFile(tab.path).then((result: FileContent | null) => {
+    ipc.readFile(tab.path).then((result) => {
       if (result) {
         setPreviewContent({
           content: result.content,
@@ -221,16 +162,15 @@ export default function App() {
           renderAsMarkdown: result.extension === ".md",
         });
       } else {
-        // File no longer exists
         setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
       }
     });
   }, [activePreviewTab, previewTabs]);
 
   const handleSendMessage = useCallback(async (content: string) => {
-    await api.sendMessage(content);
+    await ipc.sendMessage(content);
     setFileRefs([]);
-  }, [api]);
+  }, [ipc]);
 
   const handleAddReference = useCallback((ref: FileReference) => {
     setFileRefs((prev) => {
@@ -281,21 +221,17 @@ export default function App() {
   }) => {
     setConfigError(null);
 
-    // Try Tauri mode first
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const port = await invoke("start_sidecar", { config }) as number;
-      setSidecarPort(port);
-      setIsConfigured(true);
-      return;
-    } catch (err: any) {
-      // Tauri invoke failed — show the error
-      const msg = err?.toString?.() ?? String(err);
-      console.error("[start_sidecar]", msg);
-      setConfigError(`Failed to start sidecar: ${msg}`);
+    const result = await ipc.startSession(config);
+    if (result && "error" in result) {
+      setConfigError(result.error);
       return;
     }
-  }, []);
+    if (result && "unitId" in result) {
+      setSessionInfo(result as SessionInfo);
+      setSelectedUnitId((result as SessionInfo).unitId);
+      setIsConfigured(true);
+    }
+  }, [ipc]);
 
   // Show onboarding if not configured
   if (!isConfigured) {
@@ -303,7 +239,10 @@ export default function App() {
   }
 
   return (
-    <ThreeColumnLayout>
+    <div className="flex flex-col h-full">
+      <div className="titlebar-drag" />
+      <div className="flex-1 min-h-0">
+        <ThreeColumnLayout>
       {/* Left Panel */}
       <div className="flex flex-col h-full">
         <div className="h-1/2 min-h-0 overflow-y-auto border-b border-gray-200">
@@ -353,5 +292,7 @@ export default function App() {
         onAddRef={handleAddReference}
       />
     </ThreeColumnLayout>
+      </div>
+    </div>
   );
 }

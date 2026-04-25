@@ -27,6 +27,19 @@ body {
   flex-direction: column;
 }
 
+/* macOS hiddenInset title bar — drag region at top of window */
+.titlebar-drag {
+  -webkit-app-region: drag;
+  height: 38px;
+  flex-shrink: 0;
+}
+.titlebar-drag button,
+.titlebar-drag input,
+.titlebar-drag select,
+.titlebar-drag textarea {
+  -webkit-app-region: no-drag;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

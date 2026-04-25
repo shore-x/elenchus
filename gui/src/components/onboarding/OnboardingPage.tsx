@@ -92,7 +92,9 @@ export function OnboardingPage({ onComplete, initialConfig, error }: OnboardingP
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[var(--color-bg)]">
+    <div className="flex flex-col h-screen bg-[var(--color-bg)]">
+      <div className="titlebar-drag" />
+      <div className="flex items-center justify-center flex-1">
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-stone-200 p-8">
         <h1 className="text-2xl font-bold text-gray-800 mb-1">Welcome to Elenchus</h1>
         <p className="text-sm text-gray-500 mb-6">Configure your LLM provider to get started.</p>
@@ -169,6 +171,7 @@ export function OnboardingPage({ onComplete, initialConfig, error }: OnboardingP
         >
           {submitting ? "Starting..." : "Start"}
         </button>
+      </div>
       </div>
     </div>
   );
