@@ -6,7 +6,7 @@
 // Yield and Report form the same upward-communication family: both send a shared upward message,
 // while their difference is whether the unit pauses afterward.
 // All non-Vote tool calls are proposals (framework-design §2.4) — require the other agent's vote,
-// except tools marked autoApprove (P30): read-only operations that bypass explicit voting.
+// except tools marked autoApprove: read-only operations that bypass explicit voting.
 //
 // levelDescriptions: tools that need layer-specific behavioral guidance use a single ElenchusTool
 // object with a levelDescriptions field. When building a tool list for a specific level,
@@ -36,7 +36,7 @@ export interface ElenchusTool {
   /** If true, this tool requires that the unit has not yet reached its maximum child count.
    *  When children.size >= MAX_CHILDREN, this tool is filtered from the available tool list. */
   canSpawnChild?: boolean;
-  /** If true, this tool's proposals are auto-approved without requiring the partner's vote (P30).
+  /** If true, this tool's proposals are auto-approved without requiring the partner's vote.
    *  The proposal is still recorded in the ledger, a system message marks the auto-approval,
    *  and the tool executes as a normal blocking tool. Only suitable for read-only operations
    *  with no consequential side effects. */
@@ -169,13 +169,13 @@ export const bashTool: ElenchusTool = {
 export const readFileTool: ElenchusTool = {
   name: "readFile",
   description:
-    "Read the contents of a file. This proposal is auto-approved — no partner vote is required (P30). " +
+    "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. " +
     "You must provide proposedStep to describe what reading this file will help establish for the task. " +
     "Always use absolute paths to avoid ambiguity and to make file references shareable across agents. " +
     "For large files, strongly prefer specifying offset and limit to read only the relevant section and avoid excessive context consumption.",
   levelDescriptions: {
     L0:
-      "Read the contents of a file. This proposal is auto-approved — no partner vote is required (P30). " +
+      "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. " +
       "As the coordinator and knowledge-space maintainer, your readFile access is limited to your coordination role: " +
       "reading knowledge artifacts such as AGENT.md files, summary documents, analysis results produced by child units, " +
       "and integration notes. These are files written by agents for agents — concise, conclusion-oriented documents " +
@@ -243,7 +243,7 @@ export const spawnChildTool: ElenchusTool = {
   description:
     "Create a child agent unit for a delegated task. " +
     "The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
-    "Child creation follows the fixed layer hierarchy: spawnChild creates an L2 child. " +
+    "Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. " +
     "A child may have direct capabilities that are not available in the current layer. " +
     "Use this when a delegated unit would be a better way to make progress on part of the task. " +
     "SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. " +

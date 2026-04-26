@@ -25,7 +25,7 @@ version: 8.0
 | [`framework-design/conversation-model.md`](./framework-design/conversation-model.md) | 会话模型专题 | `ConversationLedger`、`ConversationProjector`、公共事实与 overlay、方向命名 |
 | [`framework-design/context-compression.md`](./framework-design/context-compression.md) | 压缩专题 | `Memory Snapshot + Recent Raw Window`、压缩提醒、`compressContext`、`CompressionTaskManager` |
 | [`framework-design/protocol-and-runtime.md`](./framework-design/protocol-and-runtime.md) | 协议与运行时专题 | proposal-vote、阻塞/非阻塞、副作用落账、向上通信、控制平面 |
-| [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、prompt同构、无状态Agent、父子协调、`commitLog` |
+| [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、agent team、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
 | [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、单目的地知识空间、逻辑领地模型、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
 
@@ -374,6 +374,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | 提议（Proposal） | Agent 通过工具调用提出的、需要另一侧表决的动作请求 |
 | 表决（Vote） | 对待决 proposal 的 APPROVE 或 REJECT 判定 |
 | 协调 Slot（Coordination Slot） | 父 agent 用于管理子单元的固定位置。每个 child 占用一个 slot，无论其状态。Slot 满时需通过协作式调度（sendToChild → yield → reassign）回收 |
+| Agent Team | 由 L0 及其所有子单元（L1/L2）组成的协作集合。Agent team 是面向 agent 的核心概念：incoming message 是给整个 team 的任务，而非对单个 agent 的个人指令。各成员按功能分工——L0 协调、L1/L2 执行——分工是角色定义而非能力限制 |
 | 协作式调度（Cooperative Scheduling） | 当所有 slot 已满时，父 agent 通过 sendToChild 请求 child 收尾并 yield，然后分配新任务的 slot 回收方式。不提供强制重置子 agent 上下文的机制 |
 | proposedStep | proposal-producing tool call 上的短语义字段，表达“该动作对任务推进的意义” |
 | committedStep | proposal 获批后固化的已提交步骤 |
@@ -381,6 +382,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v9.3 (2026-04-26)**：引入 **agent team** 概念作为面向 agent 的集合术语，替代 prompt 和运行时广播中对 "hierarchy" 的集合体用法。L0 orientation 从负面约束（"you cannot execute"）翻转为正面身份框架（"execution is not your function; it is a division of labor within the team"）。清除 agent 可见信息中的内部设计概念泄漏：移除所有 P-number 引用（P30/P31/P28）、FSM state/SQLite 等实现细节、cold-start/persisted 等内部术语。修正 spawnChild 默认描述的层级错误。同步更新 `hierarchy-and-layers.md`。
 - **v9.2 (2026-04-19)**：新增 P31（子产出审议）与 P32（审议审视优先）原则。L0 职责从两项扩展为三项：协调、知识维护、子产出质量审视。扩展 L0 readFile 许可范围以包含子 agent 产出文件。扩展 workspaceRoot AGENT.md 角色为导航页 + 跨项目持久上下文（用户偏好、项目约定）。同步更新 `hierarchy-and-layers.md`、`knowledge-view.md`。
 - **v9.1 (2026-04-19)**：新增 GUI 文件变更感知：Electron 主进程 `FsWatcher` 监听 workspaceRoot，通过 IPC 广播 `fs-change` 事件；前端自动刷新目录树与预览面板；文件删除时保留 tab 显示警告。同步更新 `knowledge-view.md` §10.6。
 - **v9.0 (2026-04-19)**：新增 P30（纯读操作可豁免投票）原则：`readFile` proposal 自动批准，无需伙伴投票，但仍经过 Executing 状态并将结果作为公共事实记录。`readFile` 新增 `offset`/`limit` 行号参数支持按行范围读取。同步更新 `protocol-and-runtime.md`、`state-machine-and-tools.md`。

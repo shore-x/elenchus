@@ -1,7 +1,7 @@
 // Elenchus - Local Node Tool Executor
 // Executes approved blocking tools (Bash, ReadFile, WriteFile) in the local Node environment.
 // At L0, bash commands are restricted to an information-gathering whitelist as a hard constraint.
-// readFile supports offset/limit for line-range reading (P30); output includes line numbers.
+// readFile supports offset/limit for line-range reading; output includes line numbers.
 
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";

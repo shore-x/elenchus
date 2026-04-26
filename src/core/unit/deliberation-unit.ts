@@ -201,11 +201,11 @@ export class DeliberationUnit {
     const recoveryMessages: string[] = [];
 
     if (coldStart && normalizedState !== snapshot.state) {
-      recoveryMessages.push(`This unit was restored from persisted state after an interrupted runtime. Its persisted state \"${snapshot.state}\" was normalized to \"idle\" on cold start.`);
+      recoveryMessages.push(`This unit was restored after an interrupted session. Its previous active state was reset so it can resume from a clean starting point.`);
     }
 
     if (coldStart && snapshot.compression.activeTask) {
-      recoveryMessages.push(`A context compression task (${snapshot.compression.activeTask.id}) was still marked active when the runtime shut down. It was cleared during cold-start recovery rather than resumed mid-flight.`);
+      recoveryMessages.push(`A context compression task (${snapshot.compression.activeTask.id}) was still active when the session was interrupted. It was cleared during recovery rather than resumed mid-flight.`);
     }
 
     this.suppressDurableStateChangeNotifications = true;
@@ -253,7 +253,7 @@ export class DeliberationUnit {
         if (remainingMs > 0) {
           this.scheduleSleepTimer(remainingMs, snapshot.sleepDeadlineMs);
         } else if (coldStart) {
-          recoveryMessages.push(`A persisted sleep timeout elapsed while the runtime was offline. The unit was restored in \"idle\" and became eligible to resume deliberation.`);
+          recoveryMessages.push(`A sleep timeout elapsed while the session was offline. The unit is now eligible to resume deliberation.`);
         }
       }
 
@@ -372,7 +372,7 @@ export class DeliberationUnit {
     this.sleepTimer = setTimeout(() => {
       this.sleepTimer = null;
       this.sleepDeadlineMs = null;
-      this.ledger.appendSystemMessage(`The sleep timeout of ${timeoutMs}ms elapsed before any child unit reported. The unit became eligible to resume deliberation.`, this.buildDeferredVisibilityMeta());
+      this.ledger.appendSystemMessage(`The sleep timeout elapsed without any child unit reporting. The unit became eligible to resume deliberation.`, this.buildDeferredVisibilityMeta());
       this.notifyDurableStateChange();
       this.wakeIfIdle();
     }, timeoutMs);
@@ -484,7 +484,7 @@ export class DeliberationUnit {
 
   private buildCompressionTaskFailureMessage(task: ActiveCompressionTask, error: unknown): string {
     const detail = error instanceof Error ? error.message : String(error);
-    return `The context compression task (${task.id}) failed after ${task.attemptNumber} attempt(s): ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
+    return `The context compression task (${task.id}) failed: ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
   }
 
   private buildCompressionTaskSuccessMessage(task: ActiveCompressionTask): string {
@@ -725,7 +725,7 @@ export class DeliberationUnit {
         this.notifyDurableStateChange();
         this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: proposal.toolName, args: proposal.args });
 
-        // Auto-approve path (P30): read-only tools bypass partner vote
+        // Auto-approve path: read-only tools bypass partner vote
         const resolvedTool = getBuiltInToolRegistry(this.level).get(proposal.toolName);
         if (resolvedTool?.autoApprove) {
           const autoApprovedProposal = this.getPendingProposal();
@@ -733,7 +733,7 @@ export class DeliberationUnit {
             this.ledger.markProposalApproved(autoApprovedProposal.messageId);
             this.recordCommittedStep(autoApprovedProposal);
             this.ledger.appendSystemMessage(
-              `${proposal.toolName} proposal auto-approved (read-only operations do not require partner vote, P30)`,
+              `${proposal.toolName} executed (read-only operations do not require partner vote)`,
               this.buildDeferredVisibilityMeta(),
             );
             this.notifyDurableStateChange();
@@ -838,7 +838,7 @@ export class DeliberationUnit {
       }
 
       if (child.getState() !== "idle") {
-        this.ledger.appendSystemMessage(`Child unit ${childId} was in state "${child.getState()}" rather than idle. The message was queued for that child unit.`, this.buildDeferredVisibilityMeta());
+        this.ledger.appendSystemMessage(`Child unit ${childId} is currently active — the message was queued and will be available to that child as it continues work.`, this.buildDeferredVisibilityMeta());
         this.notifyDurableStateChange();
       }
 

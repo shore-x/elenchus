@@ -162,7 +162,7 @@ AGENT.md is a powerful entry mechanism, but not the only form of knowledge-view 
 
 ### 5.1 Cross-directory referencing is allowed
 
-AGENT.md files in different directories may reference each other. Real knowledge organization does not strictly follow the directory tree; high-value associations often cross hierarchy levels, modules, task lines, and semantic regions.
+AGENT.md files in different directories may reference each other. Real knowledge organization does not strictly follow the directory tree; high-value associations often cross layer boundaries, modules, task lines, and semantic regions.
 
 If AGENT.md can only describe "inside this directory", it provides only local orientation, not higher-quality knowledge connectivity.
 
@@ -299,7 +299,7 @@ Key properties:
 
 - **workspaceRoot** is user-configurable (default `~/Elenchus/`). It is L0's bash cwd and the location for framework infrastructure.
 - **`.elenchus-state/`** stores runtime state (SQLite). This is framework-managed infrastructure, not an agent write target.
-- **`AGENT.md`** is the navigation hub and cross-project persistent context for the agent's entire working world. It indexes active projects, provides cross-project context, and records user preferences and project conventions that should persist across sessions and be visible to all agents. It is the only AGENT.md injected into the system prompt, which means content written here benefits every agent in the hierarchy.
+- **`AGENT.md`** is the navigation hub and cross-project persistent context for the agent's entire working world. It indexes active projects, provides cross-project context, and records user preferences and project conventions that should persist across sessions and be visible to all agents. It is the only AGENT.md injected into the system prompt, which means content written here benefits every agent in the team.
 - **No `knowledge/` directory**: there is no separate global knowledge directory. Agents write knowledge where the work naturally belongs — in the project structure. Cross-project patterns are noted in the workspaceRoot AGENT.md or in the relevant project's documentation.
 
 ### 9.3 Per-child projectRoot as bash cwd
@@ -324,7 +324,7 @@ The primary knowledge artifact format is **.md files**. Agents place them where 
 - **Cross-project observations** → noted in the workspaceRoot AGENT.md
 - **User preferences and project conventions** → recorded in the workspaceRoot AGENT.md, since these are cross-project persistent context that should be visible to all agents via system prompt injection
 
-There is no "global knowledge directory" for agents to write to. The workspaceRoot AGENT.md is the natural destination for information that does not belong to any single project but should persist and be visible across the entire hierarchy. Detailed knowledge lives in the projects where the work happens.
+There is no "global knowledge directory" for agents to write to. The workspaceRoot AGENT.md is the natural destination for information that does not belong to any single project but should persist and be visible across the entire agent team. Detailed knowledge lives in the projects where the work happens.
 
 The agent's context window + compression snapshot serves as the in-memory staging area; the file system is for published knowledge. If an artifact has value, it goes to a meaningful location; if it has no value, it should not be written.
 

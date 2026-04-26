@@ -33,15 +33,17 @@ It does not define the low-level FSM table; that lives in [state-machine-and-too
 
 ---
 
-## 1. Why Hierarchy Exists
+## 1. Why the Layered Structure Exists
 
 A single dual-agent dialogue has limited context capacity. As tasks become more complex, the framework needs a way to decompose work into independent units that can be validated with the same protocol.
 
-That leads naturally to hierarchy:
+That leads naturally to a layered structure:
 
 - parent units delegate
 - child units deliberate and act
 - upward communication flows back through the same protocol family
+
+The set of all agent units working together on a task forms an **agent team**: L0 plus its children and grandchildren. The agent team concept is the agent-facing term for this collective — incoming messages are tasks for the team, not personal instructions to any single unit. Each team member contributes according to its function: L0 coordinates, L1/L2 execute. This division of labor is a role definition, not a capability restriction.
 
 ## 2. Layer Symmetry
 
@@ -84,14 +86,15 @@ The current architecture uses three fixed levels:
 - `readFile` is **auto-approved** (P30): proposals execute immediately without partner vote, but L0's role policy still constrains what files it should read (knowledge artifacts and child work products only, not source code for substantive understanding)
 - can enter `Executing` state when using environment tools for permitted purposes
 
-L0 has **three responsibilities**:
-1. **coordinating work across child units** — task decomposition, delegation, and scheduling
-2. **maintaining the knowledge space** — keeping the workspace navigable and well-organized for all agents
-3. **reviewing child output quality** — scrutinizing child-produced work products, identifying gaps and deficiencies, and providing corrective feedback via `sendToChild`
+L0 has **four responsibilities**:
+1. **interpreting and decomposing tasks** — understanding incoming requests as team-level tasks and breaking them into delegable work
+2. **coordinating work across child units** — task decomposition, delegation, and scheduling
+3. **maintaining the knowledge space** — keeping the workspace navigable and well-organized for all agents
+4. **reviewing child output quality** — scrutinizing child-produced work products, identifying gaps and deficiencies, and providing corrective feedback via `sendToChild`
 
 The third responsibility is what distinguishes L0 from a mere task dispatcher. The dual-agent deliberation mechanism inside the parent unit is the natural vehicle for quality review: when a child reports or yields with work products, the two L0 agents should discuss the output's quality before accepting it or sending feedback. This extends the framework's core principle — that structured dialogue surfaces weaknesses — from intra-unit deliberation to cross-unit quality assurance.
 
-> **原则 P28（L0 角色策略约束）**：L0 拥有完整的环境工具能力，但通过 prompt 注入的角色策略约束其用途为信息获取、知识空间维护与子产出审视。L0 不应使用环境工具直接执行任务；任务执行应通过子单元委派。若 L0 发现自己在用工具直接解决问题而不是分配问题，应停下来创建子 agent。
+> **原则 P28（L0 角色策略约束）**：L0 拥有完整的环境工具能力，但通过 prompt 注入的角色策略约束其用途为信息获取、知识空间维护与子产出审视。L0 不应使用环境工具直接执行任务；任务执行应通过子单元委派。执行不是 L0 的功能，而是 team 中子单元的功能——这是分工而非限制。若 L0 发现自己在用工具直接解决问题而不是分配问题，应停下来创建子 agent。
 
 The dual-agent proposal-vote mechanism serves as a second line of defense: the partner agent (Verifier) is explicitly guided in the prompt to reject tool uses that exceed L0's role scope. However, this is a soft constraint, not a hard enforcement — both agents may agree to bypass it under efficiency pressure. Note that `readFile` is auto-approved (P30) and does not go through the vote step; L0's readFile role compliance therefore relies entirely on prompt guidance rather than partner vote rejection.
 
@@ -226,7 +229,9 @@ The stable structure is:
 - cognitive style for Agent A / Agent B
 - current tool list
 
-Since all layers now share the same tool set, the layer orientation section carries the **role policy** that constrains how each layer should use its tools. For L0, this policy restricts environment tool usage to information acquisition and knowledge space maintenance. For L1 and L2, the policy allows full task execution use of environment tools.
+Since all layers now share the same tool set, the layer orientation section carries the **role policy** that defines how each layer should use its tools. For L0, this policy frames environment tool usage as serving the coordinator function — information acquisition and knowledge space maintenance — rather than restricting it as a negative constraint. For L1 and L2, the policy allows full task execution use of environment tools.
+
+The prompt uses **positive identity framing** rather than negative constraints: L0's orientation states "execution is not your function" rather than "you cannot execute." This framing aligns with the agent team concept — each member contributes according to its role, and the division of labor is a natural consequence of team structure, not an imposed restriction.
 
 This avoids overfitting layer behavior into prompt wording when the role policy already conveys the actionable constraints.
 
@@ -311,6 +316,7 @@ This matters because what becomes committed is no longer private intent; it is a
 
 ## Change Log
 
+- **v7.0 (2026-04-26)**: Introduce **agent team** concept as the agent-facing collective term for L0 + children + grandchildren. Reframe L0 orientation from negative constraint ("you cannot execute") to positive identity ("execution is not your function — it is a division of labor within the team"). Expand L0 responsibilities from three to four: add "interpreting and decomposing tasks" as the first responsibility. Update P28 description to reflect positive framing. Update §8 prompt isomorphism to describe positive identity framing. Rename §1 from "Why Hierarchy Exists" to "Why the Layered Structure Exists" and add agent team definition.
 - **v6.0 (2026-04-19)**: Add L0 third responsibility: child output quality review (P31). Expand L0 readFile scope to include child work products. Add deliberation scrutiny principle (P32): well-grounded dissent is more valuable than smooth agreement; applies both intra-unit and cross-unit. Renumber §5-§10 to §6-§11.
 - **v5.2 (2026-04-19)**: Update L0 environment tool notes for readFile auto-approval (P30). readFile proposals execute immediately without partner vote; L0 role compliance for readFile now relies on prompt guidance rather than vote rejection. Update §4.1, P28 note.
 - **v5.1 (2026-04-18)**: Migrate from dual-root to single-destination + logical territory model. Replace globalRoot + projectRoot with workspaceRoot (user-configurable, default `~/Elenchus/`). L0 bash cwd = workspaceRoot; child projectRoot inferred from task brief. Update §8.
