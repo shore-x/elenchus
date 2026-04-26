@@ -34,6 +34,8 @@ function estimateMessageChars(message: ConversationMessage): number {
       return message.toolName.length + message.output.length + 64;
     case "child_report_message":
       return message.childId.length + message.content.length + 64;
+    case "child_commit_view_message":
+      return message.content.length + 64;
   }
 }
 
@@ -126,6 +128,10 @@ export class CompressionTaskManager {
 
   getReminderThresholdChars(): number {
     return this.reminderThresholdChars;
+  }
+
+  getRecentRawStartIndex(): number {
+    return this.recentRawStartIndex;
   }
 
   getRecentRawMessages(visibleMessages: readonly ConversationMessage[]): readonly ConversationMessage[] {

@@ -56,7 +56,8 @@ export interface ConversationMessageBase extends LedgerMessageMeta {
     | "proposal_message"
     | "vote_message"
     | "tool_result_message"
-    | "child_report_message";
+    | "child_report_message"
+    | "child_commit_view_message";
   authoredBy: ConversationAuthor;
   timestamp: number;
 }
@@ -121,6 +122,12 @@ export interface ChildReportMessage extends ConversationMessageBase {
   content: string;
 }
 
+export interface ChildCommitViewMessage extends ConversationMessageBase {
+  kind: "child_commit_view_message";
+  authoredBy: "system";
+  content: string;
+}
+
 export type ConversationMessage =
   | IncomingMessage
   | AgentMessage
@@ -129,7 +136,8 @@ export type ConversationMessage =
   | ProposalMessage
   | VoteMessage
   | ToolResultMessage
-  | ChildReportMessage;
+  | ChildReportMessage
+  | ChildCommitViewMessage;
 
 export interface ConversationLedgerSnapshot {
   sequenceStart: number;
@@ -252,3 +260,30 @@ export type OnSystemEvent = (event: SystemEvent) => void;
 
 // Tool level configuration — three fixed layers (§4.3)
 export type ToolLevel = "L0" | "L1" | "L2";
+
+// Context recipe — captures the immutable facts needed to reconstruct one LLM call's input.
+// References ledger_messages by seq range and context_text_history by rowid.
+export interface ContextRecipeData {
+  unitId: string;
+  agentId: AgentId;
+  recentRawStartSeq: number;
+  visibleEndSeq: number;
+  newlyVisibleSeq: number | null;
+  memorySnapshotRowid: number | null;
+  agentMdRowid: number | null;
+  level: ToolLevel;
+  hasPendingFromOther: boolean;
+  hasChildren: boolean;
+  canSpawnChild: boolean;
+  effectiveTurn: number;
+}
+
+export interface ContextTextHistoryEntry {
+  rowid: number;
+  unitId: string;
+  category: string;
+  contentHash: string;
+  content: string;
+  metadata: string;
+  createdAt: number;
+}

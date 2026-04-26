@@ -72,4 +72,20 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   updateMessage(_unitId: string, _message: ConversationMessage): void {
     // no-op: file-system persistence relies on full-snapshot saveSnapshot
   }
+
+  saveContextTextHistory(): number {
+    return 0;
+  }
+
+  getLatestContextTextHistory(): { rowid: number; content: string; metadata: string } | null {
+    return null;
+  }
+
+  createRecipe(): number {
+    return 0;
+  }
+
+  updateRecipeOutputMessageId(): void {
+    // no-op
+  }
 }

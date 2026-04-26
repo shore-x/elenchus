@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
 date: 2026-04-13
-version: 8.0
+version: 10.0
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -28,6 +28,7 @@ version: 8.0
 | [`framework-design/hierarchy-and-layers.md`](./framework-design/hierarchy-and-layers.md) | 层级与委派专题 | L0/L1/L2、agent team、prompt同构、无状态Agent、父子协调、`commitLog` |
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
 | [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、单目的地知识空间、逻辑领地模型、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
+| [`framework-design/context-observability.md`](./framework-design/context-observability.md) | 上下文可观测性专题 | 双表 append-only 事实模型、`context_text_history`、`context_recipe`、事实事件 vs 渲染指令分类、重建投影管线 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -37,7 +38,7 @@ Elenchus 的核心思路是：通过两个具有互补认知策略的对称 Agen
 
 ### 1.2 核心工程挑战
 
-框架要解决五类问题：
+框架要解决八类问题：
 
 - **通信**：消息如何表达、记录、投影、跨轮可见。
 - **决策**：行动如何从单方意图变成双Agent共识。
@@ -46,6 +47,7 @@ Elenchus 的核心思路是：通过两个具有互补认知策略的对称 Agen
 - **状态管理**：单元在任意时刻处于何种状态，以及如何转换。
 - **持久化与恢复**：运行状态、记忆、聊天历史与子单元图如何落盘，并在冷启动后按需恢复。
 - **知识共享**：Agent之间如何通过持久化知识产物（.md 文件）进行跨单元、跨轮次的知识传递与协作。
+- **上下文可观测性与重建**：每次 LLM 调用的输入上下文由哪些事实构成，如何精确记录这些事实的来源与边界，以便事后审查与精确重建。
 
 ### 1.3 设计目标
 
@@ -77,6 +79,7 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 - **公共事实 vs 控制 overlay**：共享历史写入 ledger；当前轮动作约束只作为私有 overlay 注入。
 - **轮次可见性边界**：消息在异步写入后，仅从 `visibleFromTurn` 起被后续轮次看到。
 - **方向命名显式化**：收到的消息使用 `incoming`，向上发送的消息使用 `upward`。
+- **双表 append-only 事实模型**：上下文重建仅依赖两张 append-only 事实表——`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。所有记录写入后不可变；重建仅读取，不回写。`context_recipe` 记录每次 LLM 调用的输入事实边界（seq 范围 + rowid 引用），使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 2.3 压缩视图摘要
 
@@ -86,7 +89,7 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 - **Recent Raw Window**：最近原始上下文窗口。
 
 压缩属于投影层派生视图，不能回写或污染 `ConversationLedger`。详细约束见 [`context-compression.md`](./framework-design/context-compression.md)。
-当存在已持久化的 `Memory Snapshot` 时，冷启动恢复不必急于加载完整聊天历史，而应优先用 `Memory Snapshot + Recent Raw Window` 重建继续 deliberation 所需的最小工作集。
+当存在已持久化的 `Memory Snapshot` 时，冷启动恢复不必急于加载完整聊天历史，而应优先用 `Memory Snapshot + Recent Raw Window` 重建继续 deliberation 所需的最小工作集。Memory Snapshot 现通过 `context_text_history`（category: `memory_snapshot`）持久化，取代旧的 `unit_memory_state` 表；recipe 通过 `memory_snapshot_rowid` 精确引用快照行，无需扫描全表。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 2.4 知识视图（已收敛方向）
 
@@ -137,6 +140,7 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 - **P16**：受众显式性
 - **P17-P20 / P22-P23 / P26**：压缩视图与方向命名相关原则
 - **P29**：消息通道对话风格
+- **P33**：双表 append-only 事实模型
 
 ## 第三章 行动协议与运行时语义
 
@@ -172,7 +176,9 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 
 父层对失控子单元的强制终止属于**控制平面**操作，而非一条普通聊天消息。这一点保证“协作消息”和“强制控制”在语义上不混杂。
 
-当前实现还引入了面向冷启动的恢复边界：运行目录下的 `.elenchus/state.db` 保存可恢复的 session 持久化状态。SQLite 中保留全量 durable history，而冷启动恢复只重建继续 deliberation 所需的工作集。当前 schema 明确不依赖数据库外键维护 unit graph 完整性；关系一致性由应用层持久化逻辑与“先保存 unit、后保存 relation”的写入顺序保证。当前 schema 通过 `schema_meta` 中的显式版本号管理；在快速演进阶段，如版本不匹配则直接重建本地数据库，而不承诺旧库兼容迁移。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
+当前实现还引入了面向冷启动的恢复边界：运行目录下的 `elenchus.db` 保存可恢复的 session 持久化状态。SQLite 中保留全量 durable history，而冷启动恢复只重建继续 deliberation 所需的工作集。当前 schema 明确不依赖数据库外键维护 unit graph 完整性；关系一致性由应用层持久化逻辑与“先保存 unit、后保存 relation”的写入顺序保证。当前 schema 通过 `schema_meta` 中的显式版本号管理（当前版本 11）；在快速演进阶段，如版本不匹配则直接重建本地数据库，而不承诺旧库兼容迁移。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
+
+上下文可观测性采用双表 append-only 事实模型：`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。旧的 `unit_memory_state` 表已被移除，Memory Snapshot 统一通过 `context_text_history` 持久化。`context_recipe` 记录每次 LLM 调用的输入事实边界，使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 3.5 本章相关核心原则
 
@@ -244,6 +250,8 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 - `commitLog`：子单元已提交步骤的历史序列
 
 `commitLog` 记录的是 **accepted steps**，不是 success history；`APPROVE` 是提交边界。
+
+从实现角度，child commit view 现在作为 `child_commit_view_message` 事实事件写入父 agent 的 ConversationLedger，而非仅作为投影层临时派生。这使得 recipe 的 seq 范围自然覆盖子单元可见性内容，无需跨单元引用。详细设计见 [`context-observability.md`](./framework-design/context-observability.md) §4.2。
 
 ### 4.5 本章相关核心原则
 
@@ -344,6 +352,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | P30 | 纯读操作可豁免投票 | Protocol and Runtime |
 | P31 | 子产出审议 | Hierarchy and Layers |
 | P32 | 审议审视优先 | Hierarchy and Layers |
+| P33 | 双表 append-only 事实模型 | Context Observability |
 
 ## 附录B 术语表
 
@@ -379,9 +388,15 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | proposedStep | proposal-producing tool call 上的短语义字段，表达“该动作对任务推进的意义” |
 | committedStep | proposal 获批后固化的已提交步骤 |
 | commitLog | 归属于 Agent Unit 的已提交步骤的历史序列，表示该单元正式接受过哪些任务推进步骤，而非成功历史 |
+| context_text_history | Append-only 事实表，存储不可变文本快照（Memory Snapshot、AGENT.md 等），按 rowid 离散引用。同一 `(unit_id, category)` 下相同内容通过 SHA-256 去重，仅存一份 |
+| context_recipe | 记录一次 LLM 调用输入事实边界的不可变记录。通过 seq 范围引用 `ledger_messages`，通过 rowid 引用 `context_text_history`，使上下文可精确重建 |
+| child_commit_view_message | 子单元已提交步骤快照，作为事实事件写入父 agent 的 ConversationLedger。使 recipe 的 seq 范围自然覆盖子单元可见性内容，无需跨单元引用 |
+| ContextRecipeData | 创建 recipe 时的输入数据结构，包含 unitId、agentId、seq 边界、rowid 引用、工具列表参数等 |
+| 双表 append-only 事实模型（P33） | 上下文重建仅依赖 `ledger_messages`（连续事件流，seq 范围引用）与 `context_text_history`（离散文本快照，rowid 引用）两张 append-only 事实表。所有记录写入后不可变；重建仅读取，不回写 |
 
 ## 版本历史
 
+- **v10.0 (2026-04-26)**：引入上下文可观测性与重建机制。核心变更：**双表 append-only 事实模型**（P33）——上下文重建仅依赖 `ledger_messages`（seq 范围引用）与 `context_text_history`（rowid 离散引用）两张 append-only 事实表；移除 `unit_memory_state` 表，Memory Snapshot 统一通过 `context_text_history` 持久化；新增 `context_recipe` 记录每次 LLM 调用的输入事实边界；child commit view 作为 `child_commit_view_message` 事实事件写入父 agent ledger，而非投影层临时派生；SQLite schema 升至 v11。新增专题文档 `context-observability.md`。同步更新 §1.2、§2.2、§2.3、§3.4、§4.4、原则索引、术语表。
 - **v9.3 (2026-04-26)**：引入 **agent team** 概念作为面向 agent 的集合术语，替代 prompt 和运行时广播中对 "hierarchy" 的集合体用法。L0 orientation 从负面约束（"you cannot execute"）翻转为正面身份框架（"execution is not your function; it is a division of labor within the team"）。清除 agent 可见信息中的内部设计概念泄漏：移除所有 P-number 引用（P30/P31/P28）、FSM state/SQLite 等实现细节、cold-start/persisted 等内部术语。修正 spawnChild 默认描述的层级错误。同步更新 `hierarchy-and-layers.md`。
 - **v9.2 (2026-04-19)**：新增 P31（子产出审议）与 P32（审议审视优先）原则。L0 职责从两项扩展为三项：协调、知识维护、子产出质量审视。扩展 L0 readFile 许可范围以包含子 agent 产出文件。扩展 workspaceRoot AGENT.md 角色为导航页 + 跨项目持久上下文（用户偏好、项目约定）。同步更新 `hierarchy-and-layers.md`、`knowledge-view.md`。
 - **v9.1 (2026-04-19)**：新增 GUI 文件变更感知：Electron 主进程 `FsWatcher` 监听 workspaceRoot，通过 IPC 广播 `fs-change` 事件；前端自动刷新目录树与预览面板；文件删除时保留 tab 显示警告。同步更新 `knowledge-view.md` §10.6。

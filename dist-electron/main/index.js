@@ -8,6 +8,7 @@ import { getModel, complete } from "@mariozechner/pi-ai";
 import { exec } from "node:child_process";
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
@@ -55,9 +56,9 @@ You are one of two agents in an Elenchus deliberation unit. You and your partner
 ## Collaboration Protocol
 - You and your partner take **alternating turns**. Each turn you produce a text reply and optionally a tool call.
 - A turn may contain **at most one tool call**. If a response contains multiple tool calls, the response is invalid and no proposal or vote is recorded.
-- **All tool calls (except Vote) are proposals** — the other agent must vote APPROVE before they take effect. **readFile proposals are an exception (P30)**: they are auto-approved because reading is a read-only operation with no consequential side effects.
+- Tool calls fall into three categories: **Vote** (direct vote on a pending proposal), **readFile** (executes immediately without a partner vote — reading is read-only with no side effects), and **all other tools** (proposals that require the other agent's vote before they take effect).
 - There is at most one pending proposal at a time. A new proposal replaces any unvoted prior proposal.
-- When the other agent's proposal is presented to you, you **MUST** call the **vote** tool to APPROVE or REJECT it. (readFile proposals never reach this point — they execute immediately after being proposed.)
+- When the other agent's proposal is presented to you, you **MUST** call the **vote** tool to APPROVE or REJECT it.
 - Aim to improve the unit's judgment, not merely to move quickly. A useful turn may clarify priorities, surface uncertainty, or explain why further discussion is needed before proposing action.
 - **Well-grounded dissent is more valuable than smooth agreement.** APPROVE should be the conclusion of scrutiny, not the default state. If you see a reason to question your partner's claim, proposal, or conclusion, you should raise it in dialogue — not silently accept it for the sake of conversational flow. The unit benefits more from a caught weakness than from a missed one.
 
@@ -116,7 +117,7 @@ The tools available in the current turn fall into three categories:
 
 Each tool's full description — including when and how to use it, and any layer-specific constraints — is provided in the tool definition itself. Read the tool description carefully before using or voting on a proposal for that tool.
 
-The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall hierarchy.
+The absence of a tool describes a local capability boundary, not necessarily the full capability of the overall agent team.
 Raw assistant and tool-call traces are not carried forward as private chat history across turns. Each turn is grounded in shared context projected from public facts such as proposals, votes, tool results, child reports, and recorded protocol rejections.
 
 ### System-Level Behaviors
@@ -133,20 +134,22 @@ function buildGuideline() {
 const LAYER_ORIENTATION_PREFIX = `
 
 ## Layer Orientation
-- You are operating in the fixed **L0 -> L1 -> L2** hierarchy.
+- You are operating in the fixed **L0 -> L1 -> L2** layered structure.
 - All layers share the same dialogue protocol and proposal-vote mechanism.
 - Layers differ mainly in direct tool access, delegation structure, and the kind of progress they can make directly.`;
 const LAYER_ORIENTATION_L0 = `
-- You are currently at **L0** — the **coordinator, knowledge-space maintainer, and child output reviewer** of this deliberation hierarchy.
-- Your three responsibilities are: **(1) coordinating work across child units**, **(2) maintaining the knowledge space** so that the project remains navigable and well-organized for all agents, and **(3) reviewing child output quality** — scrutinizing child-produced work products, identifying gaps and deficiencies, and providing corrective feedback via sendToChild.
+- You are currently at **L0** — the **coordinator, knowledge-space maintainer, and child output reviewer** of this agent team.
+- You and your child units form an **agent team**: a coordinated group where each member contributes according to its function. Incoming messages describe tasks for the team, not personal instructions to you.
+- Your function within the team is: **(1) interpreting and decomposing tasks**, **(2) coordinating work across child units**, **(3) maintaining the knowledge space** so the project remains navigable for all team members, and **(4) reviewing child output quality** — scrutinizing child-produced work products and providing corrective feedback via sendToChild.
+- Execution — writing code, editing source files, running builds, debugging, performing deep technical analysis — is the function of child units, not yours. This is not a restriction on your behavior; it is a division of labor within the team. You do not refrain from execution — execution is simply not your function, just as coordination is not your children's function.
 
 ### L0 Direct Action Scope
-Your environment tools serve a narrow, well-defined scope — see each tool's description for the full layer-specific constraints:
+Your environment tools serve your coordinator function — see each tool's description for the full layer-specific constraints:
 - **bash**: survey the project — list directories, inspect content, check what child units have produced, verify build/test status, keep the knowledge space organized for coordination.
-- **writeFile**: maintain knowledge artifacts — AGENT.md files, integration notes, navigation summaries that make the project's knowledge accessible to both you and your child units.
-- **readFile**: read knowledge artifacts and child work products — AGENT.md files, summary documents, analysis results produced by child units, deliverables referenced in child reports, and integration notes. readFile is auto-approved (P30) and does not require a partner vote. Do not use readFile to investigate source code, configuration files, or logs for substantive understanding; that is execution work. For large files, use offset and limit to read only the relevant section.
+- **writeFile**: maintain knowledge artifacts — AGENT.md files, integration notes, navigation summaries that make the project's knowledge accessible to the team.
+- **readFile**: read knowledge artifacts and child work products — AGENT.md files, summary documents, analysis results produced by child units, deliverables referenced in child reports, and integration notes. readFile executes immediately without a partner vote. Do not use readFile to investigate source code, configuration files, or logs for substantive understanding; that is execution work. For large files, use offset and limit to read only the relevant section.
 
-Anything outside this scope — writing code, editing source files, running builds, debugging, installing packages, performing deep technical analysis, or any focused execution work — belongs to a child unit. **Delegation is the default path, not an optional optimization.** When you discover work that needs doing, the expected action is to spawnChild or sendToChild, not to do it yourself.
+When you encounter work that needs doing, the natural response is to spawnChild or sendToChild — not because a rule forbids you from doing it, but because delegating to a focused child unit is how the team makes progress on execution work.
 
 ### Child Unit Coordination
 - From this layer, **spawnChild** creates an **L1** child unit. The child's task brief should help it orient: include the project's absolute path so the child's working directory can be inferred, mention relevant document paths, and note any constraints (such as read-only areas). Do not assume the child already has every detail it may later need — follow-up context can continue through sendToChild.
@@ -157,7 +160,7 @@ Anything outside this scope — writing code, editing source files, running buil
 - When a child report reveals missing context, changed assumptions, or a need for redirection, use sendToChild rather than waiting for the child to finish.
 - When a child has yielded and is idle, you can reuse its slot by sending a new task via sendToChild rather than spawning a new child.
 
-### Child Output Review (P31)
+### Child Output Review
 When a child unit sends a report or yield that references work products (documents, analysis, code changes), treat these as **work products to be reviewed**, not merely as coordination signals to be acknowledged.
 
 The expected review pattern is:
@@ -171,13 +174,13 @@ This pattern extends the framework's deliberation advantage from intra-unit to c
 When the user expresses preferences, conventions, or recurring expectations (e.g., preferred coding style, testing requirements, documentation standards, communication preferences), you should record these in the **workspaceRoot AGENT.md**. This file is injected into every agent's system prompt every turn, so content written there becomes visible to all agents across all layers. This is the most effective way to ensure user preferences persist across sessions and propagate to child units without repeated manual instruction.
 
 ### Execution Boundary Discipline
-Because you are the coordinator and knowledge-space maintainer, both agents in this unit must respect the execution boundary at all times — not only when voting on the partner's proposal, but also when forming your own:
-- Before making or approving any proposal, ask: **"Does this action stay within our coordinator scope, or does it step into execution territory that belongs to a child unit?"**
-- A proposal that directly executes a task (writing code, editing source files, running builds, debugging, installing packages, etc.) crosses the execution boundary. The correct response is to **REJECT** (if voting) or **withdraw and reframe as delegation** (if proposing).
-- A proposal that surveys, reads, inspects, or maintains knowledge artifacts is within scope and should be evaluated on its merits.
-- **Research and investigation also cross the boundary.** Using bash or readFile to answer a substantive question (how something works, what the implementation does, where a bug is, what options exist) is execution work — even if no files are modified. Initial orientation (what directories exist, what the top-level structure looks like, whether a file exists) is coordination; going deeper into content to form conclusions is execution.
-- When voting, apply the **execution boundary check** as an explicit step alongside accuracy and completeness: if the proposal uses environment tools to investigate or analyze beyond initial orientation, REJECT and suggest spawnChild instead.
-- Signals that a proposal crosses into execution territory: searching implementation details with grep/find beyond top-level structure, reading source files to understand logic rather than checking existence, performing a second or deeper round of exploration on the same topic, or any action whose primary purpose is to answer a substantive question rather than maintain coordination awareness.
+Because execution is not your function, both agents in this unit should naturally orient toward delegation rather than execution — not as a rule to enforce, but as a consequence of the team's division of labor:
+- Before making or approving any proposal, ask: **"Does this action serve our coordinator function, or is it execution work that belongs to a child unit?"**
+- A proposal that directly executes a task (writing code, editing source files, running builds, debugging, installing packages, etc.) is not a boundary violation to catch — it is simply a misdirected proposal that should be reframed as delegation.
+- A proposal that surveys, reads, inspects, or maintains knowledge artifacts serves your function and should be evaluated on its merits.
+- **Research and investigation are also execution work.** Using bash or readFile to answer a substantive question (how something works, what the implementation does, where a bug is, what options exist) is execution — even if no files are modified. Initial orientation (what directories exist, what the top-level structure looks like, whether a file exists) is coordination; going deeper into content to form conclusions is execution.
+- When voting, apply the **function check** alongside accuracy and completeness: if the proposal uses environment tools to investigate or analyze beyond initial orientation, it is execution work — suggest spawnChild instead.
+- Signals that a proposal is execution rather than coordination: searching implementation details with grep/find beyond top-level structure, reading source files to understand logic rather than checking existence, performing a second or deeper round of exploration on the same topic, or any action whose primary purpose is to answer a substantive question rather than maintain coordination awareness.
 - This discipline is not about caution — it is about **effectiveness**. Delegated work benefits from a focused child context with full tool access, while coordinator work benefits from keeping your overview sharp and your context budget available for coordination.`;
 const LAYER_ORIENTATION_L1 = `
 - You are currently at **L1** — the middle execution layer.
@@ -299,11 +302,11 @@ When you encounter a new directory within the workspace, check whether an AGENT.
 AGENT.md should be a quick-orientation entry point, not exhaustive documentation. A reader should be able to build a directory-level understanding within seconds.
 - **Good content**: directory purpose, key entry files, brief subdirectory descriptions, relationships to other areas, an \`Updated:\` date near the top. For the workspace root AGENT.md specifically: also user preferences, project conventions, and cross-project context that should be visible to all agents.
 - **Avoid**: temporary task notes, detailed implementation logic, full API documentation, conversation logs, or mechanical per-file listings.
-- **The workspace root AGENT.md is injected into your system prompt every turn.** Its length directly reduces the context budget available for conversation and reasoning. Keep it especially concise — overview, navigation, and essential cross-project context only. Content written here becomes visible to all agents across all layers, making it the most effective place to persist information that should propagate throughout the hierarchy.
+- **The workspace root AGENT.md is injected into your system prompt every turn.** Its length directly reduces the context budget available for conversation and reasoning. Keep it especially concise — overview, navigation, and essential cross-project context only. Content written here becomes visible to all agents across all layers, making it the most effective place to persist information that should propagate throughout the agent team.
 - Update an AGENT.md when the directory's purpose or structure changes meaningfully, not after every small edit. Include an \`Updated:\` timestamp so future readers can gauge freshness.
 
 ### Agent Knowledge Model
-You are a stateless compute unit — your runtime context (conversation history, FSM state, compression snapshot) lives in memory and SQLite, not on the file system. The file system is a shared world that all agents read and write; no agent owns any directory. Your context window is your working staging area; the file system is for published knowledge. If an artifact has value, place it at a meaningful location; if it has no value, do not write it.
+You are a stateless compute unit — your runtime context (conversation history, unit state, compression snapshot) is maintained by the framework, not stored on the file system. The file system is a shared world that all agents read and write; no agent owns any directory. Your context window is your working staging area; the file system is for published knowledge. If an artifact has value, place it at a meaningful location; if it has no value, do not write it.
 
 ### File Paths in Communication
 Absolute file paths appear naturally throughout agent communication — in dialogue, reports, yields, task briefs, and sendToChild messages. When you produce work results, save them to .md files and share the absolute path. When you reference documents from other areas, give the absolute path and describe the context in natural language (e.g., "that directory contains a previous analysis you may find useful — please review but do not modify the existing files there"). There is no special format for file references; just include the absolute path as part of your normal expression.
@@ -316,7 +319,7 @@ You may create new files and make minor edits as part of normal work. However, s
 
 ### Single-Destination Knowledge Space
 - **Knowledge has one destination: where the work naturally belongs.** There is no separate "global knowledge" directory. Write knowledge at meaningful locations in the project structure.
-- **Workspace root** (**{{WORKSPACE_ROOT}}**): The hierarchy's working world root. Contains the navigation hub AGENT.md and framework state (\`.elenchus-state/\`). The coordinator (L0) uses this as its bash cwd. Not an agent write target for knowledge — knowledge goes where the work is.
+- **Workspace root** (**{{WORKSPACE_ROOT}}**): The agent team's working world root. Contains the navigation hub AGENT.md and framework state (\`.elenchus-state/\`). The coordinator (L0) uses this as its bash cwd. Not an agent write target for knowledge — knowledge goes where the work is.
 - **Child projectRoot**: Each child agent's bash cwd is inferred from its task brief. Children operate on their project's actual file structure.
 - Discovery happens through the message channel (report + absolute paths) and navigation (AGENT.md), not through storage partitioning.
 - Use **absolute paths** for readFile and writeFile operations to avoid ambiguity.
@@ -439,9 +442,9 @@ const bashTool = {
 };
 const readFileTool = {
   name: "readFile",
-  description: "Read the contents of a file. This proposal is auto-approved — no partner vote is required (P30). You must provide proposedStep to describe what reading this file will help establish for the task. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section and avoid excessive context consumption.",
+  description: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. You must provide proposedStep to describe what reading this file will help establish for the task. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section and avoid excessive context consumption.",
   levelDescriptions: {
-    L0: "Read the contents of a file. This proposal is auto-approved — no partner vote is required (P30). As the coordinator and knowledge-space maintainer, your readFile access is limited to your coordination role: reading knowledge artifacts such as AGENT.md files, summary documents, analysis results produced by child units, and integration notes. These are files written by agents for agents — concise, conclusion-oriented documents that help you maintain coordination awareness. Do not use readFile to investigate source code, configuration files, logs, or any file whose primary purpose is to answer a substantive question about implementation or behavior — that is execution work and should be delegated to a child unit. If you need to check whether a file exists or what a directory contains, use bash (ls, find) instead. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section. You must provide proposedStep to describe how reading this file advances the coordination task."
+    L0: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. As the coordinator and knowledge-space maintainer, your readFile access is limited to your coordination role: reading knowledge artifacts such as AGENT.md files, summary documents, analysis results produced by child units, and integration notes. These are files written by agents for agents — concise, conclusion-oriented documents that help you maintain coordination awareness. Do not use readFile to investigate source code, configuration files, logs, or any file whose primary purpose is to answer a substantive question about implementation or behavior — that is execution work and should be delegated to a child unit. If you need to check whether a file exists or what a directory contains, use bash (ls, find) instead. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section. You must provide proposedStep to describe how reading this file advances the coordination task."
   },
   parameters: Type.Object({
     path: Type.String({
@@ -481,7 +484,7 @@ const writeFileTool = {
 };
 const spawnChildTool = {
   name: "spawnChild",
-  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. Child creation follows the fixed layer hierarchy: spawnChild creates an L2 child. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
+  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
   levelDescriptions: {
     L0: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. From L0, spawnChild creates an L1 child unit with full execution capabilities. Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task."
   },
@@ -713,6 +716,8 @@ function estimateMessageChars(message) {
       return message.toolName.length + message.output.length + 64;
     case "child_report_message":
       return message.childId.length + message.content.length + 64;
+    case "child_commit_view_message":
+      return message.content.length + 64;
   }
 }
 function estimateMessagesChars(messages) {
@@ -777,6 +782,9 @@ class CompressionTaskManager {
   }
   getReminderThresholdChars() {
     return this.reminderThresholdChars;
+  }
+  getRecentRawStartIndex() {
+    return this.recentRawStartIndex;
   }
   getRecentRawMessages(visibleMessages) {
     const safeStart = Math.min(this.recentRawStartIndex, visibleMessages.length);
@@ -882,6 +890,12 @@ class ConversationLedger {
   messages = [];
   sequenceStart = 1;
   totalMessages = 0;
+  get currentSequenceStart() {
+    return this.sequenceStart;
+  }
+  get currentMessageCount() {
+    return this.messages.length;
+  }
   cursors = {
     "agent-a": 0,
     "agent-b": 0
@@ -1015,6 +1029,19 @@ class ConversationLedger {
     const message = {
       id: generateConversationMessageId(),
       kind: "system_message",
+      authoredBy: "system",
+      content,
+      timestamp: Date.now(),
+      turnAuthored: meta.turnAuthored,
+      visibleFromTurn: meta.visibleFromTurn
+    };
+    this.appendMessage(message);
+    return message;
+  }
+  appendChildCommitViewMessage(content, meta) {
+    const message = {
+      id: generateConversationMessageId(),
+      kind: "child_commit_view_message",
       authoredBy: "system",
       content,
       timestamp: Date.now(),
@@ -1303,6 +1330,13 @@ ${message.content}`,
       timestamp: message.timestamp
     };
   }
+  if (message.kind === "child_commit_view_message") {
+    return {
+      role: "user",
+      content: message.content,
+      timestamp: message.timestamp
+    };
+  }
   const prefix = getDisplayName(message.authoredBy);
   const content = "content" in message ? message.content : "";
   return {
@@ -1413,7 +1447,9 @@ class DeliberationUnit {
   onDurableStateChange;
   suppressDurableStateChangeNotifications = false;
   messagePersistenceSink;
+  contextPersistenceSink;
   workspaceRoot;
+  activeRecipeId = null;
   projectRoot;
   static MAX_EMPTY_TURNS = 4;
   static CHILD_COMMIT_VIEW_LIMIT = 3;
@@ -1435,6 +1471,7 @@ class DeliberationUnit {
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {
     });
     this.messagePersistenceSink = options.messagePersistenceSink;
+    this.contextPersistenceSink = options.contextPersistenceSink;
     this.scope = {
       level: this.level,
       path: options.path ?? []
@@ -1528,10 +1565,10 @@ class DeliberationUnit {
     const compressionSnapshot = coldStart && snapshot.compression.activeTask ? { ...snapshot.compression, activeTask: null } : snapshot.compression;
     const recoveryMessages = [];
     if (coldStart && normalizedState !== snapshot.state) {
-      recoveryMessages.push(`This unit was restored from persisted state after an interrupted runtime. Its persisted state "${snapshot.state}" was normalized to "idle" on cold start.`);
+      recoveryMessages.push(`This unit was restored after an interrupted session. Its previous active state was reset so it can resume from a clean starting point.`);
     }
     if (coldStart && snapshot.compression.activeTask) {
-      recoveryMessages.push(`A context compression task (${snapshot.compression.activeTask.id}) was still marked active when the runtime shut down. It was cleared during cold-start recovery rather than resumed mid-flight.`);
+      recoveryMessages.push(`A context compression task (${snapshot.compression.activeTask.id}) was still active when the session was interrupted. It was cleared during recovery rather than resumed mid-flight.`);
     }
     this.suppressDurableStateChangeNotifications = true;
     try {
@@ -1575,7 +1612,7 @@ class DeliberationUnit {
         if (remainingMs > 0) {
           this.scheduleSleepTimer(remainingMs, snapshot.sleepDeadlineMs);
         } else if (coldStart) {
-          recoveryMessages.push(`A persisted sleep timeout elapsed while the runtime was offline. The unit was restored in "idle" and became eligible to resume deliberation.`);
+          recoveryMessages.push(`A sleep timeout elapsed while the session was offline. The unit is now eligible to resume deliberation.`);
         }
       }
       if (coldStart) {
@@ -1673,7 +1710,7 @@ class DeliberationUnit {
     this.sleepTimer = setTimeout(() => {
       this.sleepTimer = null;
       this.sleepDeadlineMs = null;
-      this.ledger.appendSystemMessage(`The sleep timeout of ${timeoutMs}ms elapsed before any child unit reported. The unit became eligible to resume deliberation.`, this.buildDeferredVisibilityMeta());
+      this.ledger.appendSystemMessage(`The sleep timeout elapsed without any child unit reporting. The unit became eligible to resume deliberation.`, this.buildDeferredVisibilityMeta());
       this.notifyDurableStateChange();
       this.wakeIfIdle();
     }, timeoutMs);
@@ -1689,6 +1726,7 @@ class DeliberationUnit {
       path: childPath,
       unitId,
       messagePersistenceSink: this.messagePersistenceSink,
+      contextPersistenceSink: this.contextPersistenceSink,
       onSystemEvent: (event) => {
         if (event.type === "upward-message" && this.sameScope(event.scope, child.scope)) {
           const broadcastMeta = this.buildDeferredVisibilityMeta();
@@ -1735,9 +1773,12 @@ class DeliberationUnit {
         this.compressionManager.getReminderThresholdChars()
       ));
     }
-    const childCommitViewMessage = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
-    if (childCommitViewMessage) {
-      messages.push(childCommitViewMessage);
+    if (childCommitViews.length > 0) {
+      const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
+      if (rendered && rendered.role === "user") {
+        this.ledger.appendChildCommitViewMessage(rendered.content, this.buildDeferredVisibilityMeta());
+        this.notifyDurableStateChange();
+      }
     }
     if (pendingProposal && pendingProposal.proposer !== agentId) {
       const proposerName = AGENT_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
@@ -1752,7 +1793,7 @@ class DeliberationUnit {
   }
   buildCompressionTaskFailureMessage(task, error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return `The context compression task (${task.id}) failed after ${task.attemptNumber} attempt(s): ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
+    return `The context compression task (${task.id}) failed: ${detail}. The unit returned to a state with no active compression task so the agents can handle the failure and, if appropriate, propose another compression task.`;
   }
   buildCompressionTaskSuccessMessage(task) {
     return `The background context compression task (${task.id}) completed and refreshed the unit's memory snapshot. Future turns can use the updated snapshot without pausing the unit's workflow.`;
@@ -1780,6 +1821,47 @@ ${renderedHistory || "No recent raw conversation history is available."}
 Write a refreshed Memory Snapshot that integrates the earlier snapshot reference with the recent raw window. Overlap between them is expected rather than erroneous.`,
       timestamp: Date.now()
     };
+  }
+  createContextRecipe(agentId, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild) {
+    if (!this.contextPersistenceSink) return;
+    const memorySnapshot = this.compressionManager.getMemorySnapshot();
+    let memorySnapshotRowid = null;
+    if (memorySnapshot) {
+      const metadata = JSON.stringify({
+        sourceMessageCount: memorySnapshot.sourceMessageCount,
+        requirements: memorySnapshot.requirements
+      });
+      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
+        this.unitId,
+        "memory_snapshot",
+        memorySnapshot.content,
+        metadata
+      );
+    }
+    const recentRawStartSeq = this.ledger.currentSequenceStart + this.compressionManager.getRecentRawStartIndex();
+    const visibleEndSeq = this.ledger.currentSequenceStart + this.ledger.currentMessageCount;
+    const newlyVisibleSeq = visibleSnapshot.newlyVisibleMessages.length > 0 ? this.ledger.currentSequenceStart + (this.ledger.currentMessageCount - visibleSnapshot.newlyVisibleMessages.length) : null;
+    const recipe = {
+      unitId: this.unitId,
+      agentId,
+      recentRawStartSeq,
+      visibleEndSeq,
+      newlyVisibleSeq,
+      memorySnapshotRowid,
+      agentMdRowid: null,
+      level: this.level,
+      hasPendingFromOther,
+      hasChildren,
+      canSpawnChild,
+      effectiveTurn: this.turnCounter
+    };
+    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
+  }
+  linkRecipeOutputMessage(outputMessageId) {
+    if (this.activeRecipeId !== null && this.contextPersistenceSink) {
+      this.contextPersistenceSink.updateRecipeOutputMessageId(this.activeRecipeId, outputMessageId);
+      this.activeRecipeId = null;
+    }
   }
   emitUpwardMessage(deliveryMode, content) {
     this.ledger.appendUpwardMessage({
@@ -1843,6 +1925,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         pendingProposal,
         childCommitViews
       );
+      this.createContextRecipe(currentAgent, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild);
       this.emit({
         type: "turn-start",
         scope: this.scope,
@@ -1877,7 +1960,8 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         this.consecutiveEmptyTurns = 0;
       }
       if (result.reply) {
-        this.ledger.appendAgentMessage(currentAgent, result.reply, this.buildDeferredVisibilityMeta());
+        const agentMsg = this.ledger.appendAgentMessage(currentAgent, result.reply, this.buildDeferredVisibilityMeta());
+        this.linkRecipeOutputMessage(agentMsg.id);
         this.notifyDurableStateChange();
         this.emit({ type: "agent-message", scope: this.scope, turn: this.turnCounter, agent: currentAgent, content: result.reply });
       }
@@ -1976,7 +2060,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
             this.ledger.markProposalApproved(autoApprovedProposal.messageId);
             this.recordCommittedStep(autoApprovedProposal);
             this.ledger.appendSystemMessage(
-              `${proposal.toolName} proposal auto-approved (read-only operations do not require partner vote, P30)`,
+              `${proposal.toolName} executed (read-only operations do not require partner vote)`,
               this.buildDeferredVisibilityMeta()
             );
             this.notifyDurableStateChange();
@@ -2067,7 +2151,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         return;
       }
       if (child.getState() !== "idle") {
-        this.ledger.appendSystemMessage(`Child unit ${childId} was in state "${child.getState()}" rather than idle. The message was queued for that child unit.`, this.buildDeferredVisibilityMeta());
+        this.ledger.appendSystemMessage(`Child unit ${childId} is currently active — the message was queued and will be available to that child as it continues work.`, this.buildDeferredVisibilityMeta());
         this.notifyDurableStateChange();
       }
       child.injectUserMessage(message);
@@ -2123,7 +2207,8 @@ class DeliberationSession {
         onMessageUpdated: (message) => {
           this.persistence.updateMessage(this.unit.getUnitId(), message);
         }
-      } : void 0
+      } : void 0,
+      contextPersistenceSink: this.persistence ?? void 0
     });
     if (restoredSnapshot) {
       this.unit.restoreFromSnapshot(restoredSnapshot, {
@@ -2335,7 +2420,7 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 12e4;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24e3;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "10";
+const CURRENT_SCHEMA_VERSION = "11";
 function parseJson(value) {
   return JSON.parse(value);
 }
@@ -2527,6 +2612,8 @@ class SqliteSessionPersistence {
   }
   rebuildSchema() {
     this.db.exec(`
+      DROP TABLE IF EXISTS context_recipe;
+      DROP TABLE IF EXISTS context_text_history;
       DROP TABLE IF EXISTS unit_compression_state;
       DROP TABLE IF EXISTS unit_memory_state;
       DROP TABLE IF EXISTS committed_steps;
@@ -2616,14 +2703,44 @@ class SqliteSessionPersistence {
         PRIMARY KEY(unit_id, step_seq)
       );
 
-      CREATE TABLE IF NOT EXISTS unit_memory_state (
-        unit_id TEXT PRIMARY KEY,
-        snapshot_text TEXT,
-        source_message_count INTEGER NOT NULL DEFAULT 0,
-        requirements TEXT,
-        created_at INTEGER,
-        recent_raw_start_seq INTEGER NOT NULL DEFAULT 1
+      CREATE TABLE IF NOT EXISTS context_text_history (
+        rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+        unit_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        content TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        effective_turn INTEGER,
+        created_at INTEGER NOT NULL
       );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ctx_text_dedup
+        ON context_text_history(unit_id, category, content_hash);
+
+      CREATE INDEX IF NOT EXISTS idx_ctx_text_unit_category_id
+        ON context_text_history(unit_id, category, rowid DESC);
+
+      CREATE TABLE IF NOT EXISTS context_recipe (
+        recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        unit_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        recent_raw_start_seq INTEGER NOT NULL,
+        visible_end_seq INTEGER NOT NULL,
+        newly_visible_seq INTEGER,
+        memory_snapshot_rowid INTEGER,
+        agent_md_rowid INTEGER,
+        level TEXT NOT NULL,
+        has_pending_from_other INTEGER NOT NULL DEFAULT 0,
+        has_children INTEGER NOT NULL DEFAULT 0,
+        can_spawn_child INTEGER NOT NULL DEFAULT 0,
+        output_message_id TEXT,
+        effective_turn INTEGER,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recipe_output_message
+        ON context_recipe(output_message_id)
+        WHERE output_message_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS unit_compression_state (
         unit_id TEXT PRIMARY KEY,
@@ -2744,25 +2861,14 @@ class SqliteSessionPersistence {
     const ledgerSnapshot = snapshot.ledger;
     const memorySnapshot = snapshot.compression.memorySnapshot;
     const recentRawStartSeq = ledgerSnapshot.messages.length === 0 ? ledgerSnapshot.sequenceStart : ledgerSnapshot.sequenceStart + clamp(snapshot.compression.recentRawStartIndex, 0, ledgerSnapshot.messages.length - 1);
-    this.db.prepare(`
-      INSERT INTO unit_memory_state (
-        unit_id, snapshot_text, source_message_count, requirements, created_at, recent_raw_start_seq
-      )
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(unit_id) DO UPDATE SET
-        snapshot_text = excluded.snapshot_text,
-        source_message_count = excluded.source_message_count,
-        requirements = excluded.requirements,
-        created_at = excluded.created_at,
-        recent_raw_start_seq = excluded.recent_raw_start_seq
-    `).run(
-      unitId,
-      memorySnapshot?.content ?? null,
-      memorySnapshot?.sourceMessageCount ?? 0,
-      memorySnapshot?.requirements ?? null,
-      memorySnapshot?.createdAt ?? null,
-      recentRawStartSeq
-    );
+    if (memorySnapshot) {
+      const metadata = JSON.stringify({
+        sourceMessageCount: memorySnapshot.sourceMessageCount,
+        requirements: memorySnapshot.requirements,
+        recentRawStartSeq
+      });
+      this.saveContextTextHistoryInternal(unitId, "memory_snapshot", memorySnapshot.content, metadata, memorySnapshot.createdAt);
+    }
     this.db.prepare(`
       INSERT INTO unit_compression_state (
         unit_id, active_task_id, requirements, source_message_count, attempt_number,
@@ -2844,9 +2950,10 @@ class SqliteSessionPersistence {
         WHERE rn = 1 AND proposal_status = 'pending'
       `).get(unitId)?.seq;
     const memoryRow = this.db.prepare(`
-        SELECT snapshot_text, source_message_count, requirements, created_at, recent_raw_start_seq
-        FROM unit_memory_state
-        WHERE unit_id = ?
+        SELECT rowid, content, metadata, created_at
+        FROM context_text_history
+        WHERE unit_id = ? AND category = 'memory_snapshot'
+        ORDER BY rowid DESC LIMIT 1
       `).get(unitId);
     const compressionRow = this.db.prepare(`
         SELECT active_task_id, requirements, source_message_count, attempt_number,
@@ -2931,8 +3038,9 @@ class SqliteSessionPersistence {
       return 1;
     }
     let start = 1;
-    if (memoryRow?.snapshot_text) {
-      start = clamp(memoryRow.recent_raw_start_seq, 1, totalMessages);
+    if (memoryRow?.content) {
+      const meta = memoryRow.metadata ? JSON.parse(memoryRow.metadata) : {};
+      start = clamp(meta.recentRawStartSeq ?? 1, 1, totalMessages);
     }
     if (pendingProposalSeq !== null) {
       start = Math.min(start, pendingProposalSeq);
@@ -2943,18 +3051,20 @@ class SqliteSessionPersistence {
     return clamp(cursorExclusive - (sequenceStart - 1), 0, messageCount);
   }
   buildMemorySnapshot(row) {
-    if (!row?.snapshot_text) {
+    if (!row?.content) {
       return null;
     }
+    const meta = row.metadata ? JSON.parse(row.metadata) : {};
     return {
-      content: row.snapshot_text,
-      sourceMessageCount: row.source_message_count,
-      requirements: row.requirements ?? "",
+      content: row.content,
+      sourceMessageCount: meta.sourceMessageCount ?? 0,
+      requirements: meta.requirements ?? "",
       createdAt: row.created_at ?? 0
     };
   }
   buildCompressionSnapshot(row, memorySnapshot, memoryRow, sequenceStart, messageCount) {
-    const recentRawStartIndex = memoryRow?.snapshot_text ? clamp(memoryRow.recent_raw_start_seq - sequenceStart, 0, messageCount) : 0;
+    const meta = memoryRow?.metadata ? JSON.parse(memoryRow.metadata) : {};
+    const recentRawStartIndex = memoryRow?.content ? clamp((meta.recentRawStartSeq ?? 1) - sequenceStart, 0, messageCount) : 0;
     return {
       activeTask: row?.active_task_id ? {
         id: row.active_task_id,
@@ -2970,6 +3080,60 @@ class SqliteSessionPersistence {
       recentRawTargetChars: row?.recent_raw_target_chars ?? DEFAULT_RECENT_RAW_TARGET_CHARS,
       maxRetries: row?.max_retries ?? DEFAULT_MAX_RETRIES
     };
+  }
+  saveContextTextHistoryInternal(unitId, category, content, metadata, createdAt) {
+    const contentHash = createHash("sha256").update(content).digest("hex");
+    const existing = this.db.prepare(
+      `SELECT rowid FROM context_text_history WHERE unit_id = ? AND category = ? AND content_hash = ?`
+    ).get(unitId, category, contentHash);
+    if (existing) {
+      return existing.rowid;
+    }
+    const result = this.db.prepare(
+      `INSERT INTO context_text_history (unit_id, category, content_hash, content, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(unitId, category, contentHash, content, metadata, createdAt);
+    return Number(result.lastInsertRowid);
+  }
+  saveContextTextHistory(unitId, category, content, metadata) {
+    return this.saveContextTextHistoryInternal(unitId, category, content, metadata, Date.now());
+  }
+  getLatestContextTextHistory(unitId, category) {
+    const row = this.db.prepare(
+      `SELECT rowid, content, metadata FROM context_text_history WHERE unit_id = ? AND category = ? ORDER BY rowid DESC LIMIT 1`
+    ).get(unitId, category);
+    if (!row) return null;
+    return { rowid: row.rowid, content: row.content, metadata: row.metadata };
+  }
+  createRecipe(recipe) {
+    const result = this.db.prepare(
+      `INSERT INTO context_recipe (
+        unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
+        memory_snapshot_rowid, agent_md_rowid, level,
+        has_pending_from_other, has_children, can_spawn_child,
+        effective_turn, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      recipe.unitId,
+      recipe.agentId,
+      recipe.recentRawStartSeq,
+      recipe.visibleEndSeq,
+      recipe.newlyVisibleSeq,
+      recipe.memorySnapshotRowid,
+      recipe.agentMdRowid,
+      recipe.level,
+      recipe.hasPendingFromOther ? 1 : 0,
+      recipe.hasChildren ? 1 : 0,
+      recipe.canSpawnChild ? 1 : 0,
+      recipe.effectiveTurn,
+      Date.now()
+    );
+    return Number(result.lastInsertRowid);
+  }
+  updateRecipeOutputMessageId(recipeId, outputMessageId) {
+    this.db.prepare(
+      `UPDATE context_recipe SET output_message_id = ? WHERE recipe_id = ?`
+    ).run(outputMessageId, recipeId);
   }
 }
 const store = new ElectronStore({

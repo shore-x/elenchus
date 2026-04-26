@@ -1,4 +1,4 @@
-import { type AgentId, type AgentVisibleSnapshot, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type UpwardMessage, type VoteMessage } from "./types.js";
+import { type AgentId, type AgentVisibleSnapshot, type ChildCommitViewMessage, type ChildReportMessage, type ConversationLedgerSnapshot, type ConversationMessage, type LedgerMessageMeta, type PendingProposal, type ProposalMessage, type ProposalStatus, type ToolResultMessage, type UpwardMessage, type VoteMessage } from "./types.js";
 
 export interface MessagePersistenceSink {
   onMessageCreated(message: ConversationMessage, seq: number): void;
@@ -15,6 +15,8 @@ export class ConversationLedger {
   private messages: ConversationMessage[] = [];
   private sequenceStart = 1;
   private totalMessages = 0;
+  get currentSequenceStart(): number { return this.sequenceStart; }
+  get currentMessageCount(): number { return this.messages.length; }
   private cursors: Record<AgentId, number> = {
     "agent-a": 0,
     "agent-b": 0,
@@ -157,6 +159,20 @@ export class ConversationLedger {
     const message: ConversationMessage = {
       id: generateConversationMessageId(),
       kind: "system_message",
+      authoredBy: "system",
+      content,
+      timestamp: Date.now(),
+      turnAuthored: meta.turnAuthored,
+      visibleFromTurn: meta.visibleFromTurn,
+    };
+    this.appendMessage(message);
+    return message;
+  }
+
+  appendChildCommitViewMessage(content: string, meta: LedgerMessageMeta): ChildCommitViewMessage {
+    const message: ChildCommitViewMessage = {
+      id: generateConversationMessageId(),
+      kind: "child_commit_view_message",
       authoredBy: "system",
       content,
       timestamp: Date.now(),

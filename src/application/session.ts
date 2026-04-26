@@ -47,6 +47,7 @@ export class DeliberationSession {
           this.persistence!.updateMessage(this.unit.getUnitId(), message);
         },
       } : undefined,
+      contextPersistenceSink: this.persistence ?? undefined,
     });
 
     if (restoredSnapshot) {

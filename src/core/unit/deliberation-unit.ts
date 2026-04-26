@@ -15,12 +15,19 @@ import { ConversationLedger, type MessagePersistenceSink } from "../conversation
 import { ConversationProjector } from "../conversation-projector.js";
 import { buildCompressionSystemPrompt } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
-import { type AgentId, type ChildCommitView, type CommittedStep, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
+import { type AgentId, type ChildCommitView, type CommittedStep, type ContextRecipeData, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
 };
+
+export interface ContextPersistenceSink {
+  saveContextTextHistory(unitId: string, category: string, content: string, metadata: string): number;
+  getLatestContextTextHistory(unitId: string, category: string): { rowid: number; content: string; metadata: string } | null;
+  createRecipe(recipe: ContextRecipeData): number;
+  updateRecipeOutputMessageId(recipeId: number, outputMessageId: string): void;
+}
 
 export interface DeliberationUnitOptions {
   llmClient: LlmClient;
@@ -33,6 +40,7 @@ export interface DeliberationUnitOptions {
   onSystemEvent?: OnSystemEvent;
   onDurableStateChange?: () => void;
   messagePersistenceSink?: MessagePersistenceSink;
+  contextPersistenceSink?: ContextPersistenceSink;
 }
 
 export class DeliberationUnit {
@@ -61,7 +69,9 @@ export class DeliberationUnit {
   private onDurableStateChange: () => void;
   private suppressDurableStateChangeNotifications = false;
   private readonly messagePersistenceSink: MessagePersistenceSink | undefined;
+  private readonly contextPersistenceSink: ContextPersistenceSink | undefined;
   private workspaceRoot: string;
+  private activeRecipeId: number | null = null;
   private projectRoot: string;
   private static readonly MAX_EMPTY_TURNS = 4;
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
@@ -83,6 +93,7 @@ export class DeliberationUnit {
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.messagePersistenceSink = options.messagePersistenceSink;
+    this.contextPersistenceSink = options.contextPersistenceSink;
     this.scope = {
       level: this.level,
       path: options.path ?? [],
@@ -394,6 +405,7 @@ export class DeliberationUnit {
       path: childPath,
       unitId,
       messagePersistenceSink: this.messagePersistenceSink,
+      contextPersistenceSink: this.contextPersistenceSink,
       onSystemEvent: (event: SystemEvent) => {
         if (event.type === "upward-message" && this.sameScope(event.scope, child.scope)) {
           const broadcastMeta = this.buildDeferredVisibilityMeta();
@@ -460,9 +472,12 @@ export class DeliberationUnit {
       ));
     }
 
-    const childCommitViewMessage = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
-    if (childCommitViewMessage) {
-      messages.push(childCommitViewMessage);
+    if (childCommitViews.length > 0) {
+      const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
+      if (rendered && rendered.role === "user") {
+        this.ledger.appendChildCommitViewMessage(rendered.content as string, this.buildDeferredVisibilityMeta());
+        this.notifyDurableStateChange();
+      }
     }
 
     if (pendingProposal && pendingProposal.proposer !== agentId) {
@@ -508,6 +523,62 @@ export class DeliberationUnit {
         `Write a refreshed Memory Snapshot that integrates the earlier snapshot reference with the recent raw window. Overlap between them is expected rather than erroneous.`,
       timestamp: Date.now(),
     };
+  }
+
+  private createContextRecipe(
+    agentId: AgentId,
+    visibleSnapshot: { visibleMessages: readonly ConversationMessage[]; newlyVisibleMessages: readonly ConversationMessage[] },
+    hasPendingFromOther: boolean,
+    hasChildren: boolean,
+    canSpawnChild: boolean,
+  ): void {
+    if (!this.contextPersistenceSink) return;
+
+    const memorySnapshot = this.compressionManager.getMemorySnapshot();
+    let memorySnapshotRowid: number | null = null;
+    if (memorySnapshot) {
+      const metadata = JSON.stringify({
+        sourceMessageCount: memorySnapshot.sourceMessageCount,
+        requirements: memorySnapshot.requirements,
+      });
+      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
+        this.unitId, "memory_snapshot", memorySnapshot.content, metadata,
+      );
+    }
+
+    const recentRawStartSeq = this.ledger.currentSequenceStart +
+      this.compressionManager.getRecentRawStartIndex();
+
+    const visibleEndSeq = this.ledger.currentSequenceStart + this.ledger.currentMessageCount;
+
+    const newlyVisibleSeq = visibleSnapshot.newlyVisibleMessages.length > 0
+      ? this.ledger.currentSequenceStart +
+        (this.ledger.currentMessageCount - visibleSnapshot.newlyVisibleMessages.length)
+      : null;
+
+    const recipe: ContextRecipeData = {
+      unitId: this.unitId,
+      agentId,
+      recentRawStartSeq,
+      visibleEndSeq,
+      newlyVisibleSeq,
+      memorySnapshotRowid,
+      agentMdRowid: null,
+      level: this.level,
+      hasPendingFromOther,
+      hasChildren,
+      canSpawnChild,
+      effectiveTurn: this.turnCounter,
+    };
+
+    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
+  }
+
+  private linkRecipeOutputMessage(outputMessageId: string): void {
+    if (this.activeRecipeId !== null && this.contextPersistenceSink) {
+      this.contextPersistenceSink.updateRecipeOutputMessageId(this.activeRecipeId, outputMessageId);
+      this.activeRecipeId = null;
+    }
   }
 
   private emitUpwardMessage(deliveryMode: UpwardDeliveryMode, content: string): void {
@@ -585,6 +656,8 @@ export class DeliberationUnit {
         childCommitViews,
       );
 
+      this.createContextRecipe(currentAgent, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild);
+
       this.emit({
         type: "turn-start",
         scope: this.scope,
@@ -622,7 +695,8 @@ export class DeliberationUnit {
       }
 
       if (result.reply) {
-        this.ledger.appendAgentMessage(currentAgent, result.reply, this.buildDeferredVisibilityMeta());
+        const agentMsg = this.ledger.appendAgentMessage(currentAgent, result.reply, this.buildDeferredVisibilityMeta());
+        this.linkRecipeOutputMessage(agentMsg.id);
         this.notifyDurableStateChange();
         this.emit({ type: "agent-message", scope: this.scope, turn: this.turnCounter, agent: currentAgent, content: result.reply });
       }

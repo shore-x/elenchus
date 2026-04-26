@@ -135,6 +135,14 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     };
   }
 
+  if (message.kind === "child_commit_view_message") {
+    return {
+      role: "user",
+      content: message.content,
+      timestamp: message.timestamp,
+    };
+  }
+
   const prefix = getDisplayName(message.authoredBy);
   const content = "content" in message ? message.content : "";
 
