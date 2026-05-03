@@ -14,13 +14,13 @@ function stateDotClass(state: UnitState): string {
   switch (state) {
     case "turn-a":
     case "turn-b":
-      return "bg-stone-500 animate-pulse";
+      return "bg-[var(--color-accent)] animate-pulse";
     case "executing":
-      return "bg-stone-700 animate-pulse";
+      return "bg-[var(--color-text-secondary)] animate-pulse";
     case "idle":
     case "terminated":
     default:
-      return "bg-stone-300";
+      return "bg-[var(--color-border-strong)]";
   }
 }
 
@@ -42,15 +42,15 @@ function TreeNode({ node, selectedUnitId, onSelectUnit, depth }: {
   return (
     <div>
       <div
-        className={`flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-stone-50 rounded text-sm ${
-          isSelected ? "bg-stone-100 text-gray-800" : "text-gray-700"
+        className={`sidebar-row cursor-pointer text-sm ${
+          isSelected ? "is-active" : ""
         }`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={() => onSelectUnit(node.unitId)}
       >
         {hasChildren ? (
           <button
-            className="w-4 h-4 flex items-center justify-center text-stone-400 hover:text-stone-600"
+            className="sidebar-disclosure"
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
           >
             {expanded ? "▾" : "▸"}
@@ -58,10 +58,10 @@ function TreeNode({ node, selectedUnitId, onSelectUnit, depth }: {
         ) : (
           <span className="w-4" />
         )}
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stateDotClass(node.state)}`} />
-        <span className="font-medium">{node.level}</span>
-        <span className="text-gray-400 truncate">{node.unitId.replace(/^(L\d+-)/, "")}</span>
-        <span className="text-xs text-gray-400 ml-auto">{stateLabel(node.state)}</span>
+        <span className={`sidebar-state-dot ${stateDotClass(node.state)}`} />
+        <span className="font-medium text-[13px] text-[var(--color-text-secondary)]">{node.level}</span>
+        <span className="sidebar-secondary-label truncate">{node.unitId.replace(/^(L\d+-)/, "")}</span>
+        <span className="sidebar-row-meta ml-auto">{stateLabel(node.state)}</span>
       </div>
       {expanded && hasChildren && node.children.map((child) => (
         <TreeNode
@@ -79,17 +79,25 @@ function TreeNode({ node, selectedUnitId, onSelectUnit, depth }: {
 export function AgentTree({ tree, selectedUnitId, onSelectUnit }: AgentTreeProps) {
   if (!tree) {
     return (
-      <div className="p-3 text-sm text-gray-400">
-        <div className="font-semibold text-gray-600 mb-2">Agents</div>
-        No active session
+      <div className="flex flex-col h-full">
+        <div className="sidebar-section-header">
+          <div className="sidebar-section-title">Agents</div>
+        </div>
+        <div className="px-4 py-3 text-sm text-[var(--color-text-quaternary)]">
+          No active session
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="p-2">
-      <div className="font-semibold text-gray-600 text-xs uppercase tracking-wider px-2 mb-1">Agents</div>
-      <TreeNode node={tree} selectedUnitId={selectedUnitId} onSelectUnit={onSelectUnit} depth={0} />
+    <div className="flex flex-col h-full">
+      <div className="sidebar-section-header">
+        <div className="sidebar-section-title">Agents</div>
+      </div>
+      <div className="flex-1 overflow-y-auto py-2">
+        <TreeNode node={tree} selectedUnitId={selectedUnitId} onSelectUnit={onSelectUnit} depth={0} />
+      </div>
     </div>
   );
 }

@@ -254,7 +254,7 @@ export default function App() {
         <ThreeColumnLayout>
       {/* Left Panel */}
       <div className="flex flex-col h-full">
-        <div className="h-1/2 min-h-0 overflow-y-auto border-b border-gray-200">
+        <div className="h-1/2 min-h-0 overflow-y-auto border-b border-[var(--color-border)]">
           <AgentTree
             tree={sessionInfo?.tree ?? null}
             selectedUnitId={selectedUnitId}

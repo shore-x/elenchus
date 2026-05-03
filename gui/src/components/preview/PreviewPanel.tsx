@@ -150,21 +150,21 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
   return (
     <div className="flex flex-col h-full">
       {/* Tab Bar */}
-      <div className="flex items-center border-b border-stone-200 bg-stone-50 min-h-[32px]">
-        <div className="flex flex-1 overflow-x-auto">
+      <div className="preview-header">
+        <div className="preview-tabs">
           {tabs.map((tab, i) => (
             <div
               key={tab.path}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-stone-200 whitespace-nowrap ${
+              className={`preview-tab whitespace-nowrap ${
                 i === activeTab
-                  ? "bg-white text-gray-800 font-medium border-b-2 border-b-stone-400"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-stone-100"
+                  ? "is-active"
+                  : ""
               }`}
               onClick={() => onSelectTab(i)}
             >
               <span>{tab.name}</span>
               <button
-                className="ml-1 text-stone-300 hover:text-stone-500"
+                className="preview-tab-close"
                 onClick={(e) => { e.stopPropagation(); onCloseTab(i); }}
               >
                 ×
@@ -172,6 +172,16 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
             </div>
           ))}
         </div>
+        {isMarkdown && content && !content.fileDeleted && (
+          <div className="preview-controls">
+            <button
+              className="preview-toolbar-button px-3 py-2"
+              onClick={onToggleRender}
+            >
+              {content.renderAsMarkdown ? "Source" : "Render"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -180,19 +190,19 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
         className="flex-1 relative overflow-y-auto"
       >
         {!content ? (
-          <div className="flex items-center justify-center h-full text-sm text-gray-400">
+          <div className="preview-empty-state">
             Click a file in the workspace to preview
           </div>
         ) : content.fileDeleted ? (
           <div className="flex flex-col h-full">
-            <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-700 text-xs">
+            <div className="preview-warning-banner">
               <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
               <span>This file has been deleted or moved. The content below is the last known version.</span>
             </div>
-            <div className="flex-1 opacity-60">
+            <div className="flex-1 preview-dimmed">
               {content.renderAsMarkdown ? (
                 <div
-                  className="markdown-body p-6"
+                  className="markdown-body preview-content-body"
                   onMouseMove={mdDrag.handleMouseMove}
                   onMouseLeave={mdDrag.handleMouseLeave}
                   onMouseDown={mdDrag.handleMouseDown}
@@ -213,7 +223,7 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
           </div>
         ) : content.renderAsMarkdown ? (
           <div
-            className="markdown-body p-6"
+            className="markdown-body preview-content-body"
             onMouseMove={mdDrag.handleMouseMove}
             onMouseLeave={mdDrag.handleMouseLeave}
             onMouseDown={mdDrag.handleMouseDown}
@@ -229,16 +239,6 @@ export function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content
             scrollToLine={scrollToLine}
             onAddRef={onAddRef}
           />
-        )}
-
-        {/* Source/Render toggle — floating top-right */}
-        {isMarkdown && content && !content.fileDeleted && (
-          <button
-            className="absolute top-2 right-2 px-2.5 py-1 text-xs text-gray-500 hover:text-gray-700 bg-white/80 backdrop-blur-sm rounded border border-stone-200 shadow-sm z-10"
-            onClick={onToggleRender}
-          >
-            {content.renderAsMarkdown ? "Source" : "Render"}
-          </button>
         )}
 
         {/* Cursor hint rendered by useDragToChat hook */}

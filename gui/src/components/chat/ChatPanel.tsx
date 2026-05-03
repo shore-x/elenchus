@@ -19,31 +19,31 @@ interface ChatPanelProps {
 }
 
 function agentTagClass(agent: AgentId): string {
-  return agent === "agent-a" ? "bg-sky-50 text-sky-500" : "bg-indigo-50 text-indigo-500";
-}
-
-function agentBorderClass(agent: AgentId): string {
-  return agent === "agent-a" ? "border-l-2 border-sky-200" : "border-l-2 border-indigo-200";
+  return agent === "agent-a" ? "ui-badge ui-badge-identity-a" : "ui-badge ui-badge-identity-b";
 }
 
 function proposalStatusBadge(status: ProposalStatus): { label: string; cls: string } {
   switch (status) {
-    case "pending": return { label: "pending", cls: "bg-stone-100 text-stone-600" };
-    case "approved": return { label: "approved", cls: "bg-emerald-50 text-emerald-500" };
-    case "rejected": return { label: "rejected", cls: "bg-stone-100 text-stone-400" };
-    case "superseded": return { label: "superseded", cls: "bg-stone-50 text-stone-400" };
+    case "pending": return { label: "pending", cls: "ui-badge ui-badge-status-muted" };
+    case "approved": return { label: "approved", cls: "ui-badge ui-badge-status-success" };
+    case "rejected": return { label: "rejected", cls: "ui-badge ui-badge-status-danger" };
+    case "superseded": return { label: "superseded", cls: "ui-badge ui-badge-status-muted" };
   }
+}
+
+function deliveryModeBadgeClass(mode: "report" | "yield"): string {
+  return mode === "yield" ? "ui-badge ui-badge-status-warning" : "ui-badge ui-badge-status-muted";
 }
 
 function ContextMenuPopup({ x, y, onAction }: { x: number; y: number; onAction: () => void }) {
   return (
     <div
-      className="fixed z-50 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[140px] text-sm"
+      className="overlay-menu"
       style={{ left: x, top: y }}
       onClick={(e) => e.stopPropagation()}
     >
       <button
-        className="w-full text-left px-3 py-1.5 hover:bg-stone-50 text-gray-700"
+        className="overlay-menu-item"
         onClick={onAction}
       >
         View Context
@@ -75,8 +75,10 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
     case "incoming_message":
       return (
         <div className="flex justify-end mb-3">
-          <div className="max-w-[80%] bg-stone-100 text-gray-800 rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed">
-            {renderInlineContent(message.content, { onOpenFile })}
+          <div className="message-card message-card-user">
+            <div className="message-body message-body-inline">
+              {renderInlineContent(message.content, { onOpenFile })}
+            </div>
           </div>
         </div>
       );
@@ -84,11 +86,13 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
     case "agent_message":
       return (
         <div className="flex justify-start mb-3" onContextMenu={handleContextMenu}>
-          <div className={`max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed ${agentBorderClass(message.authoredBy)}`}>
-            <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
-              {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
-            </span>
-            <div className="mt-1 text-gray-800">{renderInlineContent(message.content, { onOpenFile })}</div>
+          <div className="message-card">
+            <div className="message-meta-row">
+              <span className={agentTagClass(message.authoredBy)}>
+                {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
+              </span>
+            </div>
+            <div className="message-body">{renderInlineContent(message.content, { onOpenFile })}</div>
           </div>
           {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(message.id); }} />}
         </div>
@@ -99,21 +103,21 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
       return (
         <div className="mb-3" onContextMenu={handleContextMenu}>
           <div
-            className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50"
+            className="message-card message-card-interactive"
             onClick={() => setExpanded(!expanded)}
           >
-            <div className="flex items-center gap-2">
-              <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
+            <div className="message-meta-row">
+              <span className={agentTagClass(message.authoredBy)}>
                 {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
               </span>
-              <span className="font-medium text-gray-600">propose:</span>
-              <span className="text-gray-600">{message.toolName}</span>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-              <span className="text-xs text-gray-400 ml-auto">{expanded ? "▾" : "▸"}</span>
+              <span className="message-label">propose</span>
+              <span className="message-title truncate">{message.toolName}</span>
+              <span className={badge.cls}>{badge.label}</span>
+              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
             </div>
-            <div className="text-gray-500 text-xs mt-1">{message.proposedStep}</div>
+            <div className="message-body-compact">{message.proposedStep}</div>
             {expanded && (
-              <pre className="mt-2 text-xs bg-stone-50 rounded-lg p-3 overflow-x-auto text-gray-600">
+              <pre className="message-expand">
                 {JSON.stringify(message.args, null, 2)}
               </pre>
             )}
@@ -125,20 +129,23 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
 
     case "vote_message":
       return (
-        <div className="mb-2">
+        <div className="mb-3 pl-2">
           <div
-            className="text-sm leading-relaxed cursor-pointer hover:bg-stone-100 rounded-lg px-3 py-1.5"
+            className="message-card message-card-muted message-card-compact message-card-interactive"
             onClick={() => setExpanded(!expanded)}
           >
-            <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
-              {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
-            </span>
-            <span className={`ml-1 text-xs font-medium ${message.approve ? "text-stone-600" : "text-stone-500"}`}>
-              {message.approve ? "Approve" : "Reject"}
-            </span>
-            <span className="text-gray-500 text-xs ml-2">
-              {expanded ? message.reason : message.reason.slice(0, 80) + (message.reason.length > 80 ? "..." : "")}
-            </span>
+            <div className="message-meta-row">
+              <span className={agentTagClass(message.authoredBy)}>
+                {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
+              </span>
+              <span className={message.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger"}>
+                {message.approve ? "Approve" : "Reject"}
+              </span>
+              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
+            </div>
+            <div className={`message-body-compact ${expanded ? "" : "truncate"}`}>
+              {expanded ? message.reason : message.reason.slice(0, 120) + (message.reason.length > 120 ? "..." : "")}
+            </div>
           </div>
         </div>
       );
@@ -147,19 +154,19 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
       return (
         <div className="mb-3">
           <div
-            className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-100/80"
+            className="message-card message-card-muted message-card-interactive"
             onClick={() => setExpanded(!expanded)}
           >
-            <div className="flex items-center gap-2">
-              <span className={`font-medium ${message.success ? "text-emerald-500" : "text-stone-400"}`}>
+            <div className="message-meta-row">
+              <span className={message.success ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger"}>
                 {message.success ? "Success" : "Failed"}
               </span>
-              <span className="text-gray-700">{message.toolName}</span>
-              <span className="text-xs text-gray-400">{(message.durationMs / 1000).toFixed(1)}s</span>
-              <span className="text-xs text-gray-400 ml-auto">{expanded ? "▾" : "▸"}</span>
+              <span className="message-title">{message.toolName}</span>
+              <span className="panel-meta">{(message.durationMs / 1000).toFixed(1)}s</span>
+              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
             </div>
             {expanded && (
-              <pre className="mt-2 text-xs bg-white rounded-lg p-3 overflow-x-auto max-h-60 overflow-y-auto text-gray-600 border border-stone-200">
+              <pre className="message-expand max-h-60 overflow-y-auto">
                 {message.output}
               </pre>
             )}
@@ -171,22 +178,20 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
       return (
         <div className="mb-3">
           <div
-            className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50"
+            className="message-card message-card-interactive"
             onClick={() => setExpanded(!expanded)}
           >
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-gray-600">{message.childId}</span>
-              <span className={`text-xs px-2 py-0.5 rounded-full ${
-                message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"
-              }`}>
+            <div className="message-meta-row">
+              <span className="message-title">{message.childId}</span>
+              <span className={deliveryModeBadgeClass(message.deliveryMode)}>
                 {message.deliveryMode}
               </span>
-              <span className="text-xs text-gray-400 ml-auto">{expanded ? "▾" : "▸"}</span>
+              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
             </div>
             {expanded ? (
-              <div className="mt-1 text-gray-600">{renderInlineContent(message.content, { onOpenFile })}</div>
+              <div className="message-body">{renderInlineContent(message.content, { onOpenFile })}</div>
             ) : (
-              <div className="mt-1 text-gray-500 text-xs truncate">{message.content}</div>
+              <div className="message-body-compact truncate">{message.content}</div>
             )}
           </div>
         </div>
@@ -195,13 +200,11 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
     case "upward_message":
       return (
         <div className="mb-3">
-          <div className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed">
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-              message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"
-            }`}>
-              {message.deliveryMode}
-            </span>
-            <div className="mt-1 text-gray-700">{renderInlineContent(message.content, { onOpenFile })}</div>
+          <div className="message-card">
+            <div className="message-meta-row">
+              <span className={deliveryModeBadgeClass(message.deliveryMode)}>{message.deliveryMode}</span>
+            </div>
+            <div className="message-body">{renderInlineContent(message.content, { onOpenFile })}</div>
           </div>
         </div>
       );
@@ -209,7 +212,7 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
     case "system_message":
       return (
         <div className="flex justify-center mb-3">
-          <span className="text-xs text-stone-500 bg-stone-100 rounded-full px-3 py-1">{message.content}</span>
+          <span className="message-system-pill">{message.content}</span>
         </div>
       );
   }
@@ -307,14 +310,14 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
   }, [sendKeyMode, handleSend]);
 
   return (
-    <div data-drop-zone="chat-input" className="flex flex-col h-full">
+    <div data-drop-zone="chat-input" className="flex flex-col h-full min-w-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-stone-200/80 bg-white/80 backdrop-blur-sm">
+      <div className="panel-header">
         {crumbs.map((crumb, i) => (
-          <span key={crumb.unitId} className="flex items-center gap-2 text-sm">
-            {i > 0 && <span className="text-stone-300">›</span>}
+          <span key={crumb.unitId} className="flex items-center gap-2 text-sm min-w-0">
+            {i > 0 && <span className="text-[var(--color-text-quaternary)]">›</span>}
             <span
-              className={i === crumbs.length - 1 ? "font-medium text-gray-700" : "text-gray-500 hover:text-gray-700 cursor-pointer hover:underline"}
+              className={i === crumbs.length - 1 ? "breadcrumb-current truncate" : "breadcrumb-link truncate"}
               onClick={() => onSelectUnit(crumb.unitId)}
             >
               {crumb.label}
@@ -322,16 +325,16 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
           </span>
         ))}
         {unitId && sessionInfo && (
-          <span className="ml-auto text-xs text-stone-400">
+          <span className="ml-auto panel-meta">
             {sessionInfo.level} · {sessionInfo.state}
           </span>
         )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 bg-[var(--color-bg)]">
+      <div className="flex-1 overflow-y-auto px-4 py-4 bg-[var(--color-canvas)]">
         {messages.length === 0 ? (
-          <div className="text-center text-gray-400 text-sm mt-8">No messages yet</div>
+          <div className="text-center text-[var(--color-text-quaternary)] text-sm mt-8">No messages yet</div>
         ) : (
           messages.map((msg) => <MessageBubble key={msg.id} message={msg} onOpenFile={onOpenFile} onViewContext={onViewContext} />)
         )}
@@ -340,9 +343,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
 
       {/* Input */}
       {isL0 ? (
-        <div
-          className="border-t border-stone-200/80 bg-white/80 backdrop-blur-sm px-4 py-3 transition-colors duration-150"
-        >
+        <div className="composer-shell">
           {/* Reference chips */}
           <div data-ref-chips className="flex flex-wrap gap-1.5 mb-2 min-h-[0px]">
             {refs.length > 0 && refs.map((ref, i) => (
@@ -363,7 +364,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
           </div>
           <div className="flex gap-2">
             <textarea
-              className="flex-1 resize-none border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-stone-400 focus:ring-1 focus:ring-stone-200"
+              className="composer-textarea"
               rows={2}
               placeholder={refs.length > 0 ? "Add a message (optional)..." : "Type your message..."}
               value={input}
@@ -372,33 +373,33 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
             />
             <div ref={dropdownRef} className="relative self-center flex">
               <button
-                className="px-3 py-2 bg-stone-700 text-white rounded-l-lg text-sm font-medium hover:bg-stone-600 disabled:opacity-50 min-w-[5.5rem]"
+                className="composer-button-primary rounded-r-none px-3 py-2.5 min-w-[5.75rem] disabled:cursor-not-allowed"
                 onClick={handleSend}
                 disabled={!input.trim() && refs.length === 0}
               >
-                Send <span className="text-stone-300 text-xs ml-0.5 inline-block w-[1.5em] text-center">{SEND_KEY_LABEL[sendKeyMode]}</span>
+                Send <span className="text-white/60 text-xs ml-0.5 inline-block w-[1.5em] text-center">{SEND_KEY_LABEL[sendKeyMode]}</span>
               </button>
               <button
-                className={`px-1.5 py-2 bg-stone-700 text-white rounded-r-lg text-sm font-medium hover:bg-stone-600 border-l border-stone-600 ${(!input.trim() && refs.length === 0) ? "opacity-50" : ""}`}
+                className={`composer-button-primary rounded-l-none border-l border-white/10 px-1.5 py-2.5 ${(!input.trim() && refs.length === 0) ? "opacity-50" : ""}`}
                 onClick={() => setDropdownOpen(!dropdownOpen)}
               >
                 ▾
               </button>
               {dropdownOpen && (
-                <div className="absolute bottom-full right-0 mb-1 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[160px] z-10">
+                <div className="absolute bottom-full right-0 mb-2 min-w-[176px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[0_12px_24px_rgba(15,23,42,0.08),0_2px_6px_rgba(15,23,42,0.04)] z-10">
                   <button
-                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "cmd-enter" ? "text-stone-700 font-medium" : "text-gray-600"}`}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[var(--color-surface-muted)] flex items-center justify-between ${sendKeyMode === "cmd-enter" ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-secondary)]"}`}
                     onClick={() => { setSendKeyMode("cmd-enter"); setDropdownOpen(false); }}
                   >
                     <span>⌘+Enter 发送</span>
-                    {sendKeyMode === "cmd-enter" && <span className="text-xs text-stone-500">●</span>}
+                    {sendKeyMode === "cmd-enter" && <span className="text-xs text-[var(--color-text-quaternary)]">●</span>}
                   </button>
                   <button
-                    className={`w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "enter" ? "text-stone-700 font-medium" : "text-gray-600"}`}
+                    className={`w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[var(--color-surface-muted)] flex items-center justify-between ${sendKeyMode === "enter" ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-secondary)]"}`}
                     onClick={() => { setSendKeyMode("enter"); setDropdownOpen(false); }}
                   >
                     <span>Enter 发送</span>
-                    {sendKeyMode === "enter" && <span className="text-xs text-stone-500">●</span>}
+                    {sendKeyMode === "enter" && <span className="text-xs text-[var(--color-text-quaternary)]">●</span>}
                   </button>
                 </div>
               )}
@@ -406,7 +407,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
           </div>
         </div>
       ) : (
-        <div className="border-t border-stone-200 bg-stone-50 px-4 py-3 text-center text-xs text-stone-400">
+        <div className="child-conversation-hint">
           This is a child unit conversation view. Messages can only be sent from the L0 layer.
           Use the breadcrumb navigation to return to L0.
         </div>

@@ -46,25 +46,28 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
   }, [leftWidth]);
 
   return (
-    <div ref={containerRef} className="flex h-full w-full overflow-hidden">
+    <div ref={containerRef} className="flex h-full w-full overflow-hidden bg-[var(--color-canvas)]">
       {/* Left Panel */}
-      <div style={{ width: leftWidth, minWidth: MIN_LEFT }} className="flex-shrink-0 h-full overflow-hidden border-r border-stone-200 bg-white">
+      <div
+        style={{ width: leftWidth, minWidth: MIN_LEFT }}
+        className="workbench-panel flex-shrink-0 h-full overflow-hidden border-r border-[var(--color-border)]"
+      >
         {children[0]}
       </div>
 
       {/* Left Resize Handle */}
       <div
-        className="w-1 flex-shrink-0 cursor-col-resize hover:bg-stone-300 active:bg-stone-400 transition-colors"
+        className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--color-surface-muted)] active:bg-[var(--color-border)] transition-colors"
         onMouseDown={(e) => onMouseDown("left", e)}
       />
 
       {/* Center Panel */}
-      <div className="flex-1 min-w-[300px] h-full overflow-hidden bg-[var(--color-bg)]">
+      <div className="flex-1 min-w-[300px] h-full overflow-hidden bg-[var(--color-canvas)]">
         {children[1]}
       </div>
 
       {/* Right Panel */}
-      <div className="flex-1 min-w-[300px] h-full border-l border-stone-200 bg-white">
+      <div className="workbench-panel flex-1 min-w-[300px] h-full border-l border-[var(--color-border)]">
         {children[2]}
       </div>
     </div>
