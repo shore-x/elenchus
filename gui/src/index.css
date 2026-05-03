@@ -61,6 +61,7 @@ body {
   line-height: 1.6;
   word-wrap: break-word;
   color: #1f2328;
+  cursor: default;
 }
 
 .markdown-body h1,
