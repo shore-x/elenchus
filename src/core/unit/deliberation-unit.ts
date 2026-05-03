@@ -27,6 +27,9 @@ export interface ContextPersistenceSink {
   getLatestContextTextHistory(unitId: string, category: string): { rowid: number; content: string; metadata: string } | null;
   createRecipe(recipe: ContextRecipeData): number;
   updateRecipeOutputMessageId(recipeId: number, outputMessageId: string): void;
+  getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
+  getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[];
 }
 
 export interface DeliberationUnitOptions {

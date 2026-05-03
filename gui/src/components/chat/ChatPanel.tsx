@@ -13,6 +13,7 @@ interface ChatPanelProps {
   onSendMessage: (content: string) => Promise<void>;
   onSelectUnit: (unitId: string) => void;
   onOpenFile: (path: string, name: string, startLine?: number) => void;
+  onViewContext: (messageId: string) => void;
   refs: FileReference[];
   onRemoveRef: (index: number) => void;
 }
@@ -34,8 +35,41 @@ function proposalStatusBadge(status: ProposalStatus): { label: string; cls: stri
   }
 }
 
-function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; onOpenFile: (path: string, name: string) => void }) {
+function ContextMenuPopup({ x, y, onAction }: { x: number; y: number; onAction: () => void }) {
+  return (
+    <div
+      className="fixed z-50 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[140px] text-sm"
+      style={{ left: x, top: y }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        className="w-full text-left px-3 py-1.5 hover:bg-stone-50 text-gray-700"
+        onClick={onAction}
+      >
+        View Context
+      </button>
+    </div>
+  );
+}
+
+function MessageBubble({ message, onOpenFile, onViewContext }: { message: ConversationMessage; onOpenFile: (path: string, name: string) => void; onViewContext: (messageId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const canViewContext = message.kind === "agent_message" || message.kind === "proposal_message";
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!canViewContext) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, [canViewContext]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [contextMenu]);
 
   switch (message.kind) {
     case "incoming_message":
@@ -49,20 +83,21 @@ function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; 
 
     case "agent_message":
       return (
-        <div className="flex justify-start mb-3">
+        <div className="flex justify-start mb-3" onContextMenu={handleContextMenu}>
           <div className={`max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed ${agentBorderClass(message.authoredBy)}`}>
             <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`}>
               {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
             </span>
             <div className="mt-1 text-gray-800">{renderInlineContent(message.content, { onOpenFile })}</div>
           </div>
+          {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(message.id); }} />}
         </div>
       );
 
     case "proposal_message": {
       const badge = proposalStatusBadge(message.status);
       return (
-        <div className="mb-3">
+        <div className="mb-3" onContextMenu={handleContextMenu}>
           <div
             className="bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50"
             onClick={() => setExpanded(!expanded)}
@@ -83,6 +118,7 @@ function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; 
               </pre>
             )}
           </div>
+          {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(message.id); }} />}
         </div>
       );
     }
@@ -212,7 +248,7 @@ function formatRefForMessage(ref: FileReference): string {
   return `@${ref.path}:${formatLineRange(ref.startLine, ref.endLine)}`;
 }
 
-export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, refs, onRemoveRef }: ChatPanelProps) {
+export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>("cmd-enter");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -297,7 +333,7 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
         {messages.length === 0 ? (
           <div className="text-center text-gray-400 text-sm mt-8">No messages yet</div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} message={msg} onOpenFile={onOpenFile} />)
+          messages.map((msg) => <MessageBubble key={msg.id} message={msg} onOpenFile={onOpenFile} onViewContext={onViewContext} />)
         )}
         <div ref={messagesEndRef} />
       </div>

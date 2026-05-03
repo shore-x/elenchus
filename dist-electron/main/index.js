@@ -39,13 +39,13 @@ function renderTemplate(template) {
   const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   return template.replace(/\{\{DATE\}\}/g, date);
 }
-function initializeKnowledgeView(workspaceRoot) {
-  mkdirSync(workspaceRoot, { recursive: true });
-  const agentMdPath = join(workspaceRoot, "AGENT.md");
+function initializeKnowledgeView(workspaceRoot2) {
+  mkdirSync(workspaceRoot2, { recursive: true });
+  const agentMdPath = join(workspaceRoot2, "AGENT.md");
   if (!existsSync(agentMdPath)) {
     writeFileSync(agentMdPath, renderTemplate(DEFAULT_ROOT_AGENT_MD), "utf-8");
   }
-  const stateDir = join(workspaceRoot, ".elenchus-state");
+  const stateDir = join(workspaceRoot2, ".elenchus-state");
   if (!existsSync(stateDir)) {
     mkdirSync(stateDir, { recursive: true });
   }
@@ -309,7 +309,20 @@ AGENT.md should be a quick-orientation entry point, not exhaustive documentation
 You are a stateless compute unit — your runtime context (conversation history, unit state, compression snapshot) is maintained by the framework, not stored on the file system. The file system is a shared world that all agents read and write; no agent owns any directory. Your context window is your working staging area; the file system is for published knowledge. If an artifact has value, place it at a meaningful location; if it has no value, do not write it.
 
 ### File Paths in Communication
-Absolute file paths appear naturally throughout agent communication — in dialogue, reports, yields, task briefs, and sendToChild messages. When you produce work results, save them to .md files and share the absolute path. When you reference documents from other areas, give the absolute path and describe the context in natural language (e.g., "that directory contains a previous analysis you may find useful — please review but do not modify the existing files there"). There is no special format for file references; just include the absolute path as part of your normal expression.
+Absolute file paths appear naturally throughout agent communication — in dialogue, reports, yields, task briefs, and sendToChild messages. When you produce work results, save them to .md files and share the absolute path. When you reference documents from other areas, give the absolute path and describe the context in natural language (e.g., "that directory contains a previous analysis you may find useful — please review but do not modify the existing files there"). In communication, absolute paths are the norm — structured wikilink references belong inside .md documents, not in transient messages.
+
+### Cross-Document References
+When writing .md files — especially AGENT.md — use \`[[relative-path]]\` wikilink syntax to reference other files within the workspace. For example, \`[[framework-design/knowledge-view.md]]\` points to the knowledge-view design document, and \`[[skills/AGENT.md]]\` points to the skills region entry page. This makes reference relationships between documents detectable, so broken links and orphan pages can be found automatically.
+
+Wikilink conventions:
+- Paths are relative to the workspace root, not to the current file.
+- The \`.md\` extension is optional: \`[[framework-design/knowledge-view]]\` and \`[[framework-design/knowledge-view.md]]\` are equivalent.
+- You may use display text: \`[[framework-design/knowledge-view.md|Knowledge View Design]]\` shows as "Knowledge View Design" but links to the file.
+- Only use wikilinks for references to files within the workspace. External resources use normal URLs.
+
+Wikilinks are a document-level convention. In conversation, reports, yields, and messages, absolute paths remain appropriate — wikilinks are for the structured references that live inside .md files, not for transient communication.
+
+When you create or update a .md file that discusses or relates to another area of the workspace, add a wikilink to the relevant file. This is part of normal cognitive housekeeping — like adding a cross-reference in a well-organized notebook. Do not add wikilinks mechanically to every path mention; add them where a reader would benefit from being able to follow the reference.
 
 ### Intermediate and Scratch Files
 When your task does not involve a specific project directory and you need to produce intermediate artifacts (notes, analysis results, draft documents), create a descriptively named subdirectory under the workspace root (e.g., \`{{WORKSPACE_ROOT}}/research-topic-name/\`). This follows the same single-destination principle: the files go where the work naturally belongs. If the artifacts later prove unneeded, they can be cleaned up; if they prove valuable, they are already in a discoverable location.
@@ -354,8 +367,8 @@ function readRootAgentMd(runDirectory) {
     return null;
   }
 }
-function buildSystemPrompt(agentId, level, workspaceRoot, workspaceKnowledge) {
-  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot);
+function buildSystemPrompt(agentId, level, workspaceRoot2, workspaceKnowledge) {
+  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot2);
   return buildGuideline() + buildLayerOrientation(level) + knowledgeViewGuideline + buildWorkspaceKnowledge(workspaceKnowledge ?? null) + COGNITIVE_STYLES[agentId];
 }
 function buildCompressionSystemPrompt() {
@@ -592,11 +605,11 @@ class AgentTurn {
   llmClient;
   level;
   workspaceRoot;
-  constructor(selfId, llmClient, level = "L0", workspaceRoot) {
+  constructor(selfId, llmClient, level = "L0", workspaceRoot2) {
     this.selfId = selfId;
     this.llmClient = llmClient;
     this.level = level;
-    this.workspaceRoot = workspaceRoot;
+    this.workspaceRoot = workspaceRoot2;
   }
   async execute(messages, hasPendingFromOther, hasChildren = false, canSpawnChild = true) {
     const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren, canSpawnChild);
@@ -3135,14 +3148,64 @@ class SqliteSessionPersistence {
       `UPDATE context_recipe SET output_message_id = ? WHERE recipe_id = ?`
     ).run(outputMessageId, recipeId);
   }
+  getRecipeByOutputMessageId(messageId) {
+    const row = this.db.prepare(
+      `SELECT recipe_id, unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
+              memory_snapshot_rowid, agent_md_rowid, level,
+              has_pending_from_other, has_children, can_spawn_child, effective_turn
+       FROM context_recipe WHERE output_message_id = ? LIMIT 1`
+    ).get(messageId);
+    if (!row) return null;
+    return {
+      unitId: row.unit_id,
+      agentId: row.agent_id,
+      recentRawStartSeq: row.recent_raw_start_seq,
+      visibleEndSeq: row.visible_end_seq,
+      newlyVisibleSeq: row.newly_visible_seq,
+      memorySnapshotRowid: row.memory_snapshot_rowid,
+      agentMdRowid: row.agent_md_rowid,
+      level: row.level,
+      hasPendingFromOther: row.has_pending_from_other !== 0,
+      hasChildren: row.has_children !== 0,
+      canSpawnChild: row.can_spawn_child !== 0,
+      effectiveTurn: row.effective_turn
+    };
+  }
+  getContextTextHistoryByRowid(rowid) {
+    const row = this.db.prepare(
+      `SELECT content, metadata FROM context_text_history WHERE rowid = ?`
+    ).get(rowid);
+    if (!row) return null;
+    return { content: row.content, metadata: row.metadata };
+  }
+  getLedgerMessagesBySeqRange(unitId, startSeq, endSeq) {
+    const rows = this.db.prepare(
+      `SELECT body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND seq >= ? AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq ASC`
+    ).all(unitId, startSeq, endSeq);
+    return rows.map((row) => parseJson(row.body));
+  }
 }
 const store = new ElectronStore({
   name: "elenchus-config",
   defaults: {}
 });
 let session = null;
+let persistence = null;
+let workspaceRoot = "";
 function getSession() {
   return session;
+}
+function getPersistence() {
+  return persistence;
+}
+function getWorkspaceRoot() {
+  return workspaceRoot;
 }
 function buildAgentTree(snapshot) {
   return {
@@ -3178,17 +3241,18 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
     if (!llmClient) {
       return { error: `Failed to create LLM client for ${config.provider}/${config.modelName}` };
     }
-    const workspaceRoot = join(homedir(), "Elenchus");
+    workspaceRoot = join(homedir(), "Elenchus");
     const rawProjectRoot = config.projectRoot ?? process.cwd();
     const projectRoot = rawProjectRoot.startsWith("~") ? join(homedir(), rawProjectRoot.slice(1)) : rawProjectRoot;
     try {
+      persistence = new SqliteSessionPersistence({ workspaceRoot, projectRoot });
       session = createSession({
         llmClient,
         toolExecutor: new LocalNodeToolExecutor(),
         workspaceRoot,
         projectRoot,
         level: config.level ?? void 0,
-        persistence: new SqliteSessionPersistence({ workspaceRoot, projectRoot }),
+        persistence,
         onSystemEvent: (event) => {
           sendToRenderer("system-event", event);
           if (event.type === "child-spawned" || event.type === "state-transition" || event.type === "upward-message") {
@@ -3218,6 +3282,7 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
       session.terminate();
       session.close();
       session = null;
+      persistence = null;
       return { ok: true };
     }
     return { ok: false, error: "No active session" };
@@ -3250,8 +3315,8 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
     return { ok: true };
   });
   ipcMain.handle("check-workspace-status", async () => {
-    const workspaceRoot = join(homedir(), "Elenchus");
-    const hasSession = existsSync(join(workspaceRoot, "elenchus.db"));
+    const workspaceRoot2 = join(homedir(), "Elenchus");
+    const hasSession = existsSync(join(workspaceRoot2, "elenchus.db"));
     const provider = store.get("provider");
     const modelName = store.get("modelName");
     const baseUrl = store.get("baseUrl");
@@ -3265,8 +3330,115 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
     if (session) {
       session.close();
       session = null;
+      persistence = null;
     }
   });
+}
+function reconstructContext(deps, messageId) {
+  const { persistence: persistence2, workspaceRoot: workspaceRoot2 } = deps;
+  const recipe = persistence2.getRecipeByOutputMessageId(messageId);
+  if (!recipe) return null;
+  let workspaceKnowledge = null;
+  if (recipe.agentMdRowid !== null) {
+    const entry = persistence2.getContextTextHistoryByRowid(recipe.agentMdRowid);
+    workspaceKnowledge = entry?.content ?? null;
+  }
+  if (workspaceKnowledge === null) {
+    workspaceKnowledge = readRootAgentMd(workspaceRoot2);
+  }
+  const systemPrompt = buildSystemPrompt(
+    recipe.agentId,
+    recipe.level,
+    workspaceRoot2,
+    workspaceKnowledge
+  );
+  const allMessages = persistence2.getLedgerMessagesBySeqRange(
+    recipe.unitId,
+    recipe.recentRawStartSeq,
+    recipe.visibleEndSeq
+  );
+  const projector = new ConversationProjector();
+  let oldMessages;
+  let newMessages;
+  if (recipe.newlyVisibleSeq !== null) {
+    const splitIndex = allMessages.findIndex(
+      (m) => m.turnAuthored >= recipe.effectiveTurn
+    );
+    if (splitIndex >= 0) {
+      oldMessages = allMessages.slice(0, splitIndex);
+      newMessages = allMessages.slice(splitIndex);
+    } else {
+      oldMessages = allMessages;
+      newMessages = [];
+    }
+  } else {
+    oldMessages = allMessages;
+    newMessages = [];
+  }
+  const messages = [];
+  if (recipe.memorySnapshotRowid !== null) {
+    const entry = persistence2.getContextTextHistoryByRowid(recipe.memorySnapshotRowid);
+    if (entry) {
+      const meta = entry.metadata ? JSON.parse(entry.metadata) : {};
+      messages.push(projector.buildMemorySnapshotMessage({
+        content: entry.content,
+        sourceMessageCount: meta.sourceMessageCount ?? 0,
+        requirements: meta.requirements ?? "",
+        createdAt: 0
+      }));
+    }
+  }
+  messages.push(...projector.projectVisibleMessages(oldMessages));
+  if (newMessages.length > 0) {
+    messages.push(projector.buildNewlyVisibleBoundaryOverlay(recipe.agentId, newMessages.length));
+    messages.push(...projector.projectVisibleMessages(newMessages));
+  }
+  const tools = getBuiltInToolList(
+    recipe.hasPendingFromOther,
+    recipe.level,
+    recipe.hasChildren,
+    recipe.canSpawnChild
+  );
+  const toolNames = tools.map((t) => t.name);
+  return { systemPrompt, messages, toolNames, recipe };
+}
+function formatContextAsMarkdown(ctx, messageId) {
+  const { systemPrompt, messages, toolNames, recipe } = ctx;
+  const agentName = recipe.agentId === "agent-a" ? "Agent A" : "Agent B";
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  const sections = [];
+  sections.push(`# Context Reconstruction`);
+  sections.push(``);
+  sections.push(`> **Unit**: ${recipe.unitId} | **Agent**: ${agentName} | **Turn**: ${recipe.effectiveTurn} | **Level**: ${recipe.level}`);
+  sections.push(`> **Reconstructed at**: ${timestamp}`);
+  sections.push(`> **Source message**: \`${messageId}\``);
+  sections.push(``);
+  sections.push(`---`);
+  sections.push(``);
+  sections.push(`## System Prompt`);
+  sections.push(``);
+  sections.push(systemPrompt);
+  sections.push(``);
+  sections.push(`---`);
+  sections.push(``);
+  sections.push(`## Messages`);
+  sections.push(``);
+  for (const msg of messages) {
+    const role = msg.role === "user" ? "user" : "assistant";
+    sections.push(`### [${role}]`);
+    sections.push(``);
+    sections.push(msg.content);
+    sections.push(``);
+  }
+  sections.push(`---`);
+  sections.push(``);
+  sections.push(`## Available Tools`);
+  sections.push(``);
+  for (const name of toolNames) {
+    sections.push(`- \`${name}\``);
+  }
+  sections.push(``);
+  return sections.join("\n");
 }
 function registerDataIpc() {
   ipcMain.handle("get-unit-info", async (_event, unitId) => {
@@ -3321,6 +3493,24 @@ function registerDataIpc() {
     } catch {
       return null;
     }
+  });
+  ipcMain.handle("reconstruct-context", async (_event, messageId) => {
+    const persistence2 = getPersistence();
+    if (!persistence2) {
+      return { ok: false, error: "No active session persistence" };
+    }
+    const wsRoot = getWorkspaceRoot();
+    const ctx = reconstructContext({ persistence: persistence2, workspaceRoot: wsRoot }, messageId);
+    if (!ctx) {
+      return { ok: false, error: "No context recipe found for this message. Early messages may not have recipe records." };
+    }
+    const markdown = formatContextAsMarkdown(ctx, messageId);
+    const dumpDir = join(wsRoot, "context-dumps");
+    await mkdir(dumpDir, { recursive: true });
+    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.md`;
+    const filePath = join(dumpDir, fileName);
+    await writeFile(filePath, markdown, "utf-8");
+    return { ok: true, path: filePath, name: fileName };
   });
 }
 async function buildFsTree(dirPath, docsOnly, maxDepth) {

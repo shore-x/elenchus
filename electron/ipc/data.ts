@@ -3,10 +3,12 @@
 // Replaces the REST API endpoints that were served by the sidecar HTTP server.
 
 import { ipcMain } from "electron";
-import { readdir, readFile as fsReadFile, stat } from "node:fs/promises";
+import { readdir, readFile as fsReadFile, stat, mkdir } from "node:fs/promises";
+import { writeFile as fsWriteFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, extname, basename } from "node:path";
-import { getSession } from "./session.js";
+import { getSession, getPersistence, getWorkspaceRoot } from "./session.js";
+import { reconstructContext, formatContextAsMarkdown } from "../../src/core/context-reconstructor.js";
 import type { ConversationMessage } from "../../src/core/types.js";
 
 export function registerDataIpc(): void {
@@ -76,6 +78,31 @@ export function registerDataIpc(): void {
     } catch {
       return null;
     }
+  });
+
+  // --- Reconstruct message context ---
+  ipcMain.handle("reconstruct-context", async (_event, messageId: string) => {
+    const persistence = getPersistence();
+    if (!persistence) {
+      return { ok: false, error: "No active session persistence" };
+    }
+
+    const wsRoot = getWorkspaceRoot();
+    const ctx = reconstructContext({ persistence, workspaceRoot: wsRoot }, messageId);
+    if (!ctx) {
+      return { ok: false, error: "No context recipe found for this message. Early messages may not have recipe records." };
+    }
+
+    const markdown = formatContextAsMarkdown(ctx, messageId);
+
+    // Write to ~/Elenchus/context-dumps/
+    const dumpDir = join(wsRoot, "context-dumps");
+    await mkdir(dumpDir, { recursive: true });
+    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.md`;
+    const filePath = join(dumpDir, fileName);
+    await fsWriteFile(filePath, markdown, "utf-8");
+
+    return { ok: true, path: filePath, name: fileName };
   });
 }
 

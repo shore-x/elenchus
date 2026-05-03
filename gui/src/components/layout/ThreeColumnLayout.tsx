@@ -64,7 +64,7 @@ export function ThreeColumnLayout({ children }: { children: [ReactNode, ReactNod
       </div>
 
       {/* Right Panel */}
-      <div className="flex-1 min-w-[300px] h-full overflow-hidden border-l border-stone-200 bg-white">
+      <div className="flex-1 min-w-[300px] h-full border-l border-stone-200 bg-white">
         {children[2]}
       </div>
     </div>

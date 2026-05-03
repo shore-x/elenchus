@@ -71,6 +71,10 @@ export function useIpc() {
     return getApi().checkWorkspaceStatus();
   }, []);
 
+  const reconstructContext = useCallback(async (messageId: string): Promise<{ ok: boolean; path?: string; name?: string; error?: string }> => {
+    return getApi().reconstructContext(messageId);
+  }, []);
+
   return {
     getSessionInfo,
     getUnitInfo,
@@ -86,5 +90,6 @@ export function useIpc() {
     loadPersistedConfig,
     savePersistedConfig,
     checkWorkspaceStatus,
+    reconstructContext,
   };
 }

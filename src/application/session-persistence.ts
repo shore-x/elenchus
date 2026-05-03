@@ -22,4 +22,9 @@ export interface SessionPersistenceAdapter {
   // Context observability — context_recipe
   createRecipe(recipe: ContextRecipeData): number;
   updateRecipeOutputMessageId(recipeId: number, outputMessageId: string): void;
+
+  // Context observability — reconstruction queries
+  getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
+  getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[];
 }

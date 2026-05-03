@@ -263,11 +263,19 @@ button.file-link:hover {
   padding: 1rem 0;
   line-height: 1.5;
   cursor: default;
+  /* Hint to browser that this is a scrollable content area */
+  contain: layout;
 }
 
 .code-row {
   display: flex;
   align-items: flex-start;
+  /* Isolate each row's rendering to prevent full-table reflow on selection */
+  contain: layout style;
+  /* Skip rendering for off-screen rows (significant perf boost for large files) */
+  content-visibility: auto;
+  /* Reserve approximate height to prevent layout shift when content-visibility kicks in */
+  contain-intrinsic-height: 1.5em;
 }
 
 .code-row .line-number {
@@ -287,6 +295,47 @@ button.file-link:hover {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: inherit;
+  /* Optimize for selection rendering */
+  user-select: text;
+}
+
+/* Virtual Code Viewer - no own scroll, parent handles it */
+.virtual-code-container {
+  width: 100%;
+  cursor: default;
+  position: relative;
+}
+
+.virtual-code-container * {
+  cursor: default;
+}
+
+.virtual-code-row {
+  display: flex;
+  align-items: flex-start;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #374151;
+  /* Ensure rows don't shrink */
+  flex-shrink: 0;
+}
+
+.virtual-line-number {
+  flex-shrink: 0;
+  width: 3.5em;
+  padding-right: 1em;
+  text-align: right;
+  color: #a8a29e;
+  user-select: none;
+}
+
+.virtual-code-line {
+  flex: 1;
+  min-width: 0;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ChatPanel reference chips */
@@ -325,7 +374,7 @@ button.file-link:hover {
 
 /* PreviewPanel drag-to-chat hint near cursor */
 .ref-drag-hint {
-  position: absolute;
+  position: fixed;
   padding: 1px 6px;
   font-size: 10px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -334,7 +383,7 @@ button.file-link:hover {
   border: 1px solid #e5e7eb;
   border-radius: 3px;
   pointer-events: none;
-  z-index: 10;
+  z-index: 9999;
   white-space: nowrap;
   user-select: none;
   letter-spacing: 0.01em;

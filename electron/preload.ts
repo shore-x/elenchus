@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   readFile: (path: string) =>
     ipcRenderer.invoke("read-file", path),
 
+  // --- Context reconstruction ---
+  reconstructContext: (messageId: string) =>
+    ipcRenderer.invoke("reconstruct-context", messageId),
+
   // --- Config ---
   getProviders: () =>
     ipcRenderer.invoke("get-providers"),

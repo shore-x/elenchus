@@ -88,4 +88,16 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   updateRecipeOutputMessageId(): void {
     // no-op
   }
+
+  getRecipeByOutputMessageId(): import("../../../core/types.js").ContextRecipeData | null {
+    return null;
+  }
+
+  getContextTextHistoryByRowid(): { content: string; metadata: string } | null {
+    return null;
+  }
+
+  getLedgerMessagesBySeqRange(): import("../../../core/types.js").ConversationMessage[] {
+    return [];
+  }
 }

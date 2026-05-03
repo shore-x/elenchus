@@ -200,6 +200,15 @@ export default function App() {
     }
   }, [previewTabs]);
 
+  const handleViewContext = useCallback(async (messageId: string) => {
+    const result = await ipc.reconstructContext(messageId);
+    if (result.ok && result.path && result.name) {
+      handleOpenFile(result.path, result.name);
+    } else {
+      console.error("[ViewContext] Failed:", result.error);
+    }
+  }, [ipc, handleOpenFile]);
+
   const handleCloseTab = useCallback((index: number) => {
     const newTabs = previewTabs.filter((_, i) => i !== index);
     setPreviewTabs(newTabs);
@@ -272,6 +281,7 @@ export default function App() {
         onSendMessage={handleSendMessage}
         onSelectUnit={setSelectedUnitId}
         onOpenFile={handleOpenFile}
+        onViewContext={handleViewContext}
         refs={fileRefs}
         onRemoveRef={handleRemoveRef}
       />

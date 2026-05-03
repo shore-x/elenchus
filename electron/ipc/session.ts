@@ -22,9 +22,19 @@ const store = new ElectronStore({
 });
 
 let session: DeliberationSession | null = null;
+let persistence: SqliteSessionPersistence | null = null;
+let workspaceRoot: string = "";
 
 export function getSession(): DeliberationSession | null {
   return session;
+}
+
+export function getPersistence(): SqliteSessionPersistence | null {
+  return persistence;
+}
+
+export function getWorkspaceRoot(): string {
+  return workspaceRoot;
 }
 
 function buildAgentTree(snapshot: any): any {
@@ -79,20 +89,21 @@ export function registerSessionIpc(
       return { error: `Failed to create LLM client for ${config.provider}/${config.modelName}` };
     }
 
-    const workspaceRoot = join(homedir(), "Elenchus");
+    workspaceRoot = join(homedir(), "Elenchus");
     const rawProjectRoot = config.projectRoot ?? process.cwd();
     const projectRoot = rawProjectRoot.startsWith("~")
       ? join(homedir(), rawProjectRoot.slice(1))
       : rawProjectRoot;
 
     try {
+      persistence = new SqliteSessionPersistence({ workspaceRoot, projectRoot });
       session = createSession({
         llmClient,
         toolExecutor: new LocalNodeToolExecutor(),
         workspaceRoot,
         projectRoot,
         level: config.level as any ?? undefined,
-        persistence: new SqliteSessionPersistence({ workspaceRoot, projectRoot }),
+        persistence,
         onSystemEvent: (event: SystemEvent) => {
           sendToRenderer("system-event", event);
 
@@ -135,6 +146,7 @@ export function registerSessionIpc(
       session.terminate();
       session.close();
       session = null;
+      persistence = null;
       return { ok: true };
     }
     return { ok: false, error: "No active session" };
@@ -194,6 +206,7 @@ export function registerSessionIpc(
     if (session) {
       session.close();
       session = null;
+      persistence = null;
     }
   });
 }

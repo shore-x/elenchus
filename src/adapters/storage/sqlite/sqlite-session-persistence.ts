@@ -19,6 +19,7 @@ import type {
   DeliberationUnitSnapshot,
   MemorySnapshot,
   PersistedChildSnapshot,
+  ToolLevel,
 } from "../../../core/types.js";
 
 const DEFAULT_SESSION_ID = "session-default";
@@ -106,6 +107,22 @@ interface CompressionStateRow {
   reminder_threshold_chars: number;
   recent_raw_target_chars: number;
   max_retries: number;
+}
+
+interface RecipeRow {
+  recipe_id: number;
+  unit_id: string;
+  agent_id: string;
+  recent_raw_start_seq: number;
+  visible_end_seq: number;
+  newly_visible_seq: number | null;
+  memory_snapshot_rowid: number | null;
+  agent_md_rowid: number | null;
+  level: string;
+  has_pending_from_other: number;
+  has_children: number;
+  can_spawn_child: number;
+  effective_turn: number;
 }
 
 function parseJson<T>(value: string): T {
@@ -941,5 +958,50 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     this.db.prepare(
       `UPDATE context_recipe SET output_message_id = ? WHERE recipe_id = ?`,
     ).run(outputMessageId, recipeId);
+  }
+
+  getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null {
+    const row = this.db.prepare(
+      `SELECT recipe_id, unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
+              memory_snapshot_rowid, agent_md_rowid, level,
+              has_pending_from_other, has_children, can_spawn_child, effective_turn
+       FROM context_recipe WHERE output_message_id = ? LIMIT 1`,
+    ).get(messageId) as RecipeRow | undefined;
+    if (!row) return null;
+    return {
+      unitId: row.unit_id,
+      agentId: row.agent_id as AgentId,
+      recentRawStartSeq: row.recent_raw_start_seq,
+      visibleEndSeq: row.visible_end_seq,
+      newlyVisibleSeq: row.newly_visible_seq,
+      memorySnapshotRowid: row.memory_snapshot_rowid,
+      agentMdRowid: row.agent_md_rowid,
+      level: row.level as ToolLevel,
+      hasPendingFromOther: row.has_pending_from_other !== 0,
+      hasChildren: row.has_children !== 0,
+      canSpawnChild: row.can_spawn_child !== 0,
+      effectiveTurn: row.effective_turn,
+    };
+  }
+
+  getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null {
+    const row = this.db.prepare(
+      `SELECT content, metadata FROM context_text_history WHERE rowid = ?`,
+    ).get(rowid) as Pick<ContextTextHistoryRow, "content" | "metadata"> | undefined;
+    if (!row) return null;
+    return { content: row.content, metadata: row.metadata };
+  }
+
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[] {
+    const rows = this.db.prepare(
+      `SELECT body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND seq >= ? AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq ASC`,
+    ).all(unitId, startSeq, endSeq) as MessageRow[];
+    return rows.map((row) => parseJson<ConversationMessage>(row.body));
   }
 }
