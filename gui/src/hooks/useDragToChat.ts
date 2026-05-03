@@ -2,7 +2,7 @@
 // Shared drag-to-reference logic for code viewer and markdown preview.
 // Handles hint display, drag initiation, drag chip, and drop onto chat input.
 
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback } from "react";
 import type { FileReference } from "../lib/types";
 
 const DRAG_THRESHOLD = 4;
@@ -54,7 +54,6 @@ export interface DragToChatOptions {
 
 export function useDragToChat({ getLineRange, onAddRef }: DragToChatOptions) {
   const hintElRef = useRef<HTMLElement | null>(null);
-  const [hasSelectionState, setHasSelectionState] = useState(false);
 
   const dragState = useRef<{
     active: boolean;
@@ -65,14 +64,15 @@ export function useDragToChat({ getLineRange, onAddRef }: DragToChatOptions) {
     started: boolean;
   }>({ active: false, ref: null, startX: 0, startY: 0, chipEl: null, started: false });
 
-  // Selection change tracking
+  // Selection change: only hide hint when selection is cleared (no React state)
   useEffect(() => {
     const onSelectionChange = () => {
       if (dragState.current.active) return;
       const sel = window.getSelection();
-      const has = !!(sel && !sel.isCollapsed && sel.rangeCount > 0);
-      setHasSelectionState(has);
-      if (!has && hintElRef.current) { hintElRef.current.remove(); hintElRef.current = null; }
+      if ((!sel || sel.isCollapsed || !sel.rangeCount) && hintElRef.current) {
+        hintElRef.current.remove();
+        hintElRef.current = null;
+      }
     };
     document.addEventListener("selectionchange", onSelectionChange);
     return () => document.removeEventListener("selectionchange", onSelectionChange);
@@ -106,7 +106,9 @@ export function useDragToChat({ getLineRange, onAddRef }: DragToChatOptions) {
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
 
-    if (!hasSelectionState) return;
+    // Check selection directly from DOM instead of cached state
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
 
     // If click is NOT inside the current selection, let browser deselect normally
     if (!isPointInSelection(e.clientX, e.clientY)) return;
@@ -121,7 +123,7 @@ export function useDragToChat({ getLineRange, onAddRef }: DragToChatOptions) {
     };
 
     if (hintElRef.current) { hintElRef.current.remove(); hintElRef.current = null; }
-  }, [hasSelectionState, getLineRange, onAddRef]);
+  }, [getLineRange, onAddRef]);
 
   // Document-level drag handlers
   useEffect(() => {
