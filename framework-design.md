@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
-date: 2026-04-13
-version: 10.0
+date: 2026-05-03
+version: 10.1
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -29,6 +29,7 @@ version: 10.0
 | [`framework-design/state-machine-and-tools.md`](./framework-design/state-machine-and-tools.md) | FSM与工具面专题 | 五状态FSM、转移规则、轮次内部协议、工具分类与层级可用性 |
 | [`framework-design/knowledge-view.md`](./framework-design/knowledge-view.md) | 知识视图专题 | 文件系统认知底座、AGENT.md 局部知识入口页、单目的地知识空间、逻辑领地模型、无状态Agent知识模型、软结构约定、跨目录引用、skill 重吸收、治理机制暂不纳入 |
 | [`framework-design/context-observability.md`](./framework-design/context-observability.md) | 上下文可观测性专题 | 双表 append-only 事实模型、`context_text_history`、`context_recipe`、事实事件 vs 渲染指令分类、重建投影管线 |
+| [`framework-design/gui-workbench.md`](./framework-design/gui-workbench.md) | GUI 工作台专题 | 三栏工作台视觉语言、semantic tokens、侧栏/聊天/预览组件重设计、overlay 与交互状态规范 |
 
 ## 第一章 问题定义：我们在构建什么？
 
@@ -93,14 +94,14 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 
 ### 2.4 知识视图（已收敛方向）
 
-Elenchus 已将 installable skills 与长期记忆统一到同一个 **knowledge view** 中。知识视图不是独立知识库，而是文件系统上的可导航认知视图。
+Elenchus 已将 installable skills 与长期记忆统一到同一个 **知识视图** 中。知识视图不是独立知识库，而是文件系统上的可导航认知视图。
 
 - 文件系统是 agent 的统一工作底座；知识不是另一套存储，而是底座上的认知组织层。
 - 在值得长期语义化的目录下放置 **`AGENT.md`** 作为局部知识入口页，帮助 agent 以低成本理解该目录。
 - `AGENT.md` 不采用强制固定结构，常见分层写法（目录介绍 + 局部索引）只是软约定；不同目录下的 `AGENT.md` 可以互相引用。
 - `AGENT.md` 的职责是帮助理解目录，而不是约束 agent 行为；它不是目录级 manifest 或 system prompt。
 - 传统 `skill` 不再作为独立存储本体存在，而是被重新吸收为可行动知识区域的一种组织结果。
-- 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **knowledge anti-entropy** 专题继续设计。
+- 知识膨胀、漂移、腐烂、冲突整理与过时知识清理等问题，后续将以 **知识 anti-entropy** 专题继续设计。
 - **Agent 不持有文件系统领地**：Agent 是纯运行时线程（P10），上下文在内存 + SQLite 中，对文件系统只有读写操作。知识存在于共享的文件系统中，不属于任何 agent。
 - **单目的地知识空间**：知识只有一个目的地——工作所在的位置。Agent 不需要做"全局还是项目"的范围判断，知识写在工作自然归属的位置。发现通过消息通道（report + 绝对路径）和导航（AGENT.md），不通过存储分区。
 - **逻辑领地模型**：Elenchus agent 集体 = 用户的合作者，拥有统一的工作空间（workspaceRoot）。项目边界是 agent 分工的结果，不是系统结构的前提。L0 可同时协调多个项目，每个 child 的 cwd 是其任务所属项目的根（从 task brief 自动推断）。
@@ -396,6 +397,7 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 
 ## 版本历史
 
+- **v10.1 (2026-05-03)**：新增 GUI 工作台专题文档 `framework-design/gui-workbench.md`，记录 Electron GUI 的组件级 redesign spec：统一工作台视觉定位、semantic tokens、侧栏/聊天/预览组件重设计、overlay 与交互状态规范，以及与当前 `gui/` 前端文件的落位映射。同步更新文档地图。
 - **v10.0 (2026-04-26)**：引入上下文可观测性与重建机制。核心变更：**双表 append-only 事实模型**（P33）——上下文重建仅依赖 `ledger_messages`（seq 范围引用）与 `context_text_history`（rowid 离散引用）两张 append-only 事实表；移除 `unit_memory_state` 表，Memory Snapshot 统一通过 `context_text_history` 持久化；新增 `context_recipe` 记录每次 LLM 调用的输入事实边界；child commit view 作为 `child_commit_view_message` 事实事件写入父 agent ledger，而非投影层临时派生；SQLite schema 升至 v11。新增专题文档 `context-observability.md`。同步更新 §1.2、§2.2、§2.3、§3.4、§4.4、原则索引、术语表。
 - **v9.3 (2026-04-26)**：引入 **agent team** 概念作为面向 agent 的集合术语，替代 prompt 和运行时广播中对 "hierarchy" 的集合体用法。L0 orientation 从负面约束（"you cannot execute"）翻转为正面身份框架（"execution is not your function; it is a division of labor within the team"）。清除 agent 可见信息中的内部设计概念泄漏：移除所有 P-number 引用（P30/P31/P28）、FSM state/SQLite 等实现细节、cold-start/persisted 等内部术语。修正 spawnChild 默认描述的层级错误。同步更新 `hierarchy-and-layers.md`。
 - **v9.2 (2026-04-19)**：新增 P31（子产出审议）与 P32（审议审视优先）原则。L0 职责从两项扩展为三项：协调、知识维护、子产出质量审视。扩展 L0 readFile 许可范围以包含子 agent 产出文件。扩展 workspaceRoot AGENT.md 角色为导航页 + 跨项目持久上下文（用户偏好、项目约定）。同步更新 `hierarchy-and-layers.md`、`knowledge-view.md`。
