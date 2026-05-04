@@ -1,22 +1,21 @@
 // Elenchus GUI - Workspace Directory Component
 // Displays the workspace file tree with docs/all toggle and file open support.
 
-import { useState } from "react";
+import React, { useState } from "react";
 import type { FsTreeNode } from "../../lib/types";
+import { useRenderTime } from "../../lib/debug-perf";
 
 interface WorkspaceDirProps {
   tree: FsTreeNode[];
   mode: "docs" | "all";
   onModeChange: (mode: "docs" | "all") => void;
   onOpenFile: (path: string, name: string) => void;
-  openFilePaths: string[];
   activeFilePath?: string;
 }
 
-function FileNode({ node, onOpenFile, openFilePaths, activeFilePath, depth }: {
+const FileNode = React.memo(function FileNode({ node, onOpenFile, activeFilePath, depth }: {
   node: FsTreeNode;
   onOpenFile: (path: string, name: string) => void;
-  openFilePaths: string[];
   activeFilePath?: string;
   depth: number;
 }) {
@@ -40,7 +39,6 @@ function FileNode({ node, onOpenFile, openFilePaths, activeFilePath, depth }: {
             key={child.path}
             node={child}
             onOpenFile={onOpenFile}
-            openFilePaths={openFilePaths}
             activeFilePath={activeFilePath}
             depth={depth + 1}
           />
@@ -62,9 +60,10 @@ function FileNode({ node, onOpenFile, openFilePaths, activeFilePath, depth }: {
       <span className="truncate text-[13px]">{node.name}</span>
     </div>
   );
-}
+});
 
-export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths, activeFilePath }: WorkspaceDirProps) {
+function WorkspaceDirInner({ tree, mode, onModeChange, onOpenFile, activeFilePath }: WorkspaceDirProps) {
+  useRenderTime("WorkspaceDir");
   return (
     <div className="flex flex-col h-full">
       <div className="sidebar-section-header">
@@ -93,7 +92,6 @@ export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePat
               key={node.path}
               node={node}
               onOpenFile={onOpenFile}
-              openFilePaths={openFilePaths}
               activeFilePath={activeFilePath}
               depth={0}
             />
@@ -103,3 +101,5 @@ export function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePat
     </div>
   );
 }
+
+export const WorkspaceDir = React.memo(WorkspaceDirInner);

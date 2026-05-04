@@ -2,9 +2,10 @@
 // Displays conversation messages for a selected unit with input area (L0 only).
 // Drop zone for PreviewPanel's custom drag-to-reference (marked via data-drop-zone).
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import type { ConversationMessage, SessionInfo, AgentTreeNode, AgentId, ProposalStatus, FileReference } from "../../lib/types";
 import { renderInlineContent } from "../../lib/inline-render";
+import { useRenderTime } from "../../lib/debug-perf";
 
 interface ChatPanelProps {
   unitId: string | null;
@@ -251,7 +252,8 @@ function formatRefForMessage(ref: FileReference): string {
   return `@${ref.path}:${formatLineRange(ref.startLine, ref.endLine)}`;
 }
 
-export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef }: ChatPanelProps) {
+function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef }: ChatPanelProps) {
+  useRenderTime("ChatPanel");
   const [input, setInput] = useState("");
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>("cmd-enter");
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -415,3 +417,5 @@ export function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSele
     </div>
   );
 }
+
+export const ChatPanel = React.memo(ChatPanelInner);

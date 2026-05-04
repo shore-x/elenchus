@@ -2,7 +2,7 @@
 // Provides typed access to the Electron main process via window.electronAPI.
 // Replaces the former useApi hook that used HTTP fetch to the sidecar server.
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { SessionInfo, UnitInfo, ConversationMessage, FsTreeNode, FileContent, ProviderInfo, ModelInfo } from "../lib/types";
 
 function getApi() {
@@ -75,7 +75,9 @@ export function useIpc() {
     return getApi().reconstructContext(messageId);
   }, []);
 
-  return {
+  // Stable object reference — prevents downstream useCallback deps from
+  // changing every render when consumers destructure from useIpc().
+  return useMemo(() => ({
     getSessionInfo,
     getUnitInfo,
     getUnitMessages,
@@ -91,5 +93,10 @@ export function useIpc() {
     savePersistedConfig,
     checkWorkspaceStatus,
     reconstructContext,
-  };
+  }), [
+    getSessionInfo, getUnitInfo, getUnitMessages, sendMessage,
+    terminateSession, getFsTree, readFile, getProviders, getModels,
+    validateConfig, startSession, loadPersistedConfig, savePersistedConfig,
+    checkWorkspaceStatus, reconstructContext,
+  ]);
 }

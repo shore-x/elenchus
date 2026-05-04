@@ -1,7 +1,7 @@
 // Elenchus GUI - Agent Tree Component
 // Displays the hierarchical agent unit tree with state indicators.
 
-import { useState } from "react";
+import React, { useState } from "react";
 import type { AgentTreeNode, UnitState } from "../../lib/types";
 
 interface AgentTreeProps {
@@ -76,7 +76,7 @@ function TreeNode({ node, selectedUnitId, onSelectUnit, depth }: {
   );
 }
 
-export function AgentTree({ tree, selectedUnitId, onSelectUnit }: AgentTreeProps) {
+function AgentTreeInner({ tree, selectedUnitId, onSelectUnit }: AgentTreeProps) {
   if (!tree) {
     return (
       <div className="flex flex-col h-full">
@@ -101,3 +101,5 @@ export function AgentTree({ tree, selectedUnitId, onSelectUnit }: AgentTreeProps
     </div>
   );
 }
+
+export const AgentTree = React.memo(AgentTreeInner);

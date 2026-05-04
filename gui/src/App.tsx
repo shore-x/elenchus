@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useEvents } from "./hooks/useEvents";
 import { useIpc } from "./hooks/useIpc";
 import { ThreeColumnLayout } from "./components/layout/ThreeColumnLayout";
@@ -7,18 +7,24 @@ import { WorkspaceDir } from "./components/workspace/WorkspaceDir";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { PreviewPanel } from "./components/preview/PreviewPanel";
 import { OnboardingPage } from "./components/onboarding/OnboardingPage";
+import { inferTabType } from "./components/preview/tab-registry";
+import type { PreviewTab, TabContent } from "./components/preview/tab-types";
 import type { FsTreeNode, ConversationMessage, SessionInfo, FileReference } from "./lib/types";
+import { markTabSwitchStart, markTabSwitchPhase, useRenderTime } from "./lib/debug-perf";
+
+const pendingSwitchId = { current: "" };
 
 export default function App() {
+  useRenderTime("App");
   const [isConfigured, setIsConfigured] = useState(false);
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [fsTree, setFsTree] = useState<FsTreeNode[]>([]);
   const [fsMode, setFsMode] = useState<"docs" | "all">("docs");
-  const [previewTabs, setPreviewTabs] = useState<{ path: string; name: string }[]>([]);
-  const [activePreviewTab, setActivePreviewTab] = useState<number>(-1);
-  const [previewContent, setPreviewContent] = useState<{ content: string; extension: string; renderAsMarkdown: boolean; fileDeleted?: boolean } | null>(null);
+  const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>([]);
+  const [activeTabKey, setActiveTabKey] = useState<string>("");
+  const [tabContents, setTabContents] = useState<Map<string, TabContent>>(new Map());
   const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
   const [fileRefs, setFileRefs] = useState<FileReference[]>([]);
   const [workspaceConfig, setWorkspaceConfig] = useState<{ provider: string; modelName: string; baseUrl?: string; projectRoot: string } | null>(null);
@@ -127,50 +133,76 @@ export default function App() {
         const deletedPaths = new Set(changes.filter(c => c.kind === "delete").map(c => c.path));
         const updatedPaths = new Set(changes.filter(c => c.kind === "update").map(c => c.path));
 
-        const currentTab = previewTabs[activePreviewTab];
-        if (currentTab) {
-          if (deletedPaths.has(currentTab.path)) {
-            setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
-          } else if (updatedPaths.has(currentTab.path)) {
-            ipc.readFile(currentTab.path).then((result) => {
-              if (result) {
-                setPreviewContent({
-                  content: result.content,
-                  extension: result.extension,
-                  renderAsMarkdown: result.extension === ".md",
-                });
-              }
-            });
+        // Update all mounted tabs affected by fs-change
+        setTabContents(prev => {
+          const next = new Map(prev);
+          let changed = false;
+
+          for (const path of deletedPaths) {
+            const existing = next.get(path);
+            if (existing && !existing.fileDeleted) {
+              next.set(path, { ...existing, fileDeleted: true });
+              changed = true;
+            }
           }
-        }
+
+          for (const path of updatedPaths) {
+            const existing = next.get(path);
+            if (existing) {
+              // Re-read updated file in background, preserve renderAsMarkdown
+              ipc.readFile(path).then((result) => {
+                if (result) {
+                  setTabContents(prev2 => {
+                    const next2 = new Map(prev2);
+                    next2.set(path, {
+                      content: result.content,
+                      extension: result.extension,
+                      renderAsMarkdown: existing.renderAsMarkdown,
+                    });
+                    return next2;
+                  });
+                }
+              });
+            }
+          }
+
+          return changed ? next : prev;
+        });
       }
     }
   }, [events.lastEvent]);
 
-  // Load preview file content
-  useEffect(() => {
-    if (activePreviewTab < 0 || !previewTabs[activePreviewTab]) {
-      setPreviewContent(null);
-      return;
-    }
-    const tab = previewTabs[activePreviewTab];
-    ipc.readFile(tab.path).then((result) => {
+  // Load file content for a tab key (called on tab open, not on switch)
+  const loadTabContent = useCallback((path: string) => {
+    ipc.readFile(path).then((result) => {
       if (result) {
-        setPreviewContent({
-          content: result.content,
-          extension: result.extension,
-          renderAsMarkdown: result.extension === ".md",
+        setTabContents(prev => {
+          const next = new Map(prev);
+          const existing = prev.get(path);
+          next.set(path, {
+            content: result.content,
+            extension: result.extension,
+            renderAsMarkdown: existing?.renderAsMarkdown ?? result.extension === ".md",
+          });
+          return next;
         });
       } else {
-        setPreviewContent(prev => prev ? { ...prev, fileDeleted: true } : null);
+        setTabContents(prev => {
+          const next = new Map(prev);
+          const existing = prev.get(path);
+          if (existing) {
+            next.set(path, { ...existing, fileDeleted: true });
+          }
+          return next;
+        });
       }
     });
-  }, [activePreviewTab, previewTabs]);
+  }, []);
 
   const handleSendMessage = useCallback(async (content: string) => {
     await ipc.sendMessage(content);
     setFileRefs([]);
-  }, [ipc]);
+  }, []);
 
   const handleAddReference = useCallback((ref: FileReference) => {
     setFileRefs((prev) => {
@@ -185,20 +217,24 @@ export default function App() {
   }, []);
 
   const handleOpenFile = useCallback((path: string, name: string, startLine?: number) => {
-    const existingIndex = previewTabs.findIndex(t => t.path === path);
-    if (existingIndex >= 0) {
-      setActivePreviewTab(existingIndex);
-    } else {
-      const newTabs = [...previewTabs, { path, name }];
-      setPreviewTabs(newTabs);
-      setActivePreviewTab(newTabs.length - 1);
-    }
+    setPreviewTabs(prev => {
+      const existing = prev.find(t => t.key === path);
+      if (existing) {
+        // Tab already open — just activate it
+        setActiveTabKey(path);
+        return prev;
+      }
+      // New tab — add and load content
+      const newTab: PreviewTab = { key: path, title: name, type: inferTabType(path.slice(path.lastIndexOf("."))) };
+      setActiveTabKey(path);
+      loadTabContent(path);
+      return [...prev, newTab];
+    });
     if (startLine !== undefined) {
       setScrollToLine(startLine);
-      // Reset after a tick so future clicks to same line still trigger scroll
       setTimeout(() => setScrollToLine(undefined), 100);
     }
-  }, [previewTabs]);
+  }, []);
 
   const handleViewContext = useCallback(async (messageId: string) => {
     const result = await ipc.reconstructContext(messageId);
@@ -207,17 +243,28 @@ export default function App() {
     } else {
       console.error("[ViewContext] Failed:", result.error);
     }
-  }, [ipc, handleOpenFile]);
+  }, []);
 
-  const handleCloseTab = useCallback((index: number) => {
-    const newTabs = previewTabs.filter((_, i) => i !== index);
-    setPreviewTabs(newTabs);
-    if (activePreviewTab >= newTabs.length) {
-      setActivePreviewTab(Math.max(0, newTabs.length - 1));
-    } else if (activePreviewTab === index) {
-      setActivePreviewTab(Math.min(index, newTabs.length - 1));
-    }
-  }, [previewTabs, activePreviewTab]);
+  const activeTabKeyRef = useRef(activeTabKey);
+  activeTabKeyRef.current = activeTabKey;
+
+  const handleCloseTab = useCallback((key: string) => {
+    setPreviewTabs(prev => {
+      const newTabs = prev.filter(t => t.key !== key);
+      // If closing the active tab, activate the last remaining tab
+      if (key === activeTabKeyRef.current) {
+        const last = newTabs[newTabs.length - 1];
+        setActiveTabKey(last?.key ?? "");
+      }
+      return newTabs;
+    });
+    // Remove content for closed tab (triggers React unmount)
+    setTabContents(prev => {
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
 
   const [configError, setConfigError] = useState<string | null>(null);
 
@@ -240,7 +287,17 @@ export default function App() {
       setSelectedUnitId((result as SessionInfo).unitId);
       setIsConfigured(true);
     }
-  }, [ipc]);
+  }, []);
+
+  const handleToggleRender = useCallback((key: string) => {
+    setTabContents(prev => {
+      const existing = prev.get(key);
+      if (!existing) return prev;
+      const next = new Map(prev);
+      next.set(key, { ...existing, renderAsMarkdown: !existing.renderAsMarkdown });
+      return next;
+    });
+  }, []);
 
   // Show onboarding if not configured
   if (!isConfigured) {
@@ -267,8 +324,7 @@ export default function App() {
             mode={fsMode}
             onModeChange={setFsMode}
             onOpenFile={handleOpenFile}
-            openFilePaths={previewTabs.map(t => t.path)}
-            activeFilePath={previewTabs[activePreviewTab]?.path}
+            activeFilePath={activeTabKey}
           />
         </div>
       </div>
@@ -289,15 +345,16 @@ export default function App() {
       {/* Right Panel */}
       <PreviewPanel
         tabs={previewTabs}
-        activeTab={activePreviewTab}
-        onSelectTab={setActivePreviewTab}
-        onCloseTab={handleCloseTab}
-        content={previewContent}
-        onToggleRender={() => {
-          if (previewContent) {
-            setPreviewContent({ ...previewContent, renderAsMarkdown: !previewContent.renderAsMarkdown });
-          }
+        activeKey={activeTabKey}
+        onSelectTab={(key: string) => {
+          const id = markTabSwitchStart(key);
+          pendingSwitchId.current = id;
+          setActiveTabKey(key);
+          markTabSwitchPhase(id, "setActiveTabKey-done");
         }}
+        onCloseTab={handleCloseTab}
+        tabContents={tabContents}
+        onToggleRender={handleToggleRender}
         scrollToLine={scrollToLine}
         onAddRef={handleAddReference}
       />
