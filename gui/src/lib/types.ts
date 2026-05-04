@@ -105,6 +105,18 @@ export type ConversationMessage =
   | ToolResultMessage
   | ChildReportMessage;
 
+// UI-layer grouping: merges same-turn agent reply + action into one visual unit.
+// Derived purely at render time from ConversationMessage[] — no core model changes.
+export interface AgentTurnGroup {
+  type: "agent-turn-group";
+  turn: number;
+  agent: AgentId;
+  reply?: AgentMessage;
+  action?: ProposalMessage | VoteMessage;
+}
+
+export type GroupedChatItem = AgentTurnGroup | ConversationMessage;
+
 export interface SessionInfo {
   unitId: string;
   state: UnitState;

@@ -3,7 +3,7 @@
 // Drop zone for PreviewPanel's custom drag-to-reference (marked via data-drop-zone).
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import type { ConversationMessage, SessionInfo, AgentTreeNode, AgentId, ProposalStatus, FileReference } from "../../lib/types";
+import type { ConversationMessage, SessionInfo, AgentTreeNode, AgentId, ProposalStatus, FileReference, AgentTurnGroup, GroupedChatItem } from "../../lib/types";
 import { renderInlineContent } from "../../lib/inline-render";
 import { useRenderTime } from "../../lib/debug-perf";
 
@@ -53,24 +53,30 @@ function ContextMenuPopup({ x, y, onAction }: { x: number; y: number; onAction: 
   );
 }
 
-function MessageBubble({ message, onOpenFile, onViewContext }: { message: ConversationMessage; onOpenFile: (path: string, name: string) => void; onViewContext: (messageId: string) => void }) {
+function groupMessagesByTurn(messages: ConversationMessage[]): GroupedChatItem[] {
+  const result: GroupedChatItem[] = [];
+  const groups = new Map<string, AgentTurnGroup>();
+
+  for (const msg of messages) {
+    if (msg.kind === "agent_message" || msg.kind === "proposal_message" || msg.kind === "vote_message") {
+      const key = `${msg.turnAuthored}:${msg.authoredBy}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = { type: "agent-turn-group", turn: msg.turnAuthored, agent: msg.authoredBy };
+        groups.set(key, group);
+        result.push(group);
+      }
+      if (msg.kind === "agent_message") group.reply = msg;
+      else group.action = msg;
+    } else {
+      result.push(msg);
+    }
+  }
+  return result;
+}
+
+function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; onOpenFile: (path: string, name: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-
-  const canViewContext = message.kind === "agent_message" || message.kind === "proposal_message";
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    if (!canViewContext) return;
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
-  }, [canViewContext]);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handler = () => setContextMenu(null);
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
-  }, [contextMenu]);
 
   switch (message.kind) {
     case "incoming_message":
@@ -86,67 +92,46 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
 
     case "agent_message":
       return (
-        <div className="flex justify-start mb-3" onContextMenu={handleContextMenu}>
-          <div className="message-card">
-            <div className="message-meta-row">
-              <span className={agentTagClass(message.authoredBy)}>
-                {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
-              </span>
-            </div>
-            <div className="message-body">{renderInlineContent(message.content, { onOpenFile })}</div>
-          </div>
-          {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(message.id); }} />}
-        </div>
+        <div className="message-body">{renderInlineContent(message.content, { onOpenFile })}</div>
       );
 
     case "proposal_message": {
       const badge = proposalStatusBadge(message.status);
       return (
-        <div className="mb-3" onContextMenu={handleContextMenu}>
-          <div
-            className="message-card message-card-interactive"
-            onClick={() => setExpanded(!expanded)}
-          >
-            <div className="message-meta-row">
-              <span className={agentTagClass(message.authoredBy)}>
-                {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
-              </span>
-              <span className="message-label">propose</span>
-              <span className="message-title truncate">{message.toolName}</span>
-              <span className={badge.cls}>{badge.label}</span>
-              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
-            </div>
-            <div className="message-body-compact">{message.proposedStep}</div>
-            {expanded && (
-              <pre className="message-expand">
-                {JSON.stringify(message.args, null, 2)}
-              </pre>
-            )}
+        <div
+          className="message-card-interactive"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="message-meta-row">
+            <span className="message-label">propose</span>
+            <span className="message-title truncate">{message.toolName}</span>
+            <span className={badge.cls}>{badge.label}</span>
+            <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
           </div>
-          {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(message.id); }} />}
+          <div className="message-body-compact">{message.proposedStep}</div>
+          {expanded && (
+            <pre className="message-expand">
+              {JSON.stringify(message.args, null, 2)}
+            </pre>
+          )}
         </div>
       );
     }
 
     case "vote_message":
       return (
-        <div className="mb-3 pl-2">
-          <div
-            className="message-card message-card-muted message-card-compact message-card-interactive"
-            onClick={() => setExpanded(!expanded)}
-          >
-            <div className="message-meta-row">
-              <span className={agentTagClass(message.authoredBy)}>
-                {message.authoredBy === "agent-a" ? "Agent A" : "Agent B"}
-              </span>
-              <span className={message.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger"}>
-                {message.approve ? "Approve" : "Reject"}
-              </span>
-              <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
-            </div>
-            <div className={`message-body-compact ${expanded ? "" : "truncate"}`}>
-              {expanded ? message.reason : message.reason.slice(0, 120) + (message.reason.length > 120 ? "..." : "")}
-            </div>
+        <div
+          className="message-card-interactive"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="message-meta-row">
+            <span className={message.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger"}>
+              {message.approve ? "Approve" : "Reject"}
+            </span>
+            <span className="message-chevron ml-auto">{expanded ? "▾" : "▸"}</span>
+          </div>
+          <div className={`message-body-compact ${expanded ? "" : "truncate"}`}>
+            {expanded ? message.reason : message.reason.slice(0, 120) + (message.reason.length > 120 ? "..." : "")}
           </div>
         </div>
       );
@@ -217,6 +202,90 @@ function MessageBubble({ message, onOpenFile, onViewContext }: { message: Conver
         </div>
       );
   }
+}
+
+function AgentTurnGroupBubble({ group, onOpenFile, onViewContext }: { group: AgentTurnGroup; onOpenFile: (path: string, name: string) => void; onViewContext: (messageId: string) => void }) {
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const hasReply = !!group.reply;
+  const hasAction = !!group.action;
+  // Degraded: only reply → render as standalone agent_message card
+  if (hasReply && !hasAction) {
+    const msg = group.reply!;
+    return (
+      <div className="flex justify-start mb-3" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}>
+        <div className="message-card">
+          <div className="message-meta-row">
+            <span className={agentTagClass(group.agent)}>{group.agent === "agent-a" ? "Agent A" : "Agent B"}</span>
+          </div>
+          <div className="message-body">{renderInlineContent(msg.content, { onOpenFile })}</div>
+        </div>
+        {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(msg.id); }} />}
+      </div>
+    );
+  }
+
+  // Degraded: only action → render as standalone proposal/vote card
+  if (!hasReply && hasAction) {
+    const action = group.action!;
+    if (action.kind === "proposal_message") {
+      const badge = proposalStatusBadge(action.status);
+      return (
+        <div className="mb-3" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}>
+          <div className="message-card message-card-interactive" onClick={() => {}}>
+            <div className="message-meta-row">
+              <span className={agentTagClass(group.agent)}>{group.agent === "agent-a" ? "Agent A" : "Agent B"}</span>
+              <span className="message-label">propose</span>
+              <span className="message-title truncate">{action.toolName}</span>
+              <span className={badge.cls}>{badge.label}</span>
+            </div>
+            <div className="message-body-compact">{action.proposedStep}</div>
+          </div>
+          {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(action.id); }} />}
+        </div>
+      );
+    }
+    // vote_message standalone
+    return (
+      <div className="mb-3 pl-2">
+        <div className="message-card message-card-muted message-card-compact message-card-interactive" onClick={() => {}}>
+          <div className="message-meta-row">
+            <span className={agentTagClass(group.agent)}>{group.agent === "agent-a" ? "Agent A" : "Agent B"}</span>
+            <span className={action.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger"}>
+              {action.approve ? "Approve" : "Reject"}
+            </span>
+          </div>
+          <div className="message-body-compact truncate">{action.reason}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Full group: reply + action in one card
+  const contextId = group.reply?.id ?? group.action?.id ?? "";
+  return (
+    <div className="flex justify-start mb-3" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}>
+      <div className="message-card">
+        <div className="message-meta-row">
+          <span className={agentTagClass(group.agent)}>{group.agent === "agent-a" ? "Agent A" : "Agent B"}</span>
+        </div>
+        <div className="message-body">{renderInlineContent(group.reply!.content, { onOpenFile })}</div>
+        <div className="message-divider" />
+        <MessageBubble message={group.action!} onOpenFile={onOpenFile} />
+      </div>
+      {contextMenu && <ContextMenuPopup x={contextMenu.x} y={contextMenu.y} onAction={() => { setContextMenu(null); onViewContext(contextId); }} />}
+    </div>
+  );
+}
+
+function isAgentTurnGroup(item: GroupedChatItem): item is AgentTurnGroup {
+  return (item as AgentTurnGroup).type === "agent-turn-group";
+}
+
+function GroupedChatItemBubble({ item, onOpenFile, onViewContext }: { item: GroupedChatItem; onOpenFile: (path: string, name: string) => void; onViewContext: (messageId: string) => void }) {
+  if (isAgentTurnGroup(item)) {
+    return <AgentTurnGroupBubble group={item} onOpenFile={onOpenFile} onViewContext={onViewContext} />;
+  }
+  return <MessageBubble message={item} onOpenFile={onOpenFile} />;
 }
 
 function buildBreadcrumb(sessionInfo: SessionInfo | null, unitId: string | null): { unitId: string; label: string }[] {
@@ -338,7 +407,12 @@ function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelect
         {messages.length === 0 ? (
           <div className="text-center text-[var(--color-text-quaternary)] text-sm mt-8">No messages yet</div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} message={msg} onOpenFile={onOpenFile} onViewContext={onViewContext} />)
+          groupMessagesByTurn(messages).map((item) => {
+            const key = isAgentTurnGroup(item)
+              ? `group-${item.turn}-${item.agent}`
+              : (item as ConversationMessage).id;
+            return <GroupedChatItemBubble key={key} item={item} onOpenFile={onOpenFile} onViewContext={onViewContext} />;
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
