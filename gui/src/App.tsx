@@ -1,3 +1,34 @@
+// Elenchus GUI - App Root Component
+//
+// ## Keep-Alive Tab Architecture
+// Preview tabs use a Keep-Alive model: all opened tabs remain mounted simultaneously,
+// only the active tab is visible (CSS visibility), and tabs are only unmounted on close.
+// This eliminates mount/unmount overhead and makes tab switching instant.
+//
+// ## Data Model
+// - previewTabs: PreviewTab[] — descriptor list (key, title, type), append-only until close
+// - activeTabKey: string — which tab is currently visible (keyed by file path)
+// - tabContents: Map<string, TabContent> — content for all mounted tabs, loaded on open
+//
+// ## Key Design Decisions
+// - Content is loaded when a tab is OPENED, not when it's SWITCHED to.
+//   The Map IS the cache — no separate caching layer needed.
+// - fs-change events update all mounted tabs in-place via Map.set().
+// - Closing a tab removes its entry from the Map, triggering React unmount.
+//
+// ## Pitfalls (DO NOT reintroduce these)
+// 1. NEVER pass inline arrow functions as props to memoized components
+//    (e.g. onToggleRender={() => ...}) — they break React.memo on every render.
+//    Use useCallback or pass stable references instead.
+// 2. NEVER compute new arrays/objects in JSX (e.g. previewTabs.map(...))
+//    — they create new references every render, breaking parent memo.
+//    Use useMemo or remove the prop if unused.
+// 3. NEVER pass isActive to tab content components — visibility is controlled
+//    by the wrapper div in PreviewPanel. Content components must not re-render
+//    on tab switch.
+// 4. NEVER use display:none for hiding tabs — it causes full re-layout on show.
+//    Use visibility:hidden + pointer-events:none instead (zero layout cost).
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useEvents } from "./hooks/useEvents";
 import { useIpc } from "./hooks/useIpc";
@@ -289,16 +320,6 @@ export default function App() {
     }
   }, []);
 
-  const handleToggleRender = useCallback((key: string) => {
-    setTabContents(prev => {
-      const existing = prev.get(key);
-      if (!existing) return prev;
-      const next = new Map(prev);
-      next.set(key, { ...existing, renderAsMarkdown: !existing.renderAsMarkdown });
-      return next;
-    });
-  }, []);
-
   // Show onboarding if not configured
   if (!isConfigured) {
     return <OnboardingPage onComplete={handleConfigComplete} initialConfig={workspaceConfig ?? undefined} error={configError} />;
@@ -354,7 +375,6 @@ export default function App() {
         }}
         onCloseTab={handleCloseTab}
         tabContents={tabContents}
-        onToggleRender={handleToggleRender}
         scrollToLine={scrollToLine}
         onAddRef={handleAddReference}
       />

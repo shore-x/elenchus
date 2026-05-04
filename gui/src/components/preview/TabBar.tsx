@@ -2,21 +2,16 @@
 // Renders the tab navigation strip for the preview panel.
 // Pure presentational — no content logic.
 
-import type { PreviewTab, TabContent } from "./tab-types";
+import type { PreviewTab } from "./tab-types";
 
 interface TabBarProps {
   tabs: PreviewTab[];
   activeKey: string;
   onSelectTab: (key: string) => void;
   onCloseTab: (key: string) => void;
-  tabContents: Map<string, TabContent>;
-  onToggleRender?: () => void;
 }
 
-export function TabBar({ tabs, activeKey, onSelectTab, onCloseTab, tabContents, onToggleRender }: TabBarProps) {
-  const activeContent = activeKey ? tabContents.get(activeKey) : undefined;
-  const isMarkdown = activeContent?.extension === ".md";
-
+export function TabBar({ tabs, activeKey, onSelectTab, onCloseTab }: TabBarProps) {
   return (
     <div className="preview-header">
       <div className="preview-tabs">
@@ -38,16 +33,6 @@ export function TabBar({ tabs, activeKey, onSelectTab, onCloseTab, tabContents, 
           </div>
         ))}
       </div>
-      {isMarkdown && activeContent && !activeContent.fileDeleted && (
-        <div className="preview-controls">
-          <button
-            className="preview-toolbar-button px-3 py-2"
-            onClick={onToggleRender}
-          >
-            {activeContent.renderAsMarkdown ? "Source" : "Render"}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

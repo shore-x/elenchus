@@ -1,5 +1,20 @@
 // Elenchus GUI - Workspace Directory Component
+//
 // Displays the workspace file tree with docs/all toggle and file open support.
+//
+// ## Performance: FileNode React.memo
+// FileNode is wrapped in React.memo because activeFilePath changes on every
+// tab switch, but only 2 nodes actually change (old active + new active).
+// Without memo, the entire tree re-renders on every switch (O(n) where n = file count),
+// which caused 350-460ms delays in practice.
+//
+// ## Pitfalls
+// 1. NEVER remove React.memo from FileNode — it's critical for tab switch performance.
+// 2. NEVER pass props that change on every render (inline arrows, new arrays)
+//    to FileNode — they would break memo. All callbacks must be stable references.
+// 3. NEVER add openFilePaths back as a prop — it was removed because it was
+//    passed through but never used for rendering, and its new-array reference
+//    broke WorkspaceDir's React.memo on every render.
 
 import React, { useState } from "react";
 import type { FsTreeNode } from "../../lib/types";

@@ -1,11 +1,30 @@
 // Elenchus GUI - Preview Panel Component
-// Orchestrator for the tab-based file viewer with Keep-Alive.
-// Renders TabBar + all opened tab content components simultaneously,
-// using CSS visibility on wrapper divs for instant tab switching.
-// Tab content components never re-render on tab switch — only the
-// lightweight wrapper divs change style props.
+//
+// ## Keep-Alive Tab Orchestration
+// This component is the orchestrator for the tab-based file viewer.
+// All opened tabs are rendered simultaneously inside TabContentWrapper divs.
+// Tab switching is achieved by toggling CSS visibility on the wrapper divs,
+// NOT by mounting/unmounting content components.
+//
+// ## Architecture: Three-Layer Memo
+// 1. TabContentWrapper (React.memo + custom comparison)
+//    - Controls visibility via style prop (position:absolute, visibility, pointer-events)
+//    - Custom memo: inactive tabs ignore scrollToLine changes
+//    - On tab switch, only 2 wrappers re-render (old active → inactive, new active → active)
+// 2. Inner content component (MarkdownTabContent / CodeTabContent)
+//    - Wrapped in React.memo — props (content, onAddRef) are stable on tab switch
+//    - NEVER receives isActive — visibility is wrapper's responsibility
+//    - ReactMarkdown / VirtualCodeViewer are NOT re-invoked on tab switch
+// 3. TabBar — lightweight, re-renders on activeKey change (acceptable)
+//
+// ## Pitfalls
+// 1. NEVER add isActive to TabContentProps — it would force content re-render on switch.
+// 2. NEVER pass inline callbacks to TabContentWrapper — they break its custom memo.
+//    All callbacks (onAddRef, onToggleRender) must be stable references from App.
+// 3. The custom memo comparison must be updated when new props are added to the wrapper.
+//    Forgetting to compare a new prop will cause stale renders or missed updates.
 
-import React, { useCallback } from "react";
+import React from "react";
 import type { FileReference } from "../../lib/types";
 import type { PreviewTab, TabContent } from "./tab-types";
 import { TabBar } from "./TabBar";
@@ -18,7 +37,6 @@ interface PreviewPanelProps {
   onSelectTab: (key: string) => void;
   onCloseTab: (key: string) => void;
   tabContents: Map<string, TabContent>;
-  onToggleRender: (key: string) => void;
   scrollToLine?: number;
   onAddRef?: (ref: FileReference) => void;
 }
@@ -75,12 +93,8 @@ const TabContentWrapper = React.memo(function TabContentWrapper({
   return false;
 });
 
-export function PreviewPanel({ tabs, activeKey, onSelectTab, onCloseTab, tabContents, onToggleRender, scrollToLine, onAddRef }: PreviewPanelProps) {
+export function PreviewPanel({ tabs, activeKey, onSelectTab, onCloseTab, tabContents, scrollToLine, onAddRef }: PreviewPanelProps) {
   useRenderTime("PreviewPanel");
-  // Stable callback for TabBar — only calls onToggleRender for the active key
-  const handleToggleRender = useCallback(() => {
-    onToggleRender(activeKey);
-  }, [onToggleRender, activeKey]);
 
   return (
     <div className="flex flex-col h-full">
@@ -89,8 +103,6 @@ export function PreviewPanel({ tabs, activeKey, onSelectTab, onCloseTab, tabCont
         activeKey={activeKey}
         onSelectTab={onSelectTab}
         onCloseTab={onCloseTab}
-        tabContents={tabContents}
-        onToggleRender={handleToggleRender}
       />
 
       {/* Keep-Alive content area: all tabs rendered, CSS controls visibility */}

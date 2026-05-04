@@ -1,13 +1,32 @@
 // Elenchus GUI - Markdown Tab Content
+//
 // Renders Markdown content with ReactMarkdown, drag-to-reference,
 // and AST-based line position data for block-level precision.
+// Internally manages Source/Render toggle — no external coupling.
+//
+// ## Keep-Alive Contract
+// This component is wrapped in React.memo and must NOT re-render on tab switch.
+// It does NOT receive isActive — visibility is controlled by the wrapper div.
+// React.memo ensures ReactMarkdown is only re-invoked when content actually changes.
+//
+// ## Self-Contained Toggle
+// The Source/Render toggle button is fully internal to this component.
+// renderAsMarkdown is managed as local state, initialized from content.renderAsMarkdown.
+// The toggle does NOT propagate to parent — it's a pure view preference.
+//
+// ## Pitfalls
+// 1. NEVER add isActive as a prop — it would cause ReactMarkdown to re-diff on every switch.
+// 2. NEVER add unstable callback props — they break React.memo.
+// 3. ReactMarkdown parsing is synchronous and expensive for large files.
+//    If performance becomes an issue, consider useDeferredValue or web workers.
 
-import React, { useRef, useEffect, useCallback } from "react";
+import React, { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element } from "hast";
 import type { TabContentProps } from "./tab-types";
 import { useDragToChat } from "../../hooks/useDragToChat";
+import { VirtualCodeViewer } from "./VirtualCodeViewer";
 
 // --- External link handler ---
 
@@ -107,6 +126,12 @@ function getMdLineRangeFromSelection(filePath: string) {
 
 export const MarkdownTabContent = React.memo(function MarkdownTabContent({ tabKey, content, scrollToLine, onAddRef }: TabContentProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [renderAsMarkdown, setRenderAsMarkdown] = useState(true);
+
+  const lines = useMemo(() => {
+    if (!content) return [];
+    return content.content.split("\n");
+  }, [content]);
 
   const getMdLineRange = useCallback(() => getMdLineRangeFromSelection(tabKey), [tabKey]);
   const mdDrag = useDragToChat({ getLineRange: getMdLineRange, onAddRef });
@@ -114,13 +139,15 @@ export const MarkdownTabContent = React.memo(function MarkdownTabContent({ tabKe
   // Scroll to line
   useEffect(() => {
     if (!scrollToLine || !scrollRef.current) return;
-    const target = scrollRef.current.querySelector<HTMLElement>(
-      `[data-source-line-start="${scrollToLine}"]`
-    );
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (renderAsMarkdown) {
+      const target = scrollRef.current.querySelector<HTMLElement>(
+        `[data-source-line-start="${scrollToLine}"]`
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }
-  }, [scrollToLine]);
+  }, [scrollToLine, renderAsMarkdown]);
 
   if (!content) return null;
 
@@ -129,22 +156,41 @@ export const MarkdownTabContent = React.memo(function MarkdownTabContent({ tabKe
       ref={scrollRef}
       className="overflow-y-auto h-full"
     >
+      {content.extension === ".md" && !content.fileDeleted && (
+        <button
+          className="preview-toolbar-button absolute top-2 right-2 z-10 px-3 py-1.5 shadow-sm"
+          onClick={() => setRenderAsMarkdown(prev => !prev)}
+        >
+          {renderAsMarkdown ? "Source" : "Render"}
+        </button>
+      )}
       {content.fileDeleted && (
         <div className="preview-warning-banner">
           <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
           <span>This file has been deleted or moved. The content below is the last known version.</span>
         </div>
       )}
-      <div
-        className={`markdown-body preview-content-body${content.fileDeleted ? " preview-dimmed" : ""}`}
-        onMouseMove={mdDrag.handleMouseMove}
-        onMouseLeave={mdDrag.handleMouseLeave}
-        onMouseDown={mdDrag.handleMouseDown}
-      >
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
-          {content.content}
-        </ReactMarkdown>
-      </div>
+      {renderAsMarkdown ? (
+        <div
+          className={`markdown-body preview-content-body${content.fileDeleted ? " preview-dimmed" : ""}`}
+          onMouseMove={mdDrag.handleMouseMove}
+          onMouseLeave={mdDrag.handleMouseLeave}
+          onMouseDown={mdDrag.handleMouseDown}
+        >
+          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
+            {content.content}
+          </ReactMarkdown>
+        </div>
+      ) : (
+        <div className={content.fileDeleted ? "preview-dimmed" : ""}>
+          <VirtualCodeViewer
+            lines={lines}
+            filePath={tabKey}
+            scrollToLine={scrollToLine}
+            onAddRef={onAddRef}
+          />
+        </div>
+      )}
     </div>
   );
 });

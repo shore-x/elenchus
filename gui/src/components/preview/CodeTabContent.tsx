@@ -1,6 +1,17 @@
 // Elenchus GUI - Code Tab Content
+//
 // Renders source code with VirtualCodeViewer and drag-to-reference.
 // Supports toggle between rendered markdown (if applicable) and source view.
+//
+// ## Keep-Alive Contract
+// This component is wrapped in React.memo and must NOT re-render on tab switch.
+// It does NOT receive isActive — visibility is controlled by the wrapper div.
+// VirtualCodeViewer uses virtualized rendering, so re-renders are cheap,
+// but React.memo still prevents unnecessary line-splitting and hook re-runs.
+//
+// ## Pitfalls
+// 1. NEVER add isActive as a prop — it would cause unnecessary re-render on switch.
+// 2. NEVER add unstable callback props — they break React.memo.
 
 import React, { useRef, useEffect, useMemo } from "react";
 import type { TabContentProps } from "./tab-types";
