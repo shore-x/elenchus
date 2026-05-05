@@ -719,6 +719,101 @@ function buildSystemPrompt(agentId, level, workspaceRoot2, workspaceKnowledge) {
 function buildCompressionSystemPrompt() {
   return COMPRESSION_SYSTEM_PROMPT;
 }
+const CHARS_PER_TOKEN = 3.5;
+function tokensToChars(tokens) {
+  return Math.ceil(tokens * CHARS_PER_TOKEN);
+}
+function charsToTokens(chars) {
+  return Math.floor(chars / CHARS_PER_TOKEN);
+}
+function estimateMessageChars$1(message) {
+  switch (message.kind) {
+    case "incoming_message":
+    case "agent_message":
+    case "system_message":
+      return message.content.length + 32;
+    case "upward_message":
+      return message.content.length + 48;
+    case "proposal_message":
+      return message.toolName.length + message.proposedStep.length + JSON.stringify(message.args).length + 64;
+    case "vote_message":
+      return message.reason.length + 48;
+    case "tool_result_message":
+      return message.toolName.length + message.output.length + 64;
+    case "child_report_message":
+      return message.childId.length + message.content.length + 64;
+    case "child_commit_view_message":
+      return message.content.length + 64;
+  }
+}
+function estimateMessagesChars$1(messages) {
+  return messages.reduce((total, message) => total + estimateMessageChars$1(message), 0);
+}
+function clamp$2(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function findTailStartIndexWithinChars(messages, targetChars) {
+  if (messages.length === 0) {
+    return 0;
+  }
+  let chars = 0;
+  let start = messages.length - 1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const estimated = estimateMessageChars$1(messages[index]);
+    if (index < messages.length - 1 && chars + estimated > targetChars) {
+      break;
+    }
+    chars += estimated;
+    start = index;
+  }
+  return start;
+}
+function createTurnContextBudgetPlan(input) {
+  const baseRecentRawStartIndex = clamp$2(
+    input.baseRecentRawStartSeq - input.currentSequenceStart,
+    0,
+    input.visibleMessages.length
+  );
+  const baseRecentRawMessages = input.visibleMessages.slice(baseRecentRawStartIndex);
+  const estimatedRecentRawChars = estimateMessagesChars$1(baseRecentRawMessages);
+  const shouldTruncate = estimatedRecentRawChars > input.capacityGuardCharLimit;
+  const relativeStartIndex = shouldTruncate ? findTailStartIndexWithinChars(baseRecentRawMessages, input.capacityGuardCharLimit) : 0;
+  const recentRawStartSeq = input.baseRecentRawStartSeq + relativeStartIndex;
+  return {
+    recentRawStartSeq,
+    visibleEndSeq: input.currentSequenceStart + input.visibleMessages.length,
+    newlyVisibleSeq: input.newlyVisibleMessages.length > 0 ? input.currentSequenceStart + (input.visibleMessages.length - input.newlyVisibleMessages.length) : null,
+    compressionReminderShown: input.compressionReminderShown,
+    compressionReminderChars: input.compressionReminderChars,
+    compressionReminderThresholdChars: input.compressionReminderThresholdChars,
+    truncationApplied: shouldTruncate,
+    truncationReason: shouldTruncate ? "capacity_guard" : "none",
+    truncationLevel: shouldTruncate ? 1 : 0
+  };
+}
+function tightenTurnContextBudgetPlan(input) {
+  const currentRecentRawStartIndex = clamp$2(
+    input.currentPlan.recentRawStartSeq - input.currentSequenceStart,
+    0,
+    input.visibleMessages.length
+  );
+  const currentRecentRawMessages = input.visibleMessages.slice(currentRecentRawStartIndex);
+  if (currentRecentRawMessages.length <= 1) {
+    return null;
+  }
+  const relativeStartIndex = findTailStartIndexWithinChars(currentRecentRawMessages, input.targetRecentRawChars);
+  const nextRecentRawStartSeq = input.currentPlan.recentRawStartSeq + relativeStartIndex;
+  if (nextRecentRawStartSeq <= input.currentPlan.recentRawStartSeq) {
+    return null;
+  }
+  return {
+    ...input.currentPlan,
+    recentRawStartSeq: nextRecentRawStartSeq,
+    truncationApplied: true,
+    truncationReason: "provider_reject",
+    truncationLevel: input.currentPlan.truncationLevel + 1
+  };
+}
 const DISPLAY_NAMES = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
@@ -899,12 +994,14 @@ ${snapshot.content}`,
       timestamp: Date.now()
     };
   }
-  buildCompressionReminderOverlay(agentId, estimatedChars, thresholdChars) {
+  buildCompressionReminderOverlay(agentId, estimatedChars, thresholdChars, contextWindowTokens) {
     const agentName = getDisplayName(agentId);
+    const estimatedTokens = charsToTokens(estimatedChars);
+    const pct = contextWindowTokens ? ` (approximately ${Math.round(estimatedTokens / contextWindowTokens * 100)}% of model context capacity)` : "";
     return {
       role: "user",
       content: `[Context Reminder]
-The recent raw context visible to ${agentName} is estimated at about ${estimatedChars} characters, above the reminder threshold of about ${thresholdChars} characters. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
+The recent raw context visible to ${agentName} is estimated at about ${estimatedTokens} tokens${pct}, above the compression reminder threshold. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
       timestamp: Date.now()
     };
   }
@@ -948,7 +1045,7 @@ const AGENT_NAMES$1 = {
   "agent-a": "Agent A",
   "agent-b": "Agent B"
 };
-function clamp$2(value, min, max) {
+function clamp$1(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 function assembleTurnContext(input) {
@@ -959,7 +1056,7 @@ function assembleTurnContext(input) {
     input.hasChildren,
     input.canSpawnChild
   );
-  const recentRawStartIndex = clamp$2(
+  const recentRawStartIndex = clamp$1(
     input.budgetPlan.recentRawStartSeq - (input.budgetPlan.visibleEndSeq - input.visibleMessages.length),
     0,
     input.visibleMessages.length
@@ -982,7 +1079,8 @@ function assembleTurnContext(input) {
     messages.push(projector.buildCompressionReminderOverlay(
       input.agentId,
       input.budgetPlan.compressionReminderChars,
-      input.budgetPlan.compressionReminderThresholdChars
+      input.budgetPlan.compressionReminderThresholdChars,
+      input.contextWindowTokens
     ));
   }
   if (input.pendingProposal && input.pendingProposal.proposer !== input.agentId) {
@@ -1021,94 +1119,6 @@ function assembleTurnContext(input) {
       }))
     },
     tools
-  };
-}
-function estimateMessageChars$1(message) {
-  switch (message.kind) {
-    case "incoming_message":
-    case "agent_message":
-    case "system_message":
-      return message.content.length + 32;
-    case "upward_message":
-      return message.content.length + 48;
-    case "proposal_message":
-      return message.toolName.length + message.proposedStep.length + JSON.stringify(message.args).length + 64;
-    case "vote_message":
-      return message.reason.length + 48;
-    case "tool_result_message":
-      return message.toolName.length + message.output.length + 64;
-    case "child_report_message":
-      return message.childId.length + message.content.length + 64;
-    case "child_commit_view_message":
-      return message.content.length + 64;
-  }
-}
-function estimateMessagesChars$1(messages) {
-  return messages.reduce((total, message) => total + estimateMessageChars$1(message), 0);
-}
-function clamp$1(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-function findTailStartIndexWithinChars(messages, targetChars) {
-  if (messages.length === 0) {
-    return 0;
-  }
-  let chars = 0;
-  let start = messages.length - 1;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const estimated = estimateMessageChars$1(messages[index]);
-    if (index < messages.length - 1 && chars + estimated > targetChars) {
-      break;
-    }
-    chars += estimated;
-    start = index;
-  }
-  return start;
-}
-function createTurnContextBudgetPlan(input) {
-  const baseRecentRawStartIndex = clamp$1(
-    input.baseRecentRawStartSeq - input.currentSequenceStart,
-    0,
-    input.visibleMessages.length
-  );
-  const baseRecentRawMessages = input.visibleMessages.slice(baseRecentRawStartIndex);
-  const estimatedRecentRawChars = estimateMessagesChars$1(baseRecentRawMessages);
-  const shouldTruncate = estimatedRecentRawChars > input.hardRecentRawCharLimit;
-  const relativeStartIndex = shouldTruncate ? findTailStartIndexWithinChars(baseRecentRawMessages, input.hardRecentRawCharLimit) : 0;
-  const recentRawStartSeq = input.baseRecentRawStartSeq + relativeStartIndex;
-  return {
-    recentRawStartSeq,
-    visibleEndSeq: input.currentSequenceStart + input.visibleMessages.length,
-    newlyVisibleSeq: input.newlyVisibleMessages.length > 0 ? input.currentSequenceStart + (input.visibleMessages.length - input.newlyVisibleMessages.length) : null,
-    compressionReminderShown: input.compressionReminderShown,
-    compressionReminderChars: input.compressionReminderChars,
-    compressionReminderThresholdChars: input.compressionReminderThresholdChars,
-    truncationApplied: shouldTruncate,
-    truncationReason: shouldTruncate ? "budget_precheck" : "none",
-    truncationLevel: shouldTruncate ? 1 : 0
-  };
-}
-function tightenTurnContextBudgetPlan(input) {
-  const currentRecentRawStartIndex = clamp$1(
-    input.currentPlan.recentRawStartSeq - input.currentSequenceStart,
-    0,
-    input.visibleMessages.length
-  );
-  const currentRecentRawMessages = input.visibleMessages.slice(currentRecentRawStartIndex);
-  if (currentRecentRawMessages.length <= 1) {
-    return null;
-  }
-  const relativeStartIndex = findTailStartIndexWithinChars(currentRecentRawMessages, input.targetRecentRawChars);
-  const nextRecentRawStartSeq = input.currentPlan.recentRawStartSeq + relativeStartIndex;
-  if (nextRecentRawStartSeq <= input.currentPlan.recentRawStartSeq) {
-    return null;
-  }
-  return {
-    ...input.currentPlan,
-    recentRawStartSeq: nextRecentRawStartSeq,
-    truncationApplied: true,
-    truncationReason: "provider_reject",
-    truncationLevel: input.currentPlan.truncationLevel + 1
   };
 }
 const DEFAULT_REMINDER_THRESHOLD_CHARS$1 = 12e4;
@@ -1188,9 +1198,13 @@ class CompressionTaskManager {
   reminderThresholdChars;
   recentRawTargetChars;
   maxRetries;
+  modelInfo;
   constructor(options) {
-    this.reminderThresholdChars = options?.reminderThresholdChars ?? DEFAULT_REMINDER_THRESHOLD_CHARS$1;
-    this.recentRawTargetChars = options?.recentRawTargetChars ?? DEFAULT_RECENT_RAW_TARGET_CHARS$1;
+    this.modelInfo = options?.modelInfo ?? null;
+    const defaultReminderThreshold = this.modelInfo ? tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.75)) : DEFAULT_REMINDER_THRESHOLD_CHARS$1;
+    const defaultRecentRawTarget = this.modelInfo ? tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.5)) : DEFAULT_RECENT_RAW_TARGET_CHARS$1;
+    this.reminderThresholdChars = options?.reminderThresholdChars ?? defaultReminderThreshold;
+    this.recentRawTargetChars = options?.recentRawTargetChars ?? defaultRecentRawTarget;
     this.maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES$1;
   }
   getMemorySnapshot() {
@@ -1207,6 +1221,13 @@ class CompressionTaskManager {
   }
   getRecentRawStartIndex() {
     return this.recentRawStartIndex;
+  }
+  getModelInfo() {
+    return this.modelInfo;
+  }
+  getCapacityGuardCharLimit() {
+    if (!this.modelInfo) return this.recentRawTargetChars;
+    return tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.9));
   }
   getRecentRawMessages(visibleMessages) {
     const safeStart = Math.min(this.recentRawStartIndex, visibleMessages.length);
@@ -1666,7 +1687,9 @@ class DeliberationUnit {
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
     this.ledger = new ConversationLedger(options.messagePersistenceSink);
     this.projector = new ConversationProjector();
-    this.compressionManager = new CompressionTaskManager();
+    this.compressionManager = new CompressionTaskManager({
+      modelInfo: this.llmClient.getModelInfo()
+    });
     this.agentA = new AgentTurn("agent-a", this.llmClient);
     this.agentB = new AgentTurn("agent-b", this.llmClient);
     this.onSystemEvent = options.onSystemEvent ?? (() => {
@@ -2144,7 +2167,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         compressionReminderShown: reminderShown,
         compressionReminderChars: reminderChars,
         compressionReminderThresholdChars: reminderThresholdChars,
-        hardRecentRawCharLimit: this.compressionManager.getRecentRawTargetChars()
+        capacityGuardCharLimit: this.compressionManager.getCapacityGuardCharLimit()
       });
       const assembleCurrentTurn = (plan) => assembleTurnContext({
         unitId: this.unitId,
@@ -2161,6 +2184,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         memorySnapshot: this.compressionManager.getMemorySnapshot(),
         memorySnapshotRowid: persistedContextTextRefs.memorySnapshotRowid,
         budgetPlan: plan,
+        contextWindowTokens: this.compressionManager.getModelInfo()?.contextWindowTokens,
         effectiveTurn: this.turnCounter
       });
       let assembled = assembleCurrentTurn(budgetPlan);
@@ -2180,7 +2204,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
           this.emit({
             type: "warning",
             scope: this.scope,
-            message: `Context pressure required truncation before calling ${agentName} (reason: ${assembled.plan.truncationReason}, level: ${assembled.plan.truncationLevel}).`
+            message: `Context capacity guard triggered truncation before calling ${agentName} (level: ${assembled.plan.truncationLevel}). Estimated context is near model limits.`
           });
         }
         console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: calling LLM with ${assembled.llmContext.messages.length} messages, recentRawStartSeq=${assembled.plan.recentRawStartSeq}, visibleEndSeq=${assembled.plan.visibleEndSeq}, truncationLevel=${assembled.plan.truncationLevel}`);
@@ -2530,6 +2554,12 @@ class PiAiLlmClient {
     this.model = model;
   }
   model;
+  getModelInfo() {
+    return {
+      contextWindowTokens: this.model.contextWindow,
+      maxOutputTokens: this.model.maxTokens
+    };
+  }
   async complete(context, options) {
     const response = await complete(this.model, {
       systemPrompt: context.systemPrompt,
@@ -3450,7 +3480,7 @@ class SqliteSessionPersistence {
       compressionReminderChars: row.compression_reminder_chars,
       compressionReminderThresholdChars: row.compression_reminder_threshold_chars,
       truncationApplied: row.truncation_applied !== 0,
-      truncationReason: row.truncation_reason,
+      truncationReason: row.truncation_reason === "budget_precheck" ? "capacity_guard" : row.truncation_reason,
       truncationLevel: row.truncation_level,
       effectiveTurn: row.effective_turn
     };
@@ -3621,10 +3651,18 @@ function registerSessionIpc(sendToRenderer, fsWatcher) {
     }
   });
 }
+function normalizeTruncationReason(reason) {
+  if (reason === "budget_precheck") return "capacity_guard";
+  return reason;
+}
 function reconstructContext(deps, messageId) {
   const { persistence: persistence2, workspaceRoot: workspaceRoot2 } = deps;
-  const recipe = persistence2.getRecipeByOutputMessageId(messageId);
-  if (!recipe) return null;
+  const rawRecipe = persistence2.getRecipeByOutputMessageId(messageId);
+  if (!rawRecipe) return null;
+  const recipe = {
+    ...rawRecipe,
+    truncationReason: normalizeTruncationReason(rawRecipe.truncationReason)
+  };
   let workspaceKnowledge = null;
   if (recipe.agentMdRowid !== null) {
     const entry = persistence2.getContextTextHistoryByRowid(recipe.agentMdRowid);

@@ -5,6 +5,7 @@
 
 import type { AgentId, ChildCommitView, ConversationMessage, MemorySnapshot, PendingProposal, ProposalCall } from "./types.js";
 import type { LlmMessage } from "./ports.js";
+import { charsToTokens } from "./context/context-budget-controller.js";
 
 const DISPLAY_NAMES: Record<string, string> = {
   "agent-a": "Agent A",
@@ -190,13 +191,17 @@ export class ConversationProjector {
     };
   }
 
-  buildCompressionReminderOverlay(agentId: AgentId, estimatedChars: number, thresholdChars: number): LlmMessage {
+  buildCompressionReminderOverlay(agentId: AgentId, estimatedChars: number, thresholdChars: number, contextWindowTokens?: number): LlmMessage {
     const agentName = getDisplayName(agentId);
+    const estimatedTokens = charsToTokens(estimatedChars);
+    const pct = contextWindowTokens
+      ? ` (approximately ${Math.round(estimatedTokens / contextWindowTokens * 100)}% of model context capacity)`
+      : "";
     return {
       role: "user",
       content:
         `[Context Reminder]\n` +
-        `The recent raw context visible to ${agentName} is estimated at about ${estimatedChars} characters, above the reminder threshold of about ${thresholdChars} characters. ` +
+        `The recent raw context visible to ${agentName} is estimated at about ${estimatedTokens} tokens${pct}, above the compression reminder threshold. ` +
         `Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
       timestamp: Date.now(),
     };

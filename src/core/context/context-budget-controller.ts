@@ -1,6 +1,14 @@
-import type { ConversationMessage } from "../types.js";
+import type { ConversationMessage, ContextTruncationReason } from "../types.js";
 
-export type ContextTruncationReason = "none" | "budget_precheck" | "provider_reject";
+export const CHARS_PER_TOKEN = 3.5;
+
+export function tokensToChars(tokens: number): number {
+  return Math.ceil(tokens * CHARS_PER_TOKEN);
+}
+
+export function charsToTokens(chars: number): number {
+  return Math.floor(chars / CHARS_PER_TOKEN);
+}
 
 export interface TurnContextBudgetPlan {
   recentRawStartSeq: number;
@@ -22,7 +30,7 @@ export interface CreateTurnContextBudgetPlanInput {
   compressionReminderShown: boolean;
   compressionReminderChars: number | null;
   compressionReminderThresholdChars: number | null;
-  hardRecentRawCharLimit: number;
+  capacityGuardCharLimit: number;
 }
 
 export interface TightenTurnContextBudgetPlanInput {
@@ -88,9 +96,9 @@ export function createTurnContextBudgetPlan(input: CreateTurnContextBudgetPlanIn
   );
   const baseRecentRawMessages = input.visibleMessages.slice(baseRecentRawStartIndex);
   const estimatedRecentRawChars = estimateMessagesChars(baseRecentRawMessages);
-  const shouldTruncate = estimatedRecentRawChars > input.hardRecentRawCharLimit;
+  const shouldTruncate = estimatedRecentRawChars > input.capacityGuardCharLimit;
   const relativeStartIndex = shouldTruncate
-    ? findTailStartIndexWithinChars(baseRecentRawMessages, input.hardRecentRawCharLimit)
+    ? findTailStartIndexWithinChars(baseRecentRawMessages, input.capacityGuardCharLimit)
     : 0;
   const recentRawStartSeq = input.baseRecentRawStartSeq + relativeStartIndex;
 
@@ -104,7 +112,7 @@ export function createTurnContextBudgetPlan(input: CreateTurnContextBudgetPlanIn
     compressionReminderChars: input.compressionReminderChars,
     compressionReminderThresholdChars: input.compressionReminderThresholdChars,
     truncationApplied: shouldTruncate,
-    truncationReason: shouldTruncate ? "budget_precheck" : "none",
+    truncationReason: shouldTruncate ? "capacity_guard" : "none",
     truncationLevel: shouldTruncate ? 1 : 0,
   };
 }

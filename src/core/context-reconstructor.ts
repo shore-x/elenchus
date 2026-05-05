@@ -8,9 +8,14 @@
 import { ConversationProjector } from "./conversation-projector.js";
 import { buildSystemPrompt, readRootAgentMd } from "./prompts.js";
 import { getBuiltInToolList } from "./tools.js";
-import type { ContextRecipeData } from "./types.js";
+import type { ContextRecipeData, ContextTruncationReason } from "./types.js";
 import type { LlmMessage } from "./ports.js";
 import type { ContextPersistenceSink } from "./unit/deliberation-unit.js";
+
+function normalizeTruncationReason(reason: string): ContextTruncationReason {
+  if (reason === "budget_precheck") return "capacity_guard";
+  return reason as ContextTruncationReason;
+}
 
 export interface ReconstructedContext {
   systemPrompt: string;
@@ -35,8 +40,12 @@ export function reconstructContext(
   const { persistence, workspaceRoot } = deps;
 
   // 1. Look up recipe by output_message_id
-  const recipe = persistence.getRecipeByOutputMessageId(messageId);
-  if (!recipe) return null;
+  const rawRecipe = persistence.getRecipeByOutputMessageId(messageId);
+  if (!rawRecipe) return null;
+  const recipe: ContextRecipeData = {
+    ...rawRecipe,
+    truncationReason: normalizeTruncationReason(rawRecipe.truncationReason),
+  };
 
   // 2. Reconstruct system prompt
   let workspaceKnowledge: string | null = null;

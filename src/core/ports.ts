@@ -56,8 +56,14 @@ export interface LlmResponse extends LlmAssistantMessage {
   errorMessage?: string;
 }
 
+export interface LlmModelInfo {
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+}
+
 export interface LlmClient {
   complete(context: LlmContext, options: { maxTokens: number }): Promise<LlmResponse>;
+  getModelInfo(): LlmModelInfo;
 }
 
 export interface ToolExecutionResult {

@@ -47,6 +47,7 @@ export interface AssembleTurnContextInput {
   memorySnapshot: MemorySnapshot | null;
   memorySnapshotRowid: number | null;
   budgetPlan: TurnContextBudgetPlan;
+  contextWindowTokens?: number;
   effectiveTurn: number;
 }
 
@@ -104,6 +105,7 @@ export function assembleTurnContext(input: AssembleTurnContextInput): AssembledT
       input.agentId,
       input.budgetPlan.compressionReminderChars,
       input.budgetPlan.compressionReminderThresholdChars,
+      input.contextWindowTokens,
     ));
   }
 

@@ -2,7 +2,7 @@
 // Bridges the abstract LlmClient port to the concrete pi-ai SDK.
 
 import { complete, getModel, type Context, type Model, type Tool } from "@mariozechner/pi-ai";
-import type { LlmClient, LlmContext, LlmResponse } from "../../core/ports.js";
+import type { LlmClient, LlmContext, LlmModelInfo, LlmResponse } from "../../core/ports.js";
 
 export interface PiAiModelConfig {
   provider: string;
@@ -12,6 +12,13 @@ export interface PiAiModelConfig {
 
 export class PiAiLlmClient implements LlmClient {
   constructor(private readonly model: Model<any>) {}
+
+  getModelInfo(): LlmModelInfo {
+    return {
+      contextWindowTokens: this.model.contextWindow,
+      maxOutputTokens: this.model.maxTokens,
+    };
+  }
 
   async complete(context: LlmContext, options: { maxTokens: number }): Promise<LlmResponse> {
     const response = await complete(this.model, {

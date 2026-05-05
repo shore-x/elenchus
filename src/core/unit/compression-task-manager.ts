@@ -6,6 +6,8 @@
 // against the live ledger state at completion time, not the frozen snapshot from task start.
 
 import type { ActiveCompressionTaskSnapshot, CompressionManagerSnapshot, ConversationMessage, MemorySnapshot } from "../types.js";
+import type { LlmModelInfo } from "../ports.js";
+import { tokensToChars } from "../context/context-budget-controller.js";
 
 const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
@@ -107,14 +109,23 @@ export class CompressionTaskManager {
   private reminderThresholdChars: number;
   private recentRawTargetChars: number;
   private maxRetries: number;
+  private modelInfo: LlmModelInfo | null;
 
   constructor(options?: {
+    modelInfo?: LlmModelInfo;
     reminderThresholdChars?: number;
     recentRawTargetChars?: number;
     maxRetries?: number;
   }) {
-    this.reminderThresholdChars = options?.reminderThresholdChars ?? DEFAULT_REMINDER_THRESHOLD_CHARS;
-    this.recentRawTargetChars = options?.recentRawTargetChars ?? DEFAULT_RECENT_RAW_TARGET_CHARS;
+    this.modelInfo = options?.modelInfo ?? null;
+    const defaultReminderThreshold = this.modelInfo
+      ? tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.75))
+      : DEFAULT_REMINDER_THRESHOLD_CHARS;
+    const defaultRecentRawTarget = this.modelInfo
+      ? tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.5))
+      : DEFAULT_RECENT_RAW_TARGET_CHARS;
+    this.reminderThresholdChars = options?.reminderThresholdChars ?? defaultReminderThreshold;
+    this.recentRawTargetChars = options?.recentRawTargetChars ?? defaultRecentRawTarget;
     this.maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
   }
 
@@ -136,6 +147,15 @@ export class CompressionTaskManager {
 
   getRecentRawStartIndex(): number {
     return this.recentRawStartIndex;
+  }
+
+  getModelInfo(): LlmModelInfo | null {
+    return this.modelInfo;
+  }
+
+  getCapacityGuardCharLimit(): number {
+    if (!this.modelInfo) return this.recentRawTargetChars;
+    return tokensToChars(Math.floor(this.modelInfo.contextWindowTokens * 0.9));
   }
 
   getRecentRawMessages(visibleMessages: readonly ConversationMessage[]): readonly ConversationMessage[] {

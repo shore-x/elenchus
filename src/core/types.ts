@@ -261,7 +261,7 @@ export type OnSystemEvent = (event: SystemEvent) => void;
 // Tool level configuration — three fixed layers (§4.3)
 export type ToolLevel = "L0" | "L1" | "L2";
 
-export type ContextTruncationReason = "none" | "budget_precheck" | "provider_reject";
+export type ContextTruncationReason = "none" | "capacity_guard" | "provider_reject";
 
 // Context recipe — captures the immutable facts needed to reconstruct one LLM call's input.
 // References ledger_messages by seq range and context_text_history by rowid.

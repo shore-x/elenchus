@@ -98,7 +98,9 @@ export class DeliberationUnit {
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
     this.ledger = new ConversationLedger(options.messagePersistenceSink);
     this.projector = new ConversationProjector();
-    this.compressionManager = new CompressionTaskManager();
+    this.compressionManager = new CompressionTaskManager({
+      modelInfo: this.llmClient.getModelInfo(),
+    });
     this.agentA = new AgentTurn("agent-a", this.llmClient);
     this.agentB = new AgentTurn("agent-b", this.llmClient);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
@@ -675,7 +677,7 @@ export class DeliberationUnit {
         compressionReminderShown: reminderShown,
         compressionReminderChars: reminderChars,
         compressionReminderThresholdChars: reminderThresholdChars,
-        hardRecentRawCharLimit: this.compressionManager.getRecentRawTargetChars(),
+        capacityGuardCharLimit: this.compressionManager.getCapacityGuardCharLimit(),
       });
 
       const assembleCurrentTurn = (plan: TurnContextBudgetPlan) => assembleTurnContext({
@@ -694,6 +696,7 @@ export class DeliberationUnit {
         memorySnapshot: this.compressionManager.getMemorySnapshot(),
         memorySnapshotRowid: persistedContextTextRefs.memorySnapshotRowid,
         budgetPlan: plan,
+        contextWindowTokens: this.compressionManager.getModelInfo()?.contextWindowTokens,
         effectiveTurn: this.turnCounter,
       });
 
@@ -717,7 +720,7 @@ export class DeliberationUnit {
           this.emit({
             type: "warning",
             scope: this.scope,
-            message: `Context pressure required truncation before calling ${agentName} (reason: ${assembled.plan.truncationReason}, level: ${assembled.plan.truncationLevel}).`,
+            message: `Context capacity guard triggered truncation before calling ${agentName} (level: ${assembled.plan.truncationLevel}). Estimated context is near model limits.`,
           });
         }
 

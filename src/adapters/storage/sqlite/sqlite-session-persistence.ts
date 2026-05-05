@@ -1009,7 +1009,7 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       compressionReminderChars: row.compression_reminder_chars,
       compressionReminderThresholdChars: row.compression_reminder_threshold_chars,
       truncationApplied: row.truncation_applied !== 0,
-      truncationReason: row.truncation_reason as ContextTruncationReason,
+      truncationReason: (row.truncation_reason === "budget_precheck" ? "capacity_guard" : row.truncation_reason) as ContextTruncationReason,
       truncationLevel: row.truncation_level,
       effectiveTurn: row.effective_turn,
     };
