@@ -58,6 +58,7 @@ export default function App() {
   const [tabContents, setTabContents] = useState<Map<string, TabContent>>(new Map());
   const [scrollToLine, setScrollToLine] = useState<number | undefined>(undefined);
   const [fileRefs, setFileRefs] = useState<FileReference[]>([]);
+  const [notifications, setNotifications] = useState<Array<{ id: number; kind: "error" | "warning"; message: string }>>([]);
   const [workspaceConfig, setWorkspaceConfig] = useState<{ provider: string; modelName: string; baseUrl?: string; projectRoot: string } | null>(null);
 
   const ipc = useIpc();
@@ -150,6 +151,16 @@ export default function App() {
       if (selectedUnitId) {
         ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
       }
+    }
+
+    if (event.type === "error" || event.type === "warning") {
+      const kind = event.type;
+      const message = event.message;
+      const notifId = Date.now() + Math.random();
+      setNotifications((prev) => [...prev, { id: notifId, kind, message }]);
+      setTimeout(() => {
+        setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+      }, kind === "error" ? 15000 : 8000);
     }
 
     if (event.type === "unit-tree-change" || event.type === "child-spawned" || event.type === "state-transition") {
@@ -361,6 +372,8 @@ export default function App() {
         onViewContext={handleViewContext}
         refs={fileRefs}
         onRemoveRef={handleRemoveRef}
+        notifications={notifications}
+        onDismissNotification={(id: number) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
       />
 
       {/* Right Panel */}

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Context Compression"
-date: 2026-04-13
-version: 3.1
+date: 2026-05-05
+version: 3.2
 ---
 
 # Context Compression
@@ -124,6 +124,21 @@ The reminder must remain:
 
 The reminder therefore behaves more like a derived state indicator than a one-off event.
 
+## 6.1 Budget-Driven Recent-Raw Truncation
+
+Compression is not the only projection-layer response to context pressure. A turn may need a lighter-weight fallback before or after a provider rejects an oversized request.
+
+The framework therefore allows deterministic **recent-raw truncation** as a projection-layer budget control:
+
+- it may tighten the `Recent Raw Window` boundary for the current turn
+- it must never mutate or rewrite `ConversationLedger`
+- it must preserve the higher-priority context layers first: Memory Snapshot, newly visible messages, and current-turn control overlays
+- it should trim the **oldest** portion of recent raw context first
+
+This yields another boundary rule:
+
+> **补充约束**：budget-driven truncation 只允许收紧当前 turn 的 `Recent Raw Window` 起点，不得改写 ledger 历史，也不得把 newly visible 区域误判为可优先裁掉的旧上下文。
+
 ## 7. `compressContext` Tool Semantics
 
 The framework should not make the dual-agent unit write summaries directly as proposals. The proposal should stay semantically narrow.
@@ -214,5 +229,6 @@ At the current stage:
 
 ## Change Log
 
+- **v3.2 (2026-05-05)**: Added budget-driven recent-raw truncation as a projection-layer fallback for token pressure. Clarified that truncation only tightens the current turn's recent-raw boundary and must preserve ledger truth and higher-priority context layers.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed compression view and task-management semantics while the overview remains the canonical entry point and index.
 - **v3.1 (2026-04-13)**: Added a future-boundary section clarifying that broader knowledge anti-entropy work is deferred beyond the current conversation-context compression scope.

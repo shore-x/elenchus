@@ -130,6 +130,10 @@ export class CompressionTaskManager {
     return this.reminderThresholdChars;
   }
 
+  getRecentRawTargetChars(): number {
+    return this.recentRawTargetChars;
+  }
+
   getRecentRawStartIndex(): number {
     return this.recentRawStartIndex;
   }

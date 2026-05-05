@@ -1,6 +1,6 @@
 # Context Observability & Reconstruction Design
 
-> **Status**: Draft — core model and decisions established; some decision points remain open.
+> **Status**: Settled for the current runtime generation — recipe-based observability remains the primary model.
 > **Related**: context-compression.md, conversation-model.md, state-machine-and-tools.md
 
 ---
@@ -8,14 +8,14 @@
 ## 1. Design Principles
 
 - **Immutability**: All records in `ledger_messages` and `context_text_history` are append-only. Reconstruction reads them as facts, never mutates them.
-- **Recipe-based reconstruction**: A recipe directly references immutable fact records by ID or seq boundary. Reconstruction is independent of any upper-layer concept (turn, FSM state, etc.).
+- **Recipe-based reconstruction**: A recipe directly references immutable fact records by ID or seq boundary. The recipe must describe the **final actual projection plan** used for the successful request, not a pre-truncation default plan.
 - **Dual-table model**: Context is reconstructed from exactly two append-only fact tables:
   - **`ledger_messages`** — continuous event stream; referenced by **seq range** (start → end)
   - **`context_text_history`** — discrete snapshots; referenced by **rowid** (individual records)
   - Both tables allow multiple versions of the same fact; reconstruction resolves to the latest version within the referenced scope.
 - **Content deduplication**: Identical text content under the same `(unit_id, category)` is stored only once, keyed by content hash.
 - **Single source of truth**: `context_text_history` replaces `unit_memory_state` as the sole storage for memory snapshots, AGENT.md content, and future text categories. No dual-write.
-- **Debug fields are optional metadata**: Fields like `effective_turn` exist for human debugging only and must never participate in reconstruction logic.
+- **Debug fields are optional metadata**: Fields like `effective_turn` exist for human debugging only and must never participate in reconstruction logic. In particular, `newly_visible_seq` is the real reconstruction boundary; `effective_turn` is not.
 
 ---
 
@@ -39,7 +39,7 @@ An agent's LLM input (`LlmContext`) consists of three parts: **system prompt**, 
 
 ### 2.2 Messages
 
-`buildTurnMessages(agentId, visibleMessages, newlyVisibleMessages, pendingProposal, childCommitViews)` assembles:
+`ContextAssembler` assembles the final turn-scoped messages from a visible snapshot plus a budget-aligned projection plan:
 
 | Component | Source | Write timing | Fact table | Reference mode |
 |---|---|---|---|---|
@@ -47,7 +47,7 @@ An agent's LLM input (`LlmContext`) consists of three parts: **system prompt**, 
 | Old recent-raw messages | `ConversationLedger` visible messages | Various (see §2.4) | `ledger_messages` | seq range |
 | Newly-visible boundary overlay | Derived from `newlyVisibleMessages` | Per-turn, not persisted | — | Re-derived from `newly_visible_seq` in recipe |
 | New recent-raw messages | `ConversationLedger` visible messages | Various (see §2.4) | `ledger_messages` | seq range |
-| Compression reminder overlay | Derived from `shouldShowReminder()` | Per-turn, not persisted | — | Re-derived from recipe params + ledger state |
+| Compression reminder overlay | Derived from `shouldShowReminder()` | Per-turn, not persisted | — | Re-derived from recipe params |
 | Child commit view | Child units' `committedSteps` | Per-turn, **written to ledger** | `ledger_messages` | seq range |
 | Proposal notification | Derived from `PendingProposal` | Per-turn, not persisted | — | Re-derived from `has_pending_from_other` + ledger |
 
@@ -93,29 +93,31 @@ All are append-only. `proposal_message` and `vote_message` support version incre
 
 The projection pipeline transforms raw persisted facts into an `LlmContext`. This is the same pipeline used at runtime and during reconstruction — the design goal is that reconstruction simply replays the pipeline with recipe-scoped inputs.
 
-### 3.1 Runtime Projection (current)
+### 3.1 Runtime Projection
 
 ```
 DeliberationUnit.runLoop()
+  ├─ buildChildCommitViews()
+  ├─ append child_commit_view_message (visible in current turn)
   ├─ ledger.readVisibleSnapshotForAgent(agentId, turnCounter)
   │    → visibleMessages[], newlyVisibleMessages[]
-  ├─ compressionManager.getMemorySnapshot() → snapshot | null
-  ├─ compressionManager.getRecentRawMessages(visible) → recentRaw[]
-  ├─ buildChildCommitViews() → childCommitViews[]
+  ├─ persistContextTextRefs()
+  │    ├─ memory_snapshot → context_text_history rowid
+  │    └─ agent_md → context_text_history rowid
   ├─ getPendingProposal() → pendingProposal | null
+  ├─ createTurnContextBudgetPlan()
+  │    └─ may tighten recent_raw_start_seq before first call
   │
-  ├─ buildTurnMessages(agentId, visible, newlyVisible, pending, childViews)
-  │    ├─ IF snapshot: projector.buildMemorySnapshotMessage(snapshot)
+  ├─ assembleTurnContext(plan)
+  │    ├─ buildSystemPrompt(agentId, level, workspaceRoot, persisted AGENT.md content)
   │    ├─ projector.projectVisibleMessages(oldRecentRaw)
-  │    ├─ IF newlyVisible: projector.buildNewlyVisibleBoundaryOverlay() + projectVisibleMessages(newRecentRaw)
-  │    ├─ IF shouldShowReminder: projector.buildCompressionReminderOverlay()
-  │    ├─ IF childViews: projector.buildChildCommitViewMessage()
+  │    ├─ IF newlyVisible: boundary overlay + projectVisibleMessages(newRecentRaw)
+  │    ├─ IF reminderShown: projector.buildCompressionReminderOverlay()
   │    └─ IF pendingFromOther: projector.buildProposalNotification()
   │
-  ├─ agentTurn.execute(messages, hasPending, hasChildren, canSpawn)
-  │    ├─ readRootAgentMd(workspaceRoot) → workspaceKnowledge
-  │    ├─ buildSystemPrompt(agentId, level, workspaceRoot, workspaceKnowledge)
-  │    └─ getBuiltInToolList(hasPending, level, hasChildren, canSpawn)
+  ├─ createRecipeFromPlan(finalPlan)
+  ├─ agentTurn.execute(preparedContext, preparedTools)
+  │    └─ on provider token reject: tightenTurnContextBudgetPlan() and re-assemble
   └─ LLM call → TurnResult
 ```
 
@@ -134,10 +136,10 @@ ContextBuilder.reconstruct(recipeId)
   │
   ├─ Messages:
   │    ├─ IF memory_snapshot_rowid: projector.buildMemorySnapshotMessage(snapshot from row)
-  │    ├─ Split ledger messages at newly_visible_seq
+  │    ├─ Split ledger messages at newly_visible_seq using persisted seq values
   │    ├─ projector.projectVisibleMessages(old portion)
   │    ├─ IF newly_visible_seq: boundary overlay + projector.projectVisibleMessages(new portion)
-  │    ├─ Re-derive compression reminder from recipe params + ledger state
+  │    ├─ Re-derive compression reminder directly from recipe params
   │    └─ (child commit view and proposal notification are already in ledger messages)
   │
   └─ Tool list: getBuiltInToolList(from recipe params)
@@ -167,27 +169,23 @@ AGENT.md content is read every turn but only written to `context_text_history` w
 
 ---
 
-## 5. Decision Points (Open)
+## 5. Settled Decisions
 
 ### 5.1 Recipe creation timing
 
-Recipe is created when `buildTurnMessages` is called (before LLM invocation). If the LLM call fails, the recipe exists but `output_message_id` is null. Is this acceptable, or should recipe creation be deferred until after a successful response?
+Recipe creation happens only after the runtime has finished budget planning for the current attempt. If budget precheck tightens the recent-raw boundary, the recipe records the tightened boundary rather than the default one.
 
-### 5.2 `output_message_id` update atomicity
+### 5.2 Provider-reject recovery
 
-The recipe's `output_message_id` is set after the LLM returns — a two-step write (INSERT recipe, then UPDATE output_message_id). Should this be wrapped in a transaction with the message append, or is eventual consistency acceptable?
+If the provider rejects a request for context-size reasons, the runtime may tighten the recent-raw boundary again and create a new recipe for the rebuilt attempt. Recipes that are never linked to an `output_message_id` remain as failed-attempt observability artifacts.
 
-### 5.3 `unit_compression_state` relationship
+### 5.3 Reconstruction boundary truth
 
-`unit_compression_state` stores runtime compression task state (active task, retry counts, thresholds). Its text-related fields are now in `context_text_history`. Should `unit_compression_state` continue to exist independently, or should its non-text fields be folded into another table?
+`newly_visible_seq` is the only authoritative split point between old and newly visible messages in reconstruction. `effective_turn` is debug metadata only.
 
 ### 5.4 System prompt reconstruction fidelity
 
-The system prompt's static parts (guideline, layer orientation, cognitive style) are derived from code. If the codebase changes between recording and reconstruction, the reconstructed system prompt will differ from the original. Should the complete system prompt text also be stored in `context_text_history` for full fidelity, or is re-derivation from code acceptable?
-
-### 5.5 Compression task LLM context
-
-Compression tasks make a separate LLM call with their own context (compression system prompt + source messages + existing snapshot). Should this also have a recipe for observability, or is it out of scope for the initial design?
+The complete system prompt text is not persisted. The framework persists the dynamic AGENT.md text and re-derives the static prompt layers from code plus recipe parameters. This is an accepted fidelity boundary for the current model.
 
 ---
 
@@ -248,6 +246,14 @@ CREATE TABLE context_recipe (
   has_children INTEGER NOT NULL DEFAULT 0,
   can_spawn_child INTEGER NOT NULL DEFAULT 0,
 
+  compression_reminder_shown INTEGER NOT NULL DEFAULT 0,
+  compression_reminder_chars INTEGER,
+  compression_reminder_threshold_chars INTEGER,
+
+  truncation_applied INTEGER NOT NULL DEFAULT 0,
+  truncation_reason TEXT NOT NULL DEFAULT 'none',
+  truncation_level INTEGER NOT NULL DEFAULT 0,
+
   -- Output correlation (set after LLM response)
   output_message_id TEXT,              -- null = call failed
 
@@ -275,4 +281,4 @@ Stores runtime compression task state. Text-related fields now in `context_text_
 
 ### 6.6 Schema version
 
-`CURRENT_SCHEMA_VERSION` → `11` (from `10`).
+`CURRENT_SCHEMA_VERSION` → `12` (from `11`).

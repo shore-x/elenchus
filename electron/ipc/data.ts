@@ -59,6 +59,7 @@ export function registerDataIpc(): void {
   ipcMain.handle("send-message", async (_event, content: string) => {
     const s = getSession();
     if (!s) return { ok: false, error: "No active session" };
+    console.log(`[IPC] send-message: "${content.slice(0, 100)}", unitState=${s.getState()}`);
     s.sendUserMessage(content);
     return { ok: true };
   });

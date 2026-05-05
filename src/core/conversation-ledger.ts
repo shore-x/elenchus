@@ -269,6 +269,7 @@ export class ConversationLedger {
     for (const message of this.messages) {
       if (message.kind === "proposal_message" && message.status === "pending") {
         message.status = "superseded";
+        this.pendingStatusUpdates.add(message.id);
         count++;
         if (!this.suppressPersistence) {
           this.sink.onMessageUpdated(message);
@@ -298,17 +299,22 @@ export class ConversationLedger {
       this.totalMessages = snapshot.totalMessages;
       this.messages = snapshot.messages.map((message) => ({ ...message }));
       this.cursors = { ...snapshot.cursors };
+      this.pendingStatusUpdates.clear();
     } finally {
       this.suppressPersistence = false;
     }
   }
 
+  private pendingStatusUpdates: Set<string> = new Set();
+
   flushPendingUpdates(): void {
-    for (const message of this.messages) {
-      if (message.kind === "proposal_message" && message.status !== "pending") {
+    for (const id of this.pendingStatusUpdates) {
+      const message = this.messages.find((m) => m.id === id);
+      if (message && message.kind === "proposal_message") {
         this.sink.onMessageUpdated(message);
       }
     }
+    this.pendingStatusUpdates.clear();
   }
 
   toPendingProposal(proposalId: string): PendingProposal | null {
@@ -337,6 +343,7 @@ export class ConversationLedger {
     }
 
     proposal.status = status;
+    this.pendingStatusUpdates.add(proposalId);
     if (!this.suppressPersistence) {
       this.sink.onMessageUpdated(proposal);
     }

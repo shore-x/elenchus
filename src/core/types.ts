@@ -261,6 +261,8 @@ export type OnSystemEvent = (event: SystemEvent) => void;
 // Tool level configuration — three fixed layers (§4.3)
 export type ToolLevel = "L0" | "L1" | "L2";
 
+export type ContextTruncationReason = "none" | "budget_precheck" | "provider_reject";
+
 // Context recipe — captures the immutable facts needed to reconstruct one LLM call's input.
 // References ledger_messages by seq range and context_text_history by rowid.
 export interface ContextRecipeData {
@@ -275,7 +277,18 @@ export interface ContextRecipeData {
   hasPendingFromOther: boolean;
   hasChildren: boolean;
   canSpawnChild: boolean;
+  compressionReminderShown: boolean;
+  compressionReminderChars: number | null;
+  compressionReminderThresholdChars: number | null;
+  truncationApplied: boolean;
+  truncationReason: ContextTruncationReason;
+  truncationLevel: number;
   effectiveTurn: number;
+}
+
+export interface SequencedConversationMessage {
+  seq: number;
+  message: ConversationMessage;
 }
 
 export interface ContextTextHistoryEntry {

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Conversation Model"
-date: 2026-04-12
-version: 3.3
+date: 2026-05-05
+version: 3.5
 ---
 
 # Conversation Model
@@ -18,7 +18,7 @@ This document is the detailed design for the framework's conversation model. It 
 - Message payload vs. message envelope
 - Unit-level structured history in `ConversationLedger`
 - Turn visibility boundaries
-- `ConversationProjector` as the agent-visible view layer
+- `ConversationProjector` and `ContextAssembler` as the agent-visible view layer
 - Public fact broadcasts vs. private directive overlays
 - Direction naming (`incoming` / `upward`)
 
@@ -165,10 +165,14 @@ Agents do not consume raw ledger records directly. They consume a turn-scoped pr
 
 `ConversationProjector` is responsible for:
 
-- computing the complete visible snapshot for the current turn
 - rendering structured facts into a shared third-person conversation view
-- injecting minimal turn-local overlays when necessary
-- remaining semantically compatible with future compression, while not doing history folding yet
+- providing reusable overlay renderers and fact-to-message projection primitives
+
+`ContextAssembler` is responsible for:
+
+- taking the turn-start visible snapshot plus runtime state (memory snapshot, pending proposal, recipe-aligned recent-raw boundary)
+- assembling the final `LlmContext.messages` for the current turn
+- ensuring runtime projection and later reconstruction follow the same turn-scoped projection rules
 
 A key design boundary is that `AgentTurn` should not keep a persistent cross-turn message cache. Each execution should derive the visible context from the ledger snapshot for that turn.
 
@@ -191,6 +195,7 @@ Typical examples include:
 - `vote_message`
 - `tool_result_message`
 - `child_report_message`
+- `child_commit_view_message`
 - some runtime-generated broadcasts
 
 ### 9.2 Private Directive Overlay
@@ -238,6 +243,7 @@ should remain third-person and explicitly name `Agent A` or `Agent B` when relev
 
 ## Change Log
 
+- **v3.5 (2026-05-05)**: Clarified that `ConversationProjector` now serves as a reusable rendering primitive while final turn-scoped context assembly belongs to `ContextAssembler`. Documented `child_commit_view_message` as a current-turn-visible public fact that is written before the turn snapshot is read, so recipe boundaries and runtime-visible context stay aligned.
 - **v3.4 (2026-04-19)**: Added §1.1 Message Channel Conversational Style (P29). P29 refines P7 in the writing-style dimension and derives from P27: message payloads should use natural conversational language rather than document-style Markdown; structured output belongs in .md files via the knowledge channel.
 - **v3.3 (2026-04-12)**: Added the implementation boundary for SQLite-backed persistence. The durable store remains authoritative, but unit-graph integrity is maintained by the application-layer persistence logic rather than DB-level foreign keys.
 - **v3.2 (2026-04-12)**: Updated the persistence note to reflect the SQLite-backed durable store in `.elenchus/state.db`. The ledger remains the durable fact authority, while cold-start reconstructs only the next working context rather than eagerly loading the full durable history into runtime memory.

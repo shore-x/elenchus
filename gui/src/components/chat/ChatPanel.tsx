@@ -17,6 +17,8 @@ interface ChatPanelProps {
   onViewContext: (messageId: string) => void;
   refs: FileReference[];
   onRemoveRef: (index: number) => void;
+  notifications: Array<{ id: number; kind: "error" | "warning"; message: string }>;
+  onDismissNotification: (id: number) => void;
 }
 
 function agentTagClass(agent: AgentId): string {
@@ -206,6 +208,19 @@ function MessageBubble({ message, onOpenFile }: { message: ConversationMessage; 
 
 function AgentTurnGroupBubble({ group, onOpenFile, onViewContext }: { group: AgentTurnGroup; onOpenFile: (path: string, name: string) => void; onViewContext: (messageId: string) => void }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Dismiss context menu on click-outside or Escape
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onClickOutside = () => setContextMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setContextMenu(null); };
+    document.addEventListener("click", onClickOutside);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClickOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenu]);
   const hasReply = !!group.reply;
   const hasAction = !!group.action;
   // Degraded: only reply → render as standalone agent_message card
@@ -321,7 +336,7 @@ function formatRefForMessage(ref: FileReference): string {
   return `@${ref.path}:${formatLineRange(ref.startLine, ref.endLine)}`;
 }
 
-function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef }: ChatPanelProps) {
+function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef, notifications, onDismissNotification }: ChatPanelProps) {
   useRenderTime("ChatPanel");
   const [input, setInput] = useState("");
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>("cmd-enter");
@@ -401,6 +416,30 @@ function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelect
           </span>
         )}
       </div>
+
+      {/* Notifications */}
+      {notifications.length > 0 && (
+        <div className="flex flex-col gap-1 px-3 py-2">
+          {notifications.map((n) => (
+            <div
+              key={n.id}
+              className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${
+                n.kind === "error"
+                  ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+              }`}
+            >
+              <span className="flex-1 min-w-0 break-words">{n.message}</span>
+              <button
+                className="shrink-0 opacity-60 hover:opacity-100 transition-opacity"
+                onClick={() => onDismissNotification(n.id)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 bg-[var(--color-canvas)]">

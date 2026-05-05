@@ -6,7 +6,7 @@
 // Context observability: context_text_history stores immutable text snapshots (dedup by hash),
 // context_recipe records the exact facts needed to reconstruct any LLM call's input.
 
-import type { ContextRecipeData, ConversationMessage, DeliberationUnitSnapshot } from "../core/types.js";
+import type { ContextRecipeData, ConversationMessage, DeliberationUnitSnapshot, SequencedConversationMessage } from "../core/types.js";
 
 export interface SessionPersistenceAdapter {
   loadSnapshot(): DeliberationUnitSnapshot | null;
@@ -26,5 +26,5 @@ export interface SessionPersistenceAdapter {
   // Context observability — reconstruction queries
   getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
   getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
-  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[];
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[];
 }

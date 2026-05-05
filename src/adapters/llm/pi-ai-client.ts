@@ -20,7 +20,11 @@ export class PiAiLlmClient implements LlmClient {
       tools: context.tools as Tool[],
     }, options);
 
-    return response as unknown as LlmResponse;
+    const result = response as unknown as LlmResponse;
+    if ((response as any).errorMessage) {
+      result.errorMessage = (response as any).errorMessage;
+    }
+    return result;
   }
 }
 

@@ -15,10 +15,12 @@ import type {
   CommittedStep,
   CompressionManagerSnapshot,
   ContextRecipeData,
+  ContextTruncationReason,
   ConversationMessage,
   DeliberationUnitSnapshot,
   MemorySnapshot,
   PersistedChildSnapshot,
+  SequencedConversationMessage,
   ToolLevel,
 } from "../../../core/types.js";
 
@@ -27,7 +29,7 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 120_000;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24_000;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS: AgentId[] = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "11";
+const CURRENT_SCHEMA_VERSION = "12";
 
 interface SqliteSessionPersistenceOptions {
   workspaceRoot: string;
@@ -62,6 +64,7 @@ interface CursorRow {
 }
 
 interface MessageRow {
+  seq: number;
   body: string;
 }
 
@@ -122,6 +125,12 @@ interface RecipeRow {
   has_pending_from_other: number;
   has_children: number;
   can_spawn_child: number;
+  compression_reminder_shown: number;
+  compression_reminder_chars: number | null;
+  compression_reminder_threshold_chars: number | null;
+  truncation_applied: number;
+  truncation_reason: string;
+  truncation_level: number;
   effective_turn: number;
 }
 
@@ -485,6 +494,12 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         has_pending_from_other INTEGER NOT NULL DEFAULT 0,
         has_children INTEGER NOT NULL DEFAULT 0,
         can_spawn_child INTEGER NOT NULL DEFAULT 0,
+        compression_reminder_shown INTEGER NOT NULL DEFAULT 0,
+        compression_reminder_chars INTEGER,
+        compression_reminder_threshold_chars INTEGER,
+        truncation_applied INTEGER NOT NULL DEFAULT 0,
+        truncation_reason TEXT NOT NULL DEFAULT 'none',
+        truncation_level INTEGER NOT NULL DEFAULT 0,
         output_message_id TEXT,
         effective_turn INTEGER,
         created_at INTEGER NOT NULL
@@ -934,8 +949,10 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
         unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
         memory_snapshot_rowid, agent_md_rowid, level,
         has_pending_from_other, has_children, can_spawn_child,
+        compression_reminder_shown, compression_reminder_chars, compression_reminder_threshold_chars,
+        truncation_applied, truncation_reason, truncation_level,
         effective_turn, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       recipe.unitId,
       recipe.agentId,
@@ -948,6 +965,12 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       recipe.hasPendingFromOther ? 1 : 0,
       recipe.hasChildren ? 1 : 0,
       recipe.canSpawnChild ? 1 : 0,
+      recipe.compressionReminderShown ? 1 : 0,
+      recipe.compressionReminderChars,
+      recipe.compressionReminderThresholdChars,
+      recipe.truncationApplied ? 1 : 0,
+      recipe.truncationReason,
+      recipe.truncationLevel,
       recipe.effectiveTurn,
       Date.now(),
     );
@@ -964,7 +987,9 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     const row = this.db.prepare(
       `SELECT recipe_id, unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
               memory_snapshot_rowid, agent_md_rowid, level,
-              has_pending_from_other, has_children, can_spawn_child, effective_turn
+              has_pending_from_other, has_children, can_spawn_child,
+              compression_reminder_shown, compression_reminder_chars, compression_reminder_threshold_chars,
+              truncation_applied, truncation_reason, truncation_level, effective_turn
        FROM context_recipe WHERE output_message_id = ? LIMIT 1`,
     ).get(messageId) as RecipeRow | undefined;
     if (!row) return null;
@@ -980,6 +1005,12 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       hasPendingFromOther: row.has_pending_from_other !== 0,
       hasChildren: row.has_children !== 0,
       canSpawnChild: row.can_spawn_child !== 0,
+      compressionReminderShown: row.compression_reminder_shown !== 0,
+      compressionReminderChars: row.compression_reminder_chars,
+      compressionReminderThresholdChars: row.compression_reminder_threshold_chars,
+      truncationApplied: row.truncation_applied !== 0,
+      truncationReason: row.truncation_reason as ContextTruncationReason,
+      truncationLevel: row.truncation_level,
       effectiveTurn: row.effective_turn,
     };
   }
@@ -992,9 +1023,9 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     return { content: row.content, metadata: row.metadata };
   }
 
-  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[] {
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[] {
     const rows = this.db.prepare(
-      `SELECT body FROM (
+      `SELECT seq, body FROM (
         SELECT body, seq, message_id, version,
                ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
         FROM ledger_messages
@@ -1002,6 +1033,9 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       ) WHERE rn = 1
       ORDER BY seq ASC`,
     ).all(unitId, startSeq, endSeq) as MessageRow[];
-    return rows.map((row) => parseJson<ConversationMessage>(row.body));
+    return rows.map((row) => ({
+      seq: row.seq,
+      message: parseJson<ConversationMessage>(row.body),
+    }));
   }
 }

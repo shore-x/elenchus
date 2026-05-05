@@ -4,10 +4,9 @@
 // The full agent-visible context is projected per turn from ConversationLedger upstream.
 // Tool list is built per-turn based on layer (§4.3) and state (pending proposal, children).
 
-import { buildSystemPrompt, readRootAgentMd } from "../prompts.js";
-import type { LlmContext, LlmMessage, LlmToolDefinition, LlmClient } from "../ports.js";
-import { type AgentId, type ProposalCall, type ToolLevel, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
-import { getBuiltInToolList, type ElenchusTool } from "../tools.js";
+import type { LlmContext, LlmToolDefinition, LlmClient } from "../ports.js";
+import { type AgentId, type ProposalCall, type TurnAction, type TurnResult, type UnitRuntimeBroadcast, type VoteCall } from "../types.js";
+import { type ElenchusTool } from "../tools.js";
 
 const DISPLAY_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
@@ -29,33 +28,43 @@ function getDisplayName(agentId: AgentId): string {
 export class AgentTurn {
   private selfId: AgentId;
   private llmClient: LlmClient;
-  private level: ToolLevel;
-  private workspaceRoot: string;
 
-  constructor(selfId: AgentId, llmClient: LlmClient, level: ToolLevel = "L0", workspaceRoot: string) {
+  constructor(selfId: AgentId, llmClient: LlmClient) {
     this.selfId = selfId;
     this.llmClient = llmClient;
-    this.level = level;
-    this.workspaceRoot = workspaceRoot;
   }
 
   async execute(
-    messages: LlmMessage[],
-    hasPendingFromOther: boolean,
-    hasChildren: boolean = false,
-    canSpawnChild: boolean = true,
+    context: LlmContext,
+    tools: readonly ElenchusTool[],
   ): Promise<TurnResult> {
-    const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren, canSpawnChild);
-
-    const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
-
-    const context: LlmContext = {
-      systemPrompt: buildSystemPrompt(this.selfId, this.level, this.workspaceRoot, workspaceKnowledge),
-      messages,
-      tools: toProviderTools(tools),
+    const providerContext: LlmContext = {
+      ...context,
+      tools: toProviderTools([...tools]),
     };
 
-    const response = await this.llmClient.complete(context, { maxTokens: 8192 });
+    const response = await this.llmClient.complete(providerContext, { maxTokens: 8192 });
+    const rawBlocks = (response as any).content ?? response.content;
+    console.log(`[AgentTurn:${this.selfId}] LLM response: stopReason=${response.stopReason}, contentBlocks=${response.content.length}, types=[${response.content.map((b: any) => b.type).join(",")}]`);
+    if (response.stopReason === "error") {
+      const errMsg = response.errorMessage ?? (rawBlocks as any).errorMessage ?? "Unknown API error (no errorMessage provided)";
+      console.error(`[AgentTurn:${this.selfId}] LLM returned stopReason=error: ${errMsg}`);
+      throw new Error(`LLM API error: ${errMsg}`);
+    }
+    if (rawBlocks.length > 0) {
+      for (let i = 0; i < rawBlocks.length; i++) {
+        const block = rawBlocks[i] as any;
+        if (block.type === "text") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] text: ${JSON.stringify((block.text as string).slice(0, 200))}`);
+        } else if (block.type === "toolCall") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] toolCall: name=${block.name}, args=${JSON.stringify(block.arguments).slice(0, 200)}`);
+        } else if (block.type === "thinking") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] thinking: len=${(block.thinking as string).length}`);
+        } else {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] unknown type: ${block.type}`);
+        }
+      }
+    }
     return this.parseTurnResult(response, tools);
   }
 

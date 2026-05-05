@@ -52,7 +52,9 @@ export interface LlmContext {
   tools: LlmToolDefinition[];
 }
 
-export interface LlmResponse extends LlmAssistantMessage {}
+export interface LlmResponse extends LlmAssistantMessage {
+  errorMessage?: string;
+}
 
 export interface LlmClient {
   complete(context: LlmContext, options: { maxTokens: number }): Promise<LlmResponse>;

@@ -8,7 +8,7 @@
 import { ConversationProjector } from "./conversation-projector.js";
 import { buildSystemPrompt, readRootAgentMd } from "./prompts.js";
 import { getBuiltInToolList } from "./tools.js";
-import type { ContextRecipeData, ConversationMessage, AgentId, ToolLevel } from "./types.js";
+import type { ContextRecipeData } from "./types.js";
 import type { LlmMessage } from "./ports.js";
 import type { ContextPersistenceSink } from "./unit/deliberation-unit.js";
 
@@ -56,38 +56,30 @@ export function reconstructContext(
   );
 
   // 3. Reconstruct messages from ledger_messages by seq range
-  const allMessages = persistence.getLedgerMessagesBySeqRange(
+  const sequencedMessages = persistence.getLedgerMessagesBySeqRange(
     recipe.unitId,
     recipe.recentRawStartSeq,
     recipe.visibleEndSeq,
   );
+  const allMessages = sequencedMessages.map((entry) => entry.message);
 
   const projector = new ConversationProjector();
 
-  // 4. Split into old/new at newlyVisibleSeq boundary
-  let oldMessages: ConversationMessage[];
-  let newMessages: ConversationMessage[];
+  let oldMessages = allMessages;
+  let newMessages: typeof allMessages = [];
 
   if (recipe.newlyVisibleSeq !== null) {
     const splitIndex = allMessages.findIndex(
-      (m) => m.turnAuthored >= recipe.effectiveTurn,
+      (_message, index) => sequencedMessages[index].seq >= recipe.newlyVisibleSeq!,
     );
     if (splitIndex >= 0) {
       oldMessages = allMessages.slice(0, splitIndex);
       newMessages = allMessages.slice(splitIndex);
-    } else {
-      oldMessages = allMessages;
-      newMessages = [];
     }
-  } else {
-    oldMessages = allMessages;
-    newMessages = [];
   }
 
-  // 5. Build LlmMessage array with overlays
   const messages: LlmMessage[] = [];
 
-  // Memory snapshot
   if (recipe.memorySnapshotRowid !== null) {
     const entry = persistence.getContextTextHistoryByRowid(recipe.memorySnapshotRowid);
     if (entry) {
@@ -101,16 +93,25 @@ export function reconstructContext(
     }
   }
 
-  // Old recent raw messages
   messages.push(...projector.projectVisibleMessages(oldMessages));
 
-  // Newly visible boundary + messages
   if (newMessages.length > 0) {
     messages.push(projector.buildNewlyVisibleBoundaryOverlay(recipe.agentId, newMessages.length));
     messages.push(...projector.projectVisibleMessages(newMessages));
   }
 
-  // 6. Reconstruct tool list
+  if (
+    recipe.compressionReminderShown
+    && recipe.compressionReminderChars !== null
+    && recipe.compressionReminderThresholdChars !== null
+  ) {
+    messages.push(projector.buildCompressionReminderOverlay(
+      recipe.agentId,
+      recipe.compressionReminderChars,
+      recipe.compressionReminderThresholdChars,
+    ));
+  }
+
   const tools = getBuiltInToolList(
     recipe.hasPendingFromOther,
     recipe.level,

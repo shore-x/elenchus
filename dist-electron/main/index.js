@@ -50,6 +50,351 @@ function initializeKnowledgeView(workspaceRoot2) {
     mkdirSync(stateDir, { recursive: true });
   }
 }
+const DISPLAY_NAMES$1 = {
+  "agent-a": "Agent A",
+  "agent-b": "Agent B"
+};
+function toProviderTools(tools) {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters
+  }));
+}
+function getDisplayName$1(agentId) {
+  return DISPLAY_NAMES$1[agentId] ?? agentId;
+}
+class AgentTurn {
+  selfId;
+  llmClient;
+  constructor(selfId, llmClient) {
+    this.selfId = selfId;
+    this.llmClient = llmClient;
+  }
+  async execute(context, tools) {
+    const providerContext = {
+      ...context,
+      tools: toProviderTools([...tools])
+    };
+    const response = await this.llmClient.complete(providerContext, { maxTokens: 8192 });
+    const rawBlocks = response.content ?? response.content;
+    console.log(`[AgentTurn:${this.selfId}] LLM response: stopReason=${response.stopReason}, contentBlocks=${response.content.length}, types=[${response.content.map((b) => b.type).join(",")}]`);
+    if (response.stopReason === "error") {
+      const errMsg = response.errorMessage ?? rawBlocks.errorMessage ?? "Unknown API error (no errorMessage provided)";
+      console.error(`[AgentTurn:${this.selfId}] LLM returned stopReason=error: ${errMsg}`);
+      throw new Error(`LLM API error: ${errMsg}`);
+    }
+    if (rawBlocks.length > 0) {
+      for (let i = 0; i < rawBlocks.length; i++) {
+        const block = rawBlocks[i];
+        if (block.type === "text") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] text: ${JSON.stringify(block.text.slice(0, 200))}`);
+        } else if (block.type === "toolCall") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] toolCall: name=${block.name}, args=${JSON.stringify(block.arguments).slice(0, 200)}`);
+        } else if (block.type === "thinking") {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] thinking: len=${block.thinking.length}`);
+        } else {
+          console.log(`[AgentTurn:${this.selfId}]   block[${i}] unknown type: ${block.type}`);
+        }
+      }
+    }
+    return this.parseTurnResult(response, tools);
+  }
+  parseTurnResult(response, tools) {
+    const result = {
+      reply: response.content.filter((block) => block.type === "text").map((block) => block.text).join(""),
+      stopReason: response.stopReason
+    };
+    const toolCalls = response.content.filter((block) => block.type === "toolCall");
+    if (toolCalls.length === 0) {
+      return result;
+    }
+    const agentName = getDisplayName$1(this.selfId);
+    if (toolCalls.length > 1) {
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
+          "malformed_multiple_tool_calls",
+          `${agentName}'s tool invocation was rejected because the response contained multiple tool calls. No proposal or vote was recorded.`
+        )
+      ];
+      return result;
+    }
+    const [toolCall] = toolCalls;
+    const validToolNames = new Set(tools.map((tool) => tool.name));
+    if (!validToolNames.has(toolCall.name)) {
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
+          "tool_not_available",
+          `${agentName}'s tool invocation was rejected because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`
+        )
+      ];
+      return result;
+    }
+    if (toolCall.name === "vote") {
+      const vote = this.parseVoteCall(toolCall.arguments);
+      if (!vote) {
+        result.unitRuntimeBroadcasts = [
+          this.createUnitRuntimeBroadcast(
+            "vote_arguments_invalid",
+            `${agentName}'s vote invocation was rejected because the vote arguments were invalid. No vote was recorded.`
+          )
+        ];
+        return result;
+      }
+      result.action = { kind: "vote", vote };
+      return result;
+    }
+    const proposal = this.parseProposalCall(toolCall.name, toolCall.arguments);
+    if (!proposal) {
+      result.unitRuntimeBroadcasts = [
+        this.createUnitRuntimeBroadcast(
+          "proposal_missing_proposed_step",
+          `${agentName}'s ${toolCall.name} proposal was rejected because proposedStep was missing or empty. No proposal was recorded.`
+        )
+      ];
+      return result;
+    }
+    result.action = { kind: "proposal", proposal };
+    return result;
+  }
+  parseVoteCall(rawArgs) {
+    const reason = typeof rawArgs.reason === "string" ? rawArgs.reason.trim() : "";
+    if (typeof rawArgs.approve !== "boolean" || !reason) {
+      return null;
+    }
+    return {
+      approve: rawArgs.approve,
+      reason
+    };
+  }
+  parseProposalCall(toolName, rawArgs) {
+    const proposedStep = typeof rawArgs.proposedStep === "string" ? rawArgs.proposedStep.trim() : "";
+    if (!proposedStep) {
+      return null;
+    }
+    const { proposedStep: _proposedStep, ...toolArgs } = rawArgs;
+    return {
+      toolName,
+      args: toolArgs,
+      proposedStep
+    };
+  }
+  createUnitRuntimeBroadcast(code, content) {
+    return { code, content };
+  }
+}
+const NON_LEAF_LEVELS = ["L0", "L1"];
+const ALL_LEVELS = ["L0", "L1", "L2"];
+const proposedStepSchema = Type.String({
+  description: "A short statement of how this action advances the task. Describe the task-advancing meaning of this step, not a restatement of the tool arguments."
+});
+const yieldTool = {
+  name: "yield",
+  description: "Propose to send an upward communication message and pause the deliberation. This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. After approval, the unit returns to Idle and can be woken by new messages. Use this when the unit should hand initiative upward and wait, including stage completion, requests for upper-layer judgment, or cases where the unit lacks enough information to continue effectively.",
+  parameters: Type.Object({
+    content: Type.String({
+      description: "The upward handoff content: a clear summary, judgment, question, request for more information, or recommended next step that the upper layer should receive before this unit pauses."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "protocol",
+  behavior: "pause",
+  appliesToLevels: ALL_LEVELS
+};
+const reportTool = {
+  name: "report",
+  description: "Propose to send an upward coordination message without pausing the deliberation. This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. After approval, the unit continues into later turns rather than returning to Idle. Use this at key decision points, material findings, risks, or other coordination moments when upper-layer visibility would improve coordination but the unit should keep working.",
+  parameters: Type.Object({
+    content: Type.String({
+      description: "The upward coordination message: a key finding, decision point, risk, partial conclusion, or request for additional information that the upper layer should know now."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "protocol",
+  behavior: "nonblocking",
+  appliesToLevels: ALL_LEVELS
+};
+const compressContextTool = {
+  name: "compressContext",
+  description: "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. This is a PROPOSAL — the other agent must vote APPROVE before it starts. After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. Provide preservation requirements describing what this compression should especially retain. If a compression task is already active, a duplicate approved call will fail at runtime.",
+  parameters: Type.Object({
+    requirements: Type.String({
+      description: "What this background compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away. This is a preservation-priority declaration, not an inline summary and not a request to pause for compression."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "protocol",
+  behavior: "nonblocking",
+  appliesToLevels: ALL_LEVELS
+};
+const voteTool = {
+  name: "vote",
+  description: "Vote on the other agent's pending proposal. You MUST call this tool when a pending proposal is presented to you. APPROVE if the proposal is accurate and complete. REJECT if it has significant issues.",
+  levelDescriptions: {
+    L0: "Vote on the other agent's pending proposal. You MUST call this tool when a pending proposal is presented to you. As the coordinator and knowledge-space maintainer, apply the **execution boundary check** alongside accuracy and completeness: if the proposal uses environment tools to investigate or analyze beyond initial orientation, REJECT and suggest spawnChild instead. APPROVE only proposals that stay within the coordinator scope (surveying, inspecting, maintaining knowledge artifacts). REJECT proposals that step into execution territory — even if they are technically accurate — and explain that the work should be delegated to a child unit."
+  },
+  parameters: Type.Object({
+    approve: Type.Boolean({
+      description: "true = APPROVE the proposal, false = REJECT it"
+    }),
+    reason: Type.String({
+      description: "Reason for your vote. If rejecting, explain what needs to change."
+    })
+  }),
+  category: "protocol",
+  behavior: "vote",
+  appliesToLevels: ALL_LEVELS,
+  requiresPendingProposal: true
+};
+const bashTool = {
+  name: "bash",
+  description: "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. Use this for running programs, network requests (curl/wget), data processing, etc. Commands execute with your working directory as the current working directory (cwd). You must provide proposedStep to describe how this command advances the task, not just restate the command.",
+  levelDescriptions: {
+    L0: "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. As the coordinator and knowledge-space maintainer, your bash access serves your coordination role: surveying the project landscape (ls, find, tree), inspecting content (cat, head, grep, wc), and understanding the current state of work across the knowledge space. You also use bash to maintain your knowledge space — checking what child units have produced, verifying file structures, and ensuring your workspace is well-organized for coordination. When you discover work that needs doing, delegate it to a child unit — bash helps you see what needs doing, not do it yourself. **Hard constraint**: at L0, only information-gathering commands are permitted (ls, find, tree, cat, head, tail, grep, wc, du, file, stat, pwd, which, echo, diff, sort, uniq, type, less, more, printenv, env, date, uname, hostname, whoami, id). Task-execution commands (build, install, run, edit, delete, etc.) will be rejected at runtime — delegate those to a child unit instead. Commands execute with your working directory as the current working directory (cwd). You must provide proposedStep to describe how this command advances the task, not just restate the command."
+  },
+  parameters: Type.Object({
+    command: Type.String({
+      description: "The shell command to execute. Runs with your working directory as cwd."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: ALL_LEVELS
+};
+const readFileTool = {
+  name: "readFile",
+  description: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. You must provide proposedStep to describe what reading this file will help establish for the task. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section and avoid excessive context consumption.",
+  levelDescriptions: {
+    L0: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. As the coordinator and knowledge-space maintainer, your readFile access is limited to your coordination role: reading knowledge artifacts such as AGENT.md files, summary documents, analysis results produced by child units, and integration notes. These are files written by agents for agents — concise, conclusion-oriented documents that help you maintain coordination awareness. Do not use readFile to investigate source code, configuration files, logs, or any file whose primary purpose is to answer a substantive question about implementation or behavior — that is execution work and should be delegated to a child unit. If you need to check whether a file exists or what a directory contains, use bash (ls, find) instead. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section. You must provide proposedStep to describe how reading this file advances the coordination task."
+  },
+  parameters: Type.Object({
+    path: Type.String({
+      description: "Absolute path to the file to read. Use absolute paths so that file references can be shared with other agents."
+    }),
+    offset: Type.Optional(Type.Number({
+      description: "1-indexed starting line number. If omitted, reading starts from line 1. Use this with limit to read only a specific section of large files."
+    })),
+    limit: Type.Optional(Type.Number({
+      description: "Maximum number of lines to read. If omitted, the entire file (or remainder from offset) is read. Strongly recommended for files expected to be large (>100 lines)."
+    })),
+    proposedStep: proposedStepSchema
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: ALL_LEVELS,
+  autoApprove: true
+};
+const writeFileTool = {
+  name: "writeFile",
+  description: "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. Creates the file if it does not exist. Overwrites if it does. You must provide proposedStep to describe how this write advances the task. Always use absolute paths so that other agents can locate and read the file.",
+  levelDescriptions: {
+    L0: "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. As the coordinator and knowledge-space maintainer, your writeFile access serves your coordination role: maintaining AGENT.md files, writing knowledge summaries and integration notes, and organizing your workspace so that both you and your child units can navigate the project's knowledge effectively. Do not use writeFile to create or modify source code, configuration files, or any execution artifact — that is execution work and should be delegated to a child unit. Always use absolute paths so that other agents can locate and read the file. Creates the file if it does not exist. Overwrites if it does. You must provide proposedStep to describe how this write advances the coordination task."
+  },
+  parameters: Type.Object({
+    path: Type.String({
+      description: "Absolute path to the file to write. Use absolute paths so that other agents can locate and read the file."
+    }),
+    content: Type.String({
+      description: "The content to write to the file."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "environment",
+  behavior: "blocking",
+  appliesToLevels: ALL_LEVELS
+};
+const spawnChildTool = {
+  name: "spawnChild",
+  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
+  levelDescriptions: {
+    L0: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. From L0, spawnChild creates an L1 child unit with full execution capabilities. Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task."
+  },
+  parameters: Type.Object({
+    task: Type.String({
+      description: "A clear, specific initial brief for the child agent unit to accomplish. Include the context already known to be important, but this does not imply that later clarification or additional context will be unnecessary."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "child-management",
+  behavior: "nonblocking",
+  appliesToLevels: NON_LEAF_LEVELS,
+  canSpawnChild: true
+};
+const sendToChildTool = {
+  name: "sendToChild",
+  description: "Propose to send a follow-up message to an existing child agent unit. This is a PROPOSAL — the other agent must vote APPROVE. If the child unit is idle, it can resume with the new message; if it is still active, the message will be queued and become available to that child as it continues work. Use this when delegated work should receive additional context, constraints, corrections, clarifications, redirection, or a response to the child's earlier report or yield. You must provide proposedStep to describe how this follow-up advances the task.",
+  parameters: Type.Object({
+    childId: Type.String({
+      description: "The ID of the child agent unit to send the message to (e.g. 'L1-01', 'L2-01-02')."
+    }),
+    message: Type.String({
+      description: "The message to send to the child agent unit."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "child-management",
+  behavior: "nonblocking",
+  appliesToLevels: NON_LEAF_LEVELS,
+  requiresChildren: true
+};
+const sleepTool = {
+  name: "sleep",
+  description: "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. You must specify an explicit timeout in seconds. If no child agent reports before the timeout, a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. Avoid very short timeouts (under 10s) — they rarely accomplish meaningful waiting and mostly waste turns on repeated sleep cycles. You must provide proposedStep to describe why this wait advances the task.",
+  parameters: Type.Object({
+    timeoutSeconds: Type.Number({
+      description: "Timeout in seconds. The unit will be woken after this duration if no other event wakes it first. Choose a duration appropriate to what you are waiting for — avoid very short timeouts under 10s."
+    }),
+    proposedStep: proposedStepSchema
+  }),
+  category: "child-management",
+  behavior: "pause",
+  appliesToLevels: NON_LEAF_LEVELS
+};
+const BUILT_IN_TOOLS = [
+  yieldTool,
+  reportTool,
+  compressContextTool,
+  voteTool,
+  bashTool,
+  readFileTool,
+  writeFileTool,
+  spawnChildTool,
+  sendToChildTool,
+  sleepTool
+];
+function getBuiltInToolRegistry(level) {
+  const tools = level !== void 0 ? BUILT_IN_TOOLS.filter((tool) => tool.appliesToLevels.includes(level)) : BUILT_IN_TOOLS;
+  return new Map(tools.map((tool) => {
+    const levelDesc = level !== void 0 ? tool.levelDescriptions?.[level] : void 0;
+    const resolved = levelDesc ? { ...tool, description: levelDesc } : tool;
+    return [tool.name, resolved];
+  }));
+}
+function getBuiltInToolList(hasPendingProposal, level, hasChildren = false, canSpawnChild = true) {
+  return BUILT_IN_TOOLS.filter((tool) => {
+    if (!tool.appliesToLevels.includes(level)) {
+      return false;
+    }
+    if (tool.requiresChildren && !hasChildren) {
+      return false;
+    }
+    if (tool.requiresPendingProposal && !hasPendingProposal) {
+      return false;
+    }
+    if (tool.behavior === "vote" && !hasPendingProposal) {
+      return false;
+    }
+    if (tool.canSpawnChild && !canSpawnChild) {
+      return false;
+    }
+    return true;
+  }).map((tool) => {
+    const levelDesc = tool.levelDescriptions?.[level];
+    if (!levelDesc) return tool;
+    return { ...tool, description: levelDesc };
+  });
+}
 const GUIDELINE_HEADER = `## Elenchus Deliberation Unit
 You are one of two agents in an Elenchus deliberation unit. You and your partner share a common goal: arriving at the most reliable and accurate understanding of the topic through structured dialogue.
 
@@ -374,336 +719,397 @@ function buildSystemPrompt(agentId, level, workspaceRoot2, workspaceKnowledge) {
 function buildCompressionSystemPrompt() {
   return COMPRESSION_SYSTEM_PROMPT;
 }
-const NON_LEAF_LEVELS = ["L0", "L1"];
-const ALL_LEVELS = ["L0", "L1", "L2"];
-const proposedStepSchema = Type.String({
-  description: "A short statement of how this action advances the task. Describe the task-advancing meaning of this step, not a restatement of the tool arguments."
-});
-const yieldTool = {
-  name: "yield",
-  description: "Propose to send an upward communication message and pause the deliberation. This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. After approval, the unit returns to Idle and can be woken by new messages. Use this when the unit should hand initiative upward and wait, including stage completion, requests for upper-layer judgment, or cases where the unit lacks enough information to continue effectively.",
-  parameters: Type.Object({
-    content: Type.String({
-      description: "The upward handoff content: a clear summary, judgment, question, request for more information, or recommended next step that the upper layer should receive before this unit pauses."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "protocol",
-  behavior: "pause",
-  appliesToLevels: ALL_LEVELS
+const DISPLAY_NAMES = {
+  "agent-a": "Agent A",
+  "agent-b": "Agent B",
+  incoming: "Incoming Message",
+  system: "System"
 };
-const reportTool = {
-  name: "report",
-  description: "Propose to send an upward coordination message without pausing the deliberation. This is a PROPOSAL — the other agent must vote APPROVE before it takes effect. After approval, the unit continues into later turns rather than returning to Idle. Use this at key decision points, material findings, risks, or other coordination moments when upper-layer visibility would improve coordination but the unit should keep working.",
-  parameters: Type.Object({
-    content: Type.String({
-      description: "The upward coordination message: a key finding, decision point, risk, partial conclusion, or request for additional information that the upper layer should know now."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "protocol",
-  behavior: "nonblocking",
-  appliesToLevels: ALL_LEVELS
-};
-const compressContextTool = {
-  name: "compressContext",
-  description: "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. This is a PROPOSAL — the other agent must vote APPROVE before it starts. After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. Provide preservation requirements describing what this compression should especially retain. If a compression task is already active, a duplicate approved call will fail at runtime.",
-  parameters: Type.Object({
-    requirements: Type.String({
-      description: "What this background compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away. This is a preservation-priority declaration, not an inline summary and not a request to pause for compression."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "protocol",
-  behavior: "nonblocking",
-  appliesToLevels: ALL_LEVELS
-};
-const voteTool = {
-  name: "vote",
-  description: "Vote on the other agent's pending proposal. You MUST call this tool when a pending proposal is presented to you. APPROVE if the proposal is accurate and complete. REJECT if it has significant issues.",
-  levelDescriptions: {
-    L0: "Vote on the other agent's pending proposal. You MUST call this tool when a pending proposal is presented to you. As the coordinator and knowledge-space maintainer, apply the **execution boundary check** alongside accuracy and completeness: if the proposal uses environment tools to investigate or analyze beyond initial orientation, REJECT and suggest spawnChild instead. APPROVE only proposals that stay within the coordinator scope (surveying, inspecting, maintaining knowledge artifacts). REJECT proposals that step into execution territory — even if they are technically accurate — and explain that the work should be delegated to a child unit."
-  },
-  parameters: Type.Object({
-    approve: Type.Boolean({
-      description: "true = APPROVE the proposal, false = REJECT it"
-    }),
-    reason: Type.String({
-      description: "Reason for your vote. If rejecting, explain what needs to change."
-    })
-  }),
-  category: "protocol",
-  behavior: "vote",
-  appliesToLevels: ALL_LEVELS,
-  requiresPendingProposal: true
-};
-const bashTool = {
-  name: "bash",
-  description: "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. Use this for running programs, network requests (curl/wget), data processing, etc. Commands execute with your working directory as the current working directory (cwd). You must provide proposedStep to describe how this command advances the task, not just restate the command.",
-  levelDescriptions: {
-    L0: "Propose to execute a shell command. This is a PROPOSAL — the other agent must vote APPROVE before it runs. As the coordinator and knowledge-space maintainer, your bash access serves your coordination role: surveying the project landscape (ls, find, tree), inspecting content (cat, head, grep, wc), and understanding the current state of work across the knowledge space. You also use bash to maintain your knowledge space — checking what child units have produced, verifying file structures, and ensuring your workspace is well-organized for coordination. When you discover work that needs doing, delegate it to a child unit — bash helps you see what needs doing, not do it yourself. **Hard constraint**: at L0, only information-gathering commands are permitted (ls, find, tree, cat, head, tail, grep, wc, du, file, stat, pwd, which, echo, diff, sort, uniq, type, less, more, printenv, env, date, uname, hostname, whoami, id). Task-execution commands (build, install, run, edit, delete, etc.) will be rejected at runtime — delegate those to a child unit instead. Commands execute with your working directory as the current working directory (cwd). You must provide proposedStep to describe how this command advances the task, not just restate the command."
-  },
-  parameters: Type.Object({
-    command: Type.String({
-      description: "The shell command to execute. Runs with your working directory as cwd."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "environment",
-  behavior: "blocking",
-  appliesToLevels: ALL_LEVELS
-};
-const readFileTool = {
-  name: "readFile",
-  description: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. You must provide proposedStep to describe what reading this file will help establish for the task. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section and avoid excessive context consumption.",
-  levelDescriptions: {
-    L0: "Read the contents of a file. This tool executes immediately — no partner vote is required because reading is a read-only operation with no side effects. As the coordinator and knowledge-space maintainer, your readFile access is limited to your coordination role: reading knowledge artifacts such as AGENT.md files, summary documents, analysis results produced by child units, and integration notes. These are files written by agents for agents — concise, conclusion-oriented documents that help you maintain coordination awareness. Do not use readFile to investigate source code, configuration files, logs, or any file whose primary purpose is to answer a substantive question about implementation or behavior — that is execution work and should be delegated to a child unit. If you need to check whether a file exists or what a directory contains, use bash (ls, find) instead. Always use absolute paths to avoid ambiguity and to make file references shareable across agents. For large files, strongly prefer specifying offset and limit to read only the relevant section. You must provide proposedStep to describe how reading this file advances the coordination task."
-  },
-  parameters: Type.Object({
-    path: Type.String({
-      description: "Absolute path to the file to read. Use absolute paths so that file references can be shared with other agents."
-    }),
-    offset: Type.Optional(Type.Number({
-      description: "1-indexed starting line number. If omitted, reading starts from line 1. Use this with limit to read only a specific section of large files."
-    })),
-    limit: Type.Optional(Type.Number({
-      description: "Maximum number of lines to read. If omitted, the entire file (or remainder from offset) is read. Strongly recommended for files expected to be large (>100 lines)."
-    })),
-    proposedStep: proposedStepSchema
-  }),
-  category: "environment",
-  behavior: "blocking",
-  appliesToLevels: ALL_LEVELS,
-  autoApprove: true
-};
-const writeFileTool = {
-  name: "writeFile",
-  description: "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. Creates the file if it does not exist. Overwrites if it does. You must provide proposedStep to describe how this write advances the task. Always use absolute paths so that other agents can locate and read the file.",
-  levelDescriptions: {
-    L0: "Propose to write content to a file. This is a PROPOSAL — the other agent must vote APPROVE before it executes. As the coordinator and knowledge-space maintainer, your writeFile access serves your coordination role: maintaining AGENT.md files, writing knowledge summaries and integration notes, and organizing your workspace so that both you and your child units can navigate the project's knowledge effectively. Do not use writeFile to create or modify source code, configuration files, or any execution artifact — that is execution work and should be delegated to a child unit. Always use absolute paths so that other agents can locate and read the file. Creates the file if it does not exist. Overwrites if it does. You must provide proposedStep to describe how this write advances the coordination task."
-  },
-  parameters: Type.Object({
-    path: Type.String({
-      description: "Absolute path to the file to write. Use absolute paths so that other agents can locate and read the file."
-    }),
-    content: Type.String({
-      description: "The content to write to the file."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "environment",
-  behavior: "blocking",
-  appliesToLevels: ALL_LEVELS
-};
-const spawnChildTool = {
-  name: "spawnChild",
-  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
-  levelDescriptions: {
-    L0: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. From L0, spawnChild creates an L1 child unit with full execution capabilities. Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task."
-  },
-  parameters: Type.Object({
-    task: Type.String({
-      description: "A clear, specific initial brief for the child agent unit to accomplish. Include the context already known to be important, but this does not imply that later clarification or additional context will be unnecessary."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "child-management",
-  behavior: "nonblocking",
-  appliesToLevels: NON_LEAF_LEVELS,
-  canSpawnChild: true
-};
-const sendToChildTool = {
-  name: "sendToChild",
-  description: "Propose to send a follow-up message to an existing child agent unit. This is a PROPOSAL — the other agent must vote APPROVE. If the child unit is idle, it can resume with the new message; if it is still active, the message will be queued and become available to that child as it continues work. Use this when delegated work should receive additional context, constraints, corrections, clarifications, redirection, or a response to the child's earlier report or yield. You must provide proposedStep to describe how this follow-up advances the task.",
-  parameters: Type.Object({
-    childId: Type.String({
-      description: "The ID of the child agent unit to send the message to (e.g. 'L1-01', 'L2-01-02')."
-    }),
-    message: Type.String({
-      description: "The message to send to the child agent unit."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "child-management",
-  behavior: "nonblocking",
-  appliesToLevels: NON_LEAF_LEVELS,
-  requiresChildren: true
-};
-const sleepTool = {
-  name: "sleep",
-  description: "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. You must specify an explicit timeout in seconds. If no child agent reports before the timeout, a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. Avoid very short timeouts (under 10s) — they rarely accomplish meaningful waiting and mostly waste turns on repeated sleep cycles. You must provide proposedStep to describe why this wait advances the task.",
-  parameters: Type.Object({
-    timeoutSeconds: Type.Number({
-      description: "Timeout in seconds. The unit will be woken after this duration if no other event wakes it first. Choose a duration appropriate to what you are waiting for — avoid very short timeouts under 10s."
-    }),
-    proposedStep: proposedStepSchema
-  }),
-  category: "child-management",
-  behavior: "pause",
-  appliesToLevels: NON_LEAF_LEVELS
-};
-const BUILT_IN_TOOLS = [
-  yieldTool,
-  reportTool,
-  compressContextTool,
-  voteTool,
-  bashTool,
-  readFileTool,
-  writeFileTool,
-  spawnChildTool,
-  sendToChildTool,
-  sleepTool
-];
-function getBuiltInToolRegistry(level) {
-  const tools = level !== void 0 ? BUILT_IN_TOOLS.filter((tool) => tool.appliesToLevels.includes(level)) : BUILT_IN_TOOLS;
-  return new Map(tools.map((tool) => {
-    const levelDesc = level !== void 0 ? tool.levelDescriptions?.[level] : void 0;
-    const resolved = levelDesc ? { ...tool, description: levelDesc } : tool;
-    return [tool.name, resolved];
-  }));
+function getDisplayName(author) {
+  return DISPLAY_NAMES[author] ?? author;
 }
-function getBuiltInToolList(hasPendingProposal, level, hasChildren = false, canSpawnChild = true) {
-  return BUILT_IN_TOOLS.filter((tool) => {
-    if (!tool.appliesToLevels.includes(level)) {
-      return false;
+function renderProposalDetail(proposal) {
+  switch (proposal.toolName) {
+    case "yield":
+      return `The proposed upward handoff content is:
+
+---
+${proposal.args.content}
+---`;
+    case "report":
+      return `The proposed upward coordination message is:
+
+---
+${proposal.args.content}
+---`;
+    case "compressContext":
+      return `Preservation requirements:
+---
+${String(proposal.args.requirements)}
+---`;
+    case "bash":
+      return `Command: \`${proposal.args.command}\``;
+    case "readFile": {
+      const offset = proposal.args.offset;
+      const limit = proposal.args.limit;
+      const hasRange = offset !== void 0 || limit !== void 0;
+      const start = offset ?? 1;
+      const end = limit !== void 0 ? start + limit - 1 : "end";
+      const rangeInfo = hasRange ? ` (lines ${start}-${end})` : "";
+      return `File path: \`${proposal.args.path}\`${rangeInfo}`;
     }
-    if (tool.requiresChildren && !hasChildren) {
-      return false;
+    case "writeFile":
+      return `File path: \`${proposal.args.path}\`
+Content:
+---
+${String(proposal.args.content)}
+---`;
+    case "sleep":
+      return `Timeout: ${proposal.args.timeoutSeconds}s`;
+    case "spawnChild": {
+      return `Task:
+---
+${String(proposal.args.task)}
+---`;
     }
-    if (tool.requiresPendingProposal && !hasPendingProposal) {
-      return false;
-    }
-    if (tool.behavior === "vote" && !hasPendingProposal) {
-      return false;
-    }
-    if (tool.canSpawnChild && !canSpawnChild) {
-      return false;
-    }
-    return true;
-  }).map((tool) => {
-    const levelDesc = tool.levelDescriptions?.[level];
-    if (!levelDesc) return tool;
-    return { ...tool, description: levelDesc };
-  });
+    case "sendToChild":
+      return `Child: ${proposal.args.childId}
+Message:
+---
+${String(proposal.args.message)}
+---`;
+    default:
+      return `Arguments:
+${JSON.stringify(proposal.args, null, 2) ?? "{}"}`;
+  }
 }
-const DISPLAY_NAMES$1 = {
+function renderProposalMessage(message) {
+  const authorName = getDisplayName(message.authoredBy);
+  return {
+    role: "user",
+    content: `[Public Fact][Proposal]
+Author: ${authorName}
+Proposal ID: ${message.id}
+Tool: ${message.toolName}
+Status: ${message.status}
+Proposed step: ${message.proposedStep}
+${renderProposalDetail(message)}`,
+    timestamp: message.timestamp
+  };
+}
+function renderVoteMessage(message) {
+  const voterName = getDisplayName(message.authoredBy);
+  return {
+    role: "user",
+    content: `[Public Fact][Vote]
+Voter: ${voterName}
+Proposal ID: ${message.proposalId}
+Decision: ${message.approve ? "APPROVE" : "REJECT"}
+Reason: ${message.reason}`,
+    timestamp: message.timestamp
+  };
+}
+function renderConversationMessage(message) {
+  if (message.kind === "proposal_message") {
+    return renderProposalMessage(message);
+  }
+  if (message.kind === "vote_message") {
+    return renderVoteMessage(message);
+  }
+  if (message.kind === "tool_result_message") {
+    return {
+      role: "user",
+      content: `[Public Fact][Tool Result]
+Tool result for ${message.toolName} on proposal ${message.proposalId}:
+Success: ${message.success ? "true" : "false"}
+Duration: ${message.durationMs}ms
+Output:
+${message.output}`,
+      timestamp: message.timestamp
+    };
+  }
+  if (message.kind === "upward_message") {
+    return {
+      role: "user",
+      content: `[Public Fact][Upward Message]
+Delivery mode: ${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}
+Content:
+${message.content}`,
+      timestamp: message.timestamp
+    };
+  }
+  if (message.kind === "child_report_message") {
+    return {
+      role: "user",
+      content: `[Public Fact][Child Report]
+Child: ${message.childId}
+Delivery mode: ${message.deliveryMode}
+Content:
+${message.content}`,
+      timestamp: message.timestamp
+    };
+  }
+  if (message.kind === "system_message") {
+    return {
+      role: "user",
+      content: `[Public Fact][Unit Runtime]
+${message.content}`,
+      timestamp: message.timestamp
+    };
+  }
+  if (message.kind === "child_commit_view_message") {
+    return {
+      role: "user",
+      content: message.content,
+      timestamp: message.timestamp
+    };
+  }
+  const prefix = getDisplayName(message.authoredBy);
+  const content = "content" in message ? message.content : "";
+  return {
+    role: "user",
+    content: `[${prefix}]: ${content}`,
+    timestamp: message.timestamp
+  };
+}
+class ConversationProjector {
+  projectVisibleMessages(messages) {
+    return messages.map((message) => renderConversationMessage(message));
+  }
+  buildMemorySnapshotMessage(snapshot) {
+    return {
+      role: "user",
+      content: `[Context Snapshot][Memory Snapshot]
+The following Memory Snapshot was compressed from earlier conversation history. Treat it as reference context rather than verbatim transcript. Some recent raw messages may overlap with it.
+
+${snapshot.content}`,
+      timestamp: snapshot.createdAt
+    };
+  }
+  buildNewlyVisibleBoundaryOverlay(agentId, count) {
+    const agentName = getDisplayName(agentId);
+    const lines = [
+      "[Context Boundary]",
+      count === 1 ? `The message below this marker became newly visible in this turn for ${agentName}.` : `${count} messages below this marker became newly visible in this turn for ${agentName}.`,
+      count === 1 ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.` : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`
+    ];
+    return {
+      role: "user",
+      content: lines.join("\n"),
+      timestamp: Date.now()
+    };
+  }
+  buildCompressionReminderOverlay(agentId, estimatedChars, thresholdChars) {
+    const agentName = getDisplayName(agentId);
+    return {
+      role: "user",
+      content: `[Context Reminder]
+The recent raw context visible to ${agentName} is estimated at about ${estimatedChars} characters, above the reminder threshold of about ${thresholdChars} characters. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
+      timestamp: Date.now()
+    };
+  }
+  buildProposalNotification(proposal, proposerName, voterName) {
+    return {
+      role: "user",
+      content: `[Directive]
+${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.
+${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.`,
+      timestamp: Date.now()
+    };
+  }
+  buildChildCommitViewMessage(agentId, childCommitViews) {
+    if (childCommitViews.length === 0) {
+      return null;
+    }
+    const agentName = getDisplayName(agentId);
+    const lines = [
+      "[Context Snapshot]",
+      `The following currently visible child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`
+    ];
+    for (const view of childCommitViews) {
+      lines.push(`- ${view.childId} [state: ${view.state}]`);
+      if (view.committedSteps.length === 0) {
+        lines.push("  - no committed steps yet");
+        continue;
+      }
+      for (const step of view.committedSteps) {
+        const proposerName = getDisplayName(step.proposedBy);
+        lines.push(`  - ${proposerName} via ${step.toolName}: ${step.proposedStep}`);
+      }
+    }
+    return {
+      role: "user",
+      content: lines.join("\n"),
+      timestamp: Date.now()
+    };
+  }
+}
+const AGENT_NAMES$1 = {
   "agent-a": "Agent A",
   "agent-b": "Agent B"
 };
-function toProviderTools(tools) {
-  return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters
-  }));
+function clamp$2(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
-function getDisplayName$1(agentId) {
-  return DISPLAY_NAMES$1[agentId] ?? agentId;
-}
-class AgentTurn {
-  selfId;
-  llmClient;
-  level;
-  workspaceRoot;
-  constructor(selfId, llmClient, level = "L0", workspaceRoot2) {
-    this.selfId = selfId;
-    this.llmClient = llmClient;
-    this.level = level;
-    this.workspaceRoot = workspaceRoot2;
+function assembleTurnContext(input) {
+  const projector = new ConversationProjector();
+  const tools = getBuiltInToolList(
+    input.pendingProposal !== null && input.pendingProposal.proposer !== input.agentId,
+    input.level,
+    input.hasChildren,
+    input.canSpawnChild
+  );
+  const recentRawStartIndex = clamp$2(
+    input.budgetPlan.recentRawStartSeq - (input.budgetPlan.visibleEndSeq - input.visibleMessages.length),
+    0,
+    input.visibleMessages.length
+  );
+  const recentRawMessages = input.visibleMessages.slice(recentRawStartIndex);
+  const recentNewMessageIds = new Set(input.newlyVisibleMessages.map((message) => message.id));
+  const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
+  const oldRecentRawMessages = firstRecentNewIndex === -1 ? recentRawMessages : recentRawMessages.slice(0, firstRecentNewIndex);
+  const newRecentRawMessages = firstRecentNewIndex === -1 ? [] : recentRawMessages.slice(firstRecentNewIndex);
+  const messages = [];
+  if (input.memorySnapshot) {
+    messages.push(projector.buildMemorySnapshotMessage(input.memorySnapshot));
   }
-  async execute(messages, hasPendingFromOther, hasChildren = false, canSpawnChild = true) {
-    const tools = getBuiltInToolList(hasPendingFromOther, this.level, hasChildren, canSpawnChild);
-    const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
-    const context = {
-      systemPrompt: buildSystemPrompt(this.selfId, this.level, this.workspaceRoot, workspaceKnowledge),
+  messages.push(...projector.projectVisibleMessages(oldRecentRawMessages));
+  if (newRecentRawMessages.length > 0) {
+    messages.push(projector.buildNewlyVisibleBoundaryOverlay(input.agentId, newRecentRawMessages.length));
+    messages.push(...projector.projectVisibleMessages(newRecentRawMessages));
+  }
+  if (input.budgetPlan.compressionReminderShown && input.budgetPlan.compressionReminderChars !== null && input.budgetPlan.compressionReminderThresholdChars !== null) {
+    messages.push(projector.buildCompressionReminderOverlay(
+      input.agentId,
+      input.budgetPlan.compressionReminderChars,
+      input.budgetPlan.compressionReminderThresholdChars
+    ));
+  }
+  if (input.pendingProposal && input.pendingProposal.proposer !== input.agentId) {
+    const proposerName = AGENT_NAMES$1[input.pendingProposal.proposer] ?? input.pendingProposal.proposer;
+    const voterName = AGENT_NAMES$1[input.agentId] ?? input.agentId;
+    messages.push(projector.buildProposalNotification(input.pendingProposal, proposerName, voterName));
+  }
+  return {
+    plan: {
+      unitId: input.unitId,
+      agentId: input.agentId,
+      level: input.level,
+      visibleEndSeq: input.budgetPlan.visibleEndSeq,
+      recentRawStartSeq: input.budgetPlan.recentRawStartSeq,
+      newlyVisibleSeq: input.budgetPlan.newlyVisibleSeq,
+      memorySnapshotRowid: input.memorySnapshotRowid,
+      agentMdRowid: input.agentMdRowid,
+      hasPendingFromOther: input.pendingProposal !== null && input.pendingProposal.proposer !== input.agentId,
+      hasChildren: input.hasChildren,
+      canSpawnChild: input.canSpawnChild,
+      compressionReminderShown: input.budgetPlan.compressionReminderShown,
+      compressionReminderChars: input.budgetPlan.compressionReminderChars,
+      compressionReminderThresholdChars: input.budgetPlan.compressionReminderThresholdChars,
+      truncationApplied: input.budgetPlan.truncationApplied,
+      truncationReason: input.budgetPlan.truncationReason,
+      truncationLevel: input.budgetPlan.truncationLevel,
+      effectiveTurn: input.effectiveTurn
+    },
+    llmContext: {
+      systemPrompt: buildSystemPrompt(input.agentId, input.level, input.workspaceRoot, input.workspaceKnowledge),
       messages,
-      tools: toProviderTools(tools)
-    };
-    const response = await this.llmClient.complete(context, { maxTokens: 8192 });
-    return this.parseTurnResult(response, tools);
+      tools: tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters
+      }))
+    },
+    tools
+  };
+}
+function estimateMessageChars$1(message) {
+  switch (message.kind) {
+    case "incoming_message":
+    case "agent_message":
+    case "system_message":
+      return message.content.length + 32;
+    case "upward_message":
+      return message.content.length + 48;
+    case "proposal_message":
+      return message.toolName.length + message.proposedStep.length + JSON.stringify(message.args).length + 64;
+    case "vote_message":
+      return message.reason.length + 48;
+    case "tool_result_message":
+      return message.toolName.length + message.output.length + 64;
+    case "child_report_message":
+      return message.childId.length + message.content.length + 64;
+    case "child_commit_view_message":
+      return message.content.length + 64;
   }
-  parseTurnResult(response, tools) {
-    const result = {
-      reply: response.content.filter((block) => block.type === "text").map((block) => block.text).join(""),
-      stopReason: response.stopReason
-    };
-    const toolCalls = response.content.filter((block) => block.type === "toolCall");
-    if (toolCalls.length === 0) {
-      return result;
-    }
-    const agentName = getDisplayName$1(this.selfId);
-    if (toolCalls.length > 1) {
-      result.unitRuntimeBroadcasts = [
-        this.createUnitRuntimeBroadcast(
-          "malformed_multiple_tool_calls",
-          `${agentName}'s tool invocation was rejected because the response contained multiple tool calls. No proposal or vote was recorded.`
-        )
-      ];
-      return result;
-    }
-    const [toolCall] = toolCalls;
-    const validToolNames = new Set(tools.map((tool) => tool.name));
-    if (!validToolNames.has(toolCall.name)) {
-      result.unitRuntimeBroadcasts = [
-        this.createUnitRuntimeBroadcast(
-          "tool_not_available",
-          `${agentName}'s tool invocation was rejected because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`
-        )
-      ];
-      return result;
-    }
-    if (toolCall.name === "vote") {
-      const vote = this.parseVoteCall(toolCall.arguments);
-      if (!vote) {
-        result.unitRuntimeBroadcasts = [
-          this.createUnitRuntimeBroadcast(
-            "vote_arguments_invalid",
-            `${agentName}'s vote invocation was rejected because the vote arguments were invalid. No vote was recorded.`
-          )
-        ];
-        return result;
-      }
-      result.action = { kind: "vote", vote };
-      return result;
-    }
-    const proposal = this.parseProposalCall(toolCall.name, toolCall.arguments);
-    if (!proposal) {
-      result.unitRuntimeBroadcasts = [
-        this.createUnitRuntimeBroadcast(
-          "proposal_missing_proposed_step",
-          `${agentName}'s ${toolCall.name} proposal was rejected because proposedStep was missing or empty. No proposal was recorded.`
-        )
-      ];
-      return result;
-    }
-    result.action = { kind: "proposal", proposal };
-    return result;
+}
+function estimateMessagesChars$1(messages) {
+  return messages.reduce((total, message) => total + estimateMessageChars$1(message), 0);
+}
+function clamp$1(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function findTailStartIndexWithinChars(messages, targetChars) {
+  if (messages.length === 0) {
+    return 0;
   }
-  parseVoteCall(rawArgs) {
-    const reason = typeof rawArgs.reason === "string" ? rawArgs.reason.trim() : "";
-    if (typeof rawArgs.approve !== "boolean" || !reason) {
-      return null;
+  let chars = 0;
+  let start = messages.length - 1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const estimated = estimateMessageChars$1(messages[index]);
+    if (index < messages.length - 1 && chars + estimated > targetChars) {
+      break;
     }
-    return {
-      approve: rawArgs.approve,
-      reason
-    };
+    chars += estimated;
+    start = index;
   }
-  parseProposalCall(toolName, rawArgs) {
-    const proposedStep = typeof rawArgs.proposedStep === "string" ? rawArgs.proposedStep.trim() : "";
-    if (!proposedStep) {
-      return null;
-    }
-    const { proposedStep: _proposedStep, ...toolArgs } = rawArgs;
-    return {
-      toolName,
-      args: toolArgs,
-      proposedStep
-    };
+  return start;
+}
+function createTurnContextBudgetPlan(input) {
+  const baseRecentRawStartIndex = clamp$1(
+    input.baseRecentRawStartSeq - input.currentSequenceStart,
+    0,
+    input.visibleMessages.length
+  );
+  const baseRecentRawMessages = input.visibleMessages.slice(baseRecentRawStartIndex);
+  const estimatedRecentRawChars = estimateMessagesChars$1(baseRecentRawMessages);
+  const shouldTruncate = estimatedRecentRawChars > input.hardRecentRawCharLimit;
+  const relativeStartIndex = shouldTruncate ? findTailStartIndexWithinChars(baseRecentRawMessages, input.hardRecentRawCharLimit) : 0;
+  const recentRawStartSeq = input.baseRecentRawStartSeq + relativeStartIndex;
+  return {
+    recentRawStartSeq,
+    visibleEndSeq: input.currentSequenceStart + input.visibleMessages.length,
+    newlyVisibleSeq: input.newlyVisibleMessages.length > 0 ? input.currentSequenceStart + (input.visibleMessages.length - input.newlyVisibleMessages.length) : null,
+    compressionReminderShown: input.compressionReminderShown,
+    compressionReminderChars: input.compressionReminderChars,
+    compressionReminderThresholdChars: input.compressionReminderThresholdChars,
+    truncationApplied: shouldTruncate,
+    truncationReason: shouldTruncate ? "budget_precheck" : "none",
+    truncationLevel: shouldTruncate ? 1 : 0
+  };
+}
+function tightenTurnContextBudgetPlan(input) {
+  const currentRecentRawStartIndex = clamp$1(
+    input.currentPlan.recentRawStartSeq - input.currentSequenceStart,
+    0,
+    input.visibleMessages.length
+  );
+  const currentRecentRawMessages = input.visibleMessages.slice(currentRecentRawStartIndex);
+  if (currentRecentRawMessages.length <= 1) {
+    return null;
   }
-  createUnitRuntimeBroadcast(code, content) {
-    return { code, content };
+  const relativeStartIndex = findTailStartIndexWithinChars(currentRecentRawMessages, input.targetRecentRawChars);
+  const nextRecentRawStartSeq = input.currentPlan.recentRawStartSeq + relativeStartIndex;
+  if (nextRecentRawStartSeq <= input.currentPlan.recentRawStartSeq) {
+    return null;
   }
+  return {
+    ...input.currentPlan,
+    recentRawStartSeq: nextRecentRawStartSeq,
+    truncationApplied: true,
+    truncationReason: "provider_reject",
+    truncationLevel: input.currentPlan.truncationLevel + 1
+  };
 }
 const DEFAULT_REMINDER_THRESHOLD_CHARS$1 = 12e4;
 const DEFAULT_RECENT_RAW_TARGET_CHARS$1 = 24e3;
@@ -795,6 +1201,9 @@ class CompressionTaskManager {
   }
   getReminderThresholdChars() {
     return this.reminderThresholdChars;
+  }
+  getRecentRawTargetChars() {
+    return this.recentRawTargetChars;
   }
   getRecentRawStartIndex() {
     return this.recentRawStartIndex;
@@ -1133,6 +1542,7 @@ class ConversationLedger {
     for (const message of this.messages) {
       if (message.kind === "proposal_message" && message.status === "pending") {
         message.status = "superseded";
+        this.pendingStatusUpdates.add(message.id);
         count++;
         if (!this.suppressPersistence) {
           this.sink.onMessageUpdated(message);
@@ -1159,16 +1569,20 @@ class ConversationLedger {
       this.totalMessages = snapshot.totalMessages;
       this.messages = snapshot.messages.map((message) => ({ ...message }));
       this.cursors = { ...snapshot.cursors };
+      this.pendingStatusUpdates.clear();
     } finally {
       this.suppressPersistence = false;
     }
   }
+  pendingStatusUpdates = /* @__PURE__ */ new Set();
   flushPendingUpdates() {
-    for (const message of this.messages) {
-      if (message.kind === "proposal_message" && message.status !== "pending") {
+    for (const id of this.pendingStatusUpdates) {
+      const message = this.messages.find((m) => m.id === id);
+      if (message && message.kind === "proposal_message") {
         this.sink.onMessageUpdated(message);
       }
     }
+    this.pendingStatusUpdates.clear();
   }
   toPendingProposal(proposalId) {
     const proposal = this.getProposalById(proposalId);
@@ -1192,6 +1606,7 @@ class ConversationLedger {
       throw new Error(`Proposal ${proposalId} is ${proposal.status}; cannot transition to ${status}`);
     }
     proposal.status = status;
+    this.pendingStatusUpdates.add(proposalId);
     if (!this.suppressPersistence) {
       this.sink.onMessageUpdated(proposal);
     }
@@ -1203,231 +1618,6 @@ class ConversationLedger {
       end++;
     }
     return end;
-  }
-}
-const DISPLAY_NAMES = {
-  "agent-a": "Agent A",
-  "agent-b": "Agent B",
-  incoming: "Incoming Message",
-  system: "System"
-};
-function getDisplayName(author) {
-  return DISPLAY_NAMES[author] ?? author;
-}
-function renderProposalDetail(proposal) {
-  switch (proposal.toolName) {
-    case "yield":
-      return `The proposed upward handoff content is:
-
----
-${proposal.args.content}
----`;
-    case "report":
-      return `The proposed upward coordination message is:
-
----
-${proposal.args.content}
----`;
-    case "compressContext":
-      return `Preservation requirements:
----
-${String(proposal.args.requirements)}
----`;
-    case "bash":
-      return `Command: \`${proposal.args.command}\``;
-    case "readFile": {
-      const offset = proposal.args.offset;
-      const limit = proposal.args.limit;
-      const hasRange = offset !== void 0 || limit !== void 0;
-      const start = offset ?? 1;
-      const end = limit !== void 0 ? start + limit - 1 : "end";
-      const rangeInfo = hasRange ? ` (lines ${start}-${end})` : "";
-      return `File path: \`${proposal.args.path}\`${rangeInfo}`;
-    }
-    case "writeFile":
-      return `File path: \`${proposal.args.path}\`
-Content:
----
-${String(proposal.args.content)}
----`;
-    case "sleep":
-      return `Timeout: ${proposal.args.timeoutSeconds}s`;
-    case "spawnChild": {
-      return `Task:
----
-${String(proposal.args.task)}
----`;
-    }
-    case "sendToChild":
-      return `Child: ${proposal.args.childId}
-Message:
----
-${String(proposal.args.message)}
----`;
-    default:
-      return `Arguments:
-${JSON.stringify(proposal.args, null, 2) ?? "{}"}`;
-  }
-}
-function renderProposalMessage(message) {
-  const authorName = getDisplayName(message.authoredBy);
-  return {
-    role: "user",
-    content: `[Public Fact][Proposal]
-Author: ${authorName}
-Proposal ID: ${message.id}
-Tool: ${message.toolName}
-Status: ${message.status}
-Proposed step: ${message.proposedStep}
-${renderProposalDetail(message)}`,
-    timestamp: message.timestamp
-  };
-}
-function renderVoteMessage(message) {
-  const voterName = getDisplayName(message.authoredBy);
-  return {
-    role: "user",
-    content: `[Public Fact][Vote]
-Voter: ${voterName}
-Proposal ID: ${message.proposalId}
-Decision: ${message.approve ? "APPROVE" : "REJECT"}
-Reason: ${message.reason}`,
-    timestamp: message.timestamp
-  };
-}
-function renderConversationMessage(message) {
-  if (message.kind === "proposal_message") {
-    return renderProposalMessage(message);
-  }
-  if (message.kind === "vote_message") {
-    return renderVoteMessage(message);
-  }
-  if (message.kind === "tool_result_message") {
-    return {
-      role: "user",
-      content: `[Public Fact][Tool Result]
-Tool result for ${message.toolName} on proposal ${message.proposalId}:
-Success: ${message.success ? "true" : "false"}
-Duration: ${message.durationMs}ms
-Output:
-${message.output}`,
-      timestamp: message.timestamp
-    };
-  }
-  if (message.kind === "upward_message") {
-    return {
-      role: "user",
-      content: `[Public Fact][Upward Message]
-Delivery mode: ${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}
-Content:
-${message.content}`,
-      timestamp: message.timestamp
-    };
-  }
-  if (message.kind === "child_report_message") {
-    return {
-      role: "user",
-      content: `[Public Fact][Child Report]
-Child: ${message.childId}
-Delivery mode: ${message.deliveryMode}
-Content:
-${message.content}`,
-      timestamp: message.timestamp
-    };
-  }
-  if (message.kind === "system_message") {
-    return {
-      role: "user",
-      content: `[Public Fact][Unit Runtime]
-${message.content}`,
-      timestamp: message.timestamp
-    };
-  }
-  if (message.kind === "child_commit_view_message") {
-    return {
-      role: "user",
-      content: message.content,
-      timestamp: message.timestamp
-    };
-  }
-  const prefix = getDisplayName(message.authoredBy);
-  const content = "content" in message ? message.content : "";
-  return {
-    role: "user",
-    content: `[${prefix}]: ${content}`,
-    timestamp: message.timestamp
-  };
-}
-class ConversationProjector {
-  projectVisibleMessages(messages) {
-    return messages.map((message) => renderConversationMessage(message));
-  }
-  buildMemorySnapshotMessage(snapshot) {
-    return {
-      role: "user",
-      content: `[Context Snapshot][Memory Snapshot]
-The following Memory Snapshot was compressed from earlier conversation history. Treat it as reference context rather than verbatim transcript. Some recent raw messages may overlap with it.
-
-${snapshot.content}`,
-      timestamp: snapshot.createdAt
-    };
-  }
-  buildNewlyVisibleBoundaryOverlay(agentId, count) {
-    const agentName = getDisplayName(agentId);
-    const lines = [
-      "[Context Boundary]",
-      count === 1 ? `The message below this marker became newly visible in this turn for ${agentName}.` : `${count} messages below this marker became newly visible in this turn for ${agentName}.`,
-      count === 1 ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.` : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`
-    ];
-    return {
-      role: "user",
-      content: lines.join("\n"),
-      timestamp: Date.now()
-    };
-  }
-  buildCompressionReminderOverlay(agentId, estimatedChars, thresholdChars) {
-    const agentName = getDisplayName(agentId);
-    return {
-      role: "user",
-      content: `[Context Reminder]
-The recent raw context visible to ${agentName} is estimated at about ${estimatedChars} characters, above the reminder threshold of about ${thresholdChars} characters. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
-      timestamp: Date.now()
-    };
-  }
-  buildProposalNotification(proposal, proposerName, voterName) {
-    return {
-      role: "user",
-      content: `[Directive]
-${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.
-${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.`,
-      timestamp: Date.now()
-    };
-  }
-  buildChildCommitViewMessage(agentId, childCommitViews) {
-    if (childCommitViews.length === 0) {
-      return null;
-    }
-    const agentName = getDisplayName(agentId);
-    const lines = [
-      "[Context Snapshot]",
-      `The following currently visible child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`
-    ];
-    for (const view of childCommitViews) {
-      lines.push(`- ${view.childId} [state: ${view.state}]`);
-      if (view.committedSteps.length === 0) {
-        lines.push("  - no committed steps yet");
-        continue;
-      }
-      for (const step of view.committedSteps) {
-        const proposerName = getDisplayName(step.proposedBy);
-        lines.push(`  - ${proposerName} via ${step.toolName}: ${step.proposedStep}`);
-      }
-    }
-    return {
-      role: "user",
-      content: lines.join("\n"),
-      timestamp: Date.now()
-    };
   }
 }
 const AGENT_NAMES = {
@@ -1477,8 +1667,8 @@ class DeliberationUnit {
     this.ledger = new ConversationLedger(options.messagePersistenceSink);
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot);
+    this.agentA = new AgentTurn("agent-a", this.llmClient);
+    this.agentB = new AgentTurn("agent-b", this.llmClient);
     this.onSystemEvent = options.onSystemEvent ?? (() => {
     });
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {
@@ -1495,12 +1685,16 @@ class DeliberationUnit {
     this.ledger.appendIncomingMessage(content, this.buildDeferredVisibilityMeta());
     this.notifyDurableStateChange();
     this.emit({ type: "incoming-message", scope: this.scope, content });
+    console.log(`[DU:${this.unitId}] injectUserMessage: state=${this.state}, loopRunning=${this.loopRunning}`);
     if (this.state === "idle" && !this.loopRunning) {
       this.transition(this.state, "turn-a");
       this.loopRunning = true;
+      console.log(`[DU:${this.unitId}] Starting runLoop from idle → turn-a`);
       this.runLoop().catch((err) => {
+        console.error(`[DU:${this.unitId}] runLoop crashed:`, err);
         this.emit({ type: "error", scope: this.scope, message: `Deliberation loop crashed: ${err}` });
       }).finally(() => {
+        console.log(`[DU:${this.unitId}] runLoop finished, state=${this.state}`);
         this.loopRunning = false;
       });
     }
@@ -1763,42 +1957,80 @@ class DeliberationUnit {
   sameScope(left, right) {
     return left.level === right.level && left.path.length === right.path.length && left.path.every((segment, index) => segment === right.path[index]);
   }
-  buildTurnMessages(agentId, visibleMessages, newlyVisibleMessages, pendingProposal, childCommitViews) {
-    const messages = [];
+  buildImmediateVisibilityMeta() {
+    return {
+      turnAuthored: this.turnCounter,
+      visibleFromTurn: this.turnCounter
+    };
+  }
+  appendChildCommitViewSnapshot(agentId, childCommitViews) {
+    if (childCommitViews.length === 0) {
+      return;
+    }
+    const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
+    if (rendered && rendered.role === "user") {
+      this.ledger.appendChildCommitViewMessage(rendered.content, this.buildImmediateVisibilityMeta());
+      this.notifyDurableStateChange();
+    }
+  }
+  persistContextTextRefs() {
     const memorySnapshot = this.compressionManager.getMemorySnapshot();
-    const recentRawMessages = this.compressionManager.getRecentRawMessages(visibleMessages);
-    const recentNewMessageIds = new Set(newlyVisibleMessages.map((message) => message.id));
-    const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
-    const oldRecentRawMessages = firstRecentNewIndex === -1 ? recentRawMessages : recentRawMessages.slice(0, firstRecentNewIndex);
-    const newRecentRawMessages = firstRecentNewIndex === -1 ? [] : recentRawMessages.slice(firstRecentNewIndex);
+    const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
+    if (!this.contextPersistenceSink) {
+      return {
+        memorySnapshotRowid: null,
+        agentMdRowid: null,
+        workspaceKnowledge
+      };
+    }
+    let memorySnapshotRowid = null;
     if (memorySnapshot) {
-      messages.push(this.projector.buildMemorySnapshotMessage(memorySnapshot));
+      const metadata = JSON.stringify({
+        sourceMessageCount: memorySnapshot.sourceMessageCount,
+        requirements: memorySnapshot.requirements
+      });
+      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
+        this.unitId,
+        "memory_snapshot",
+        memorySnapshot.content,
+        metadata
+      );
     }
-    messages.push(...this.projector.projectVisibleMessages(oldRecentRawMessages));
-    if (newRecentRawMessages.length > 0) {
-      messages.push(this.projector.buildNewlyVisibleBoundaryOverlay(agentId, newRecentRawMessages.length));
-      messages.push(...this.projector.projectVisibleMessages(newRecentRawMessages));
-    }
-    if (this.compressionManager.shouldShowReminder(visibleMessages)) {
-      messages.push(this.projector.buildCompressionReminderOverlay(
-        agentId,
-        this.compressionManager.estimateRecentRawChars(visibleMessages),
-        this.compressionManager.getReminderThresholdChars()
-      ));
-    }
-    if (childCommitViews.length > 0) {
-      const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
-      if (rendered && rendered.role === "user") {
-        this.ledger.appendChildCommitViewMessage(rendered.content, this.buildDeferredVisibilityMeta());
-        this.notifyDurableStateChange();
-      }
-    }
-    if (pendingProposal && pendingProposal.proposer !== agentId) {
-      const proposerName = AGENT_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
-      const voterName = AGENT_NAMES[agentId] ?? agentId;
-      messages.push(this.projector.buildProposalNotification(pendingProposal, proposerName, voterName));
-    }
-    return messages;
+    const agentMdRowid = workspaceKnowledge !== null ? this.contextPersistenceSink.saveContextTextHistory(
+      this.unitId,
+      "agent_md",
+      workspaceKnowledge,
+      JSON.stringify({ path: `${this.workspaceRoot}/AGENT.md` })
+    ) : null;
+    return {
+      memorySnapshotRowid,
+      agentMdRowid,
+      workspaceKnowledge
+    };
+  }
+  createContextRecipeFromPlan(plan) {
+    if (!this.contextPersistenceSink) return;
+    const recipe = {
+      unitId: this.unitId,
+      agentId: plan.agentId,
+      recentRawStartSeq: plan.recentRawStartSeq,
+      visibleEndSeq: plan.visibleEndSeq,
+      newlyVisibleSeq: plan.newlyVisibleSeq,
+      memorySnapshotRowid: plan.memorySnapshotRowid,
+      agentMdRowid: plan.agentMdRowid,
+      level: plan.level,
+      hasPendingFromOther: plan.hasPendingFromOther,
+      hasChildren: plan.hasChildren,
+      canSpawnChild: plan.canSpawnChild,
+      compressionReminderShown: plan.compressionReminderShown,
+      compressionReminderChars: plan.compressionReminderChars,
+      compressionReminderThresholdChars: plan.compressionReminderThresholdChars,
+      truncationApplied: plan.truncationApplied,
+      truncationReason: plan.truncationReason,
+      truncationLevel: plan.truncationLevel,
+      effectiveTurn: plan.effectiveTurn
+    };
+    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
   }
   buildCompressionTaskStartMessage(task) {
     const requirementsPreview = task.requirements.length > 160 ? `${task.requirements.slice(0, 160)}...` : task.requirements;
@@ -1834,41 +2066,6 @@ ${renderedHistory || "No recent raw conversation history is available."}
 Write a refreshed Memory Snapshot that integrates the earlier snapshot reference with the recent raw window. Overlap between them is expected rather than erroneous.`,
       timestamp: Date.now()
     };
-  }
-  createContextRecipe(agentId, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild) {
-    if (!this.contextPersistenceSink) return;
-    const memorySnapshot = this.compressionManager.getMemorySnapshot();
-    let memorySnapshotRowid = null;
-    if (memorySnapshot) {
-      const metadata = JSON.stringify({
-        sourceMessageCount: memorySnapshot.sourceMessageCount,
-        requirements: memorySnapshot.requirements
-      });
-      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
-        this.unitId,
-        "memory_snapshot",
-        memorySnapshot.content,
-        metadata
-      );
-    }
-    const recentRawStartSeq = this.ledger.currentSequenceStart + this.compressionManager.getRecentRawStartIndex();
-    const visibleEndSeq = this.ledger.currentSequenceStart + this.ledger.currentMessageCount;
-    const newlyVisibleSeq = visibleSnapshot.newlyVisibleMessages.length > 0 ? this.ledger.currentSequenceStart + (this.ledger.currentMessageCount - visibleSnapshot.newlyVisibleMessages.length) : null;
-    const recipe = {
-      unitId: this.unitId,
-      agentId,
-      recentRawStartSeq,
-      visibleEndSeq,
-      newlyVisibleSeq,
-      memorySnapshotRowid,
-      agentMdRowid: null,
-      level: this.level,
-      hasPendingFromOther,
-      hasChildren,
-      canSpawnChild,
-      effectiveTurn: this.turnCounter
-    };
-    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
   }
   linkRecipeOutputMessage(outputMessageId) {
     if (this.activeRecipeId !== null && this.contextPersistenceSink) {
@@ -1918,6 +2115,10 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
       this.wakeIfIdle();
     }
   }
+  static isContextTooLongError(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return msg.includes("max message tokens") || msg.includes("context_length_exceeded") || msg.includes("context window") || msg.includes("maximum context") || msg.includes("tokens exceed") || msg.includes("token limit") || msg.includes("400") && msg.includes("tokens");
+  }
   async runLoop() {
     while (this.state === "turn-a" || this.state === "turn-b") {
       const currentAgent = this.state === "turn-a" ? "agent-a" : "agent-b";
@@ -1925,45 +2126,99 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
       const agentTurn = currentAgent === "agent-a" ? this.agentA : this.agentB;
       this.turnCounter++;
       this.notifyDurableStateChange();
-      const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
       const hasChildren = this.hasChildren();
-      const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
+      this.appendChildCommitViewSnapshot(currentAgent, childCommitViews);
+      const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
+      const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
       const pendingProposal = this.getPendingProposal();
-      const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
-      const turnMessages = this.buildTurnMessages(
-        currentAgent,
-        visibleSnapshot.visibleMessages,
-        visibleSnapshot.newlyVisibleMessages,
+      const persistedContextTextRefs = this.persistContextTextRefs();
+      const reminderShown = this.compressionManager.shouldShowReminder(visibleSnapshot.visibleMessages);
+      const reminderChars = reminderShown ? this.compressionManager.estimateRecentRawChars(visibleSnapshot.visibleMessages) : null;
+      const reminderThresholdChars = reminderShown ? this.compressionManager.getReminderThresholdChars() : null;
+      let budgetPlan = createTurnContextBudgetPlan({
+        visibleMessages: visibleSnapshot.visibleMessages,
+        newlyVisibleMessages: visibleSnapshot.newlyVisibleMessages,
+        currentSequenceStart: this.ledger.currentSequenceStart,
+        baseRecentRawStartSeq: this.ledger.currentSequenceStart + this.compressionManager.getRecentRawStartIndex(),
+        compressionReminderShown: reminderShown,
+        compressionReminderChars: reminderChars,
+        compressionReminderThresholdChars: reminderThresholdChars,
+        hardRecentRawCharLimit: this.compressionManager.getRecentRawTargetChars()
+      });
+      const assembleCurrentTurn = (plan) => assembleTurnContext({
+        unitId: this.unitId,
+        agentId: currentAgent,
+        level: this.level,
+        workspaceRoot: this.workspaceRoot,
+        workspaceKnowledge: persistedContextTextRefs.workspaceKnowledge,
+        agentMdRowid: persistedContextTextRefs.agentMdRowid,
+        visibleMessages: visibleSnapshot.visibleMessages,
+        newlyVisibleMessages: visibleSnapshot.newlyVisibleMessages,
         pendingProposal,
-        childCommitViews
-      );
-      this.createContextRecipe(currentAgent, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild);
+        hasChildren,
+        canSpawnChild,
+        memorySnapshot: this.compressionManager.getMemorySnapshot(),
+        memorySnapshotRowid: persistedContextTextRefs.memorySnapshotRowid,
+        budgetPlan: plan,
+        effectiveTurn: this.turnCounter
+      });
+      let assembled = assembleCurrentTurn(budgetPlan);
       this.emit({
         type: "turn-start",
         scope: this.scope,
         turn: this.turnCounter,
         agent: currentAgent,
         state: this.state,
-        contextSize: turnMessages.length,
+        contextSize: assembled.llmContext.messages.length,
         newMessages: visibleSnapshot.newlyVisibleMessages.length
       });
       let result;
-      try {
-        result = await agentTurn.execute(
-          turnMessages,
-          hasPendingFromOther,
-          hasChildren,
-          canSpawnChild
-        );
-      } catch (err) {
-        this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
-        this.transition(this.state, "idle");
-        return;
+      while (true) {
+        this.createContextRecipeFromPlan(assembled.plan);
+        if (assembled.plan.truncationApplied) {
+          this.emit({
+            type: "warning",
+            scope: this.scope,
+            message: `Context pressure required truncation before calling ${agentName} (reason: ${assembled.plan.truncationReason}, level: ${assembled.plan.truncationLevel}).`
+          });
+        }
+        console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: calling LLM with ${assembled.llmContext.messages.length} messages, recentRawStartSeq=${assembled.plan.recentRawStartSeq}, visibleEndSeq=${assembled.plan.visibleEndSeq}, truncationLevel=${assembled.plan.truncationLevel}`);
+        try {
+          result = await agentTurn.execute(assembled.llmContext, assembled.tools);
+          break;
+        } catch (err) {
+          console.error(`[DU:${this.unitId}] LLM call failed (truncation level ${assembled.plan.truncationLevel}):`, err);
+          if (!DeliberationUnit.isContextTooLongError(err)) {
+            this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
+            this.transition(this.state, "idle");
+            return;
+          }
+          const tightenedPlan = tightenTurnContextBudgetPlan({
+            visibleMessages: visibleSnapshot.visibleMessages,
+            currentSequenceStart: this.ledger.currentSequenceStart,
+            currentPlan: budgetPlan,
+            targetRecentRawChars: Math.max(Math.floor(this.compressionManager.getRecentRawTargetChars() / 2), 1200)
+          });
+          if (!tightenedPlan) {
+            this.emit({ type: "error", scope: this.scope, message: `Context too long for ${agentName} even after deterministic recent-raw truncation. Please compress the context manually using compressContext.` });
+            this.transition(this.state, "idle");
+            return;
+          }
+          budgetPlan = tightenedPlan;
+          assembled = assembleCurrentTurn(budgetPlan);
+          this.emit({
+            type: "warning",
+            scope: this.scope,
+            message: `Context too long — rebuilding ${agentName}'s turn with a tighter recent-raw window (truncation level ${assembled.plan.truncationLevel}).`
+          });
+        }
       }
+      console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: reply=${JSON.stringify(result.reply?.slice(0, 100))}, action=${result.action?.kind ?? "none"}, stopReason=${result.stopReason}, broadcasts=${result.unitRuntimeBroadcasts?.length ?? 0}`);
       const isEmpty = !result.reply?.trim() && !result.action && !result.unitRuntimeBroadcasts?.length;
       if (isEmpty) {
         this.consecutiveEmptyTurns++;
+        console.warn(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: EMPTY response (consecutive=${this.consecutiveEmptyTurns}/${DeliberationUnit.MAX_EMPTY_TURNS})`);
         if (this.consecutiveEmptyTurns >= DeliberationUnit.MAX_EMPTY_TURNS) {
           this.emit({ type: "error", scope: this.scope, message: `${DeliberationUnit.MAX_EMPTY_TURNS} consecutive empty responses detected. Halting — likely API misconfiguration (wrong key, URL, or model).` });
           this.transition(this.state, "idle");
@@ -1996,13 +2251,14 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         if (vote.approve) {
           const approvedProposal = pendingProposal;
           this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: true, reason: vote.reason });
-          this.ledger.appendVoteMessage({
+          const voteMessage = this.ledger.appendVoteMessage({
             voter: currentAgent,
             proposalId: approvedProposal.messageId,
             approve: true,
             reason: vote.reason,
             ...voteMeta
           });
+          this.linkRecipeOutputMessage(voteMessage.id);
           this.ledger.markProposalApproved(approvedProposal.messageId);
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
@@ -2044,26 +2300,28 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
           }
         } else {
           this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: false, reason: vote.reason });
-          this.ledger.appendVoteMessage({
+          const voteMessage = this.ledger.appendVoteMessage({
             voter: currentAgent,
             proposalId: pendingProposal.messageId,
             approve: false,
             reason: vote.reason,
             ...voteMeta
           });
+          this.linkRecipeOutputMessage(voteMessage.id);
           this.ledger.markProposalRejected(pendingProposal.messageId);
           this.notifyDurableStateChange();
         }
       }
       if (result.action?.kind === "proposal") {
         const proposal = result.action.proposal;
-        this.ledger.appendProposalMessage({
+        const proposalMessage = this.ledger.appendProposalMessage({
           authoredBy: currentAgent,
           toolName: proposal.toolName,
           args: proposal.args,
           proposedStep: proposal.proposedStep,
           ...this.buildDeferredVisibilityMeta()
         });
+        this.linkRecipeOutputMessage(proposalMessage.id);
         this.notifyDurableStateChange();
         this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: proposal.toolName, args: proposal.args });
         const resolvedTool = getBuiltInToolRegistry(this.level).get(proposal.toolName);
@@ -2278,7 +2536,11 @@ class PiAiLlmClient {
       messages: context.messages,
       tools: context.tools
     }, options);
-    return response;
+    const result = response;
+    if (response.errorMessage) {
+      result.errorMessage = response.errorMessage;
+    }
+    return result;
   }
 }
 function createPiAiLlmClient(config) {
@@ -2433,7 +2695,7 @@ const DEFAULT_REMINDER_THRESHOLD_CHARS = 12e4;
 const DEFAULT_RECENT_RAW_TARGET_CHARS = 24e3;
 const DEFAULT_MAX_RETRIES = 1;
 const AGENT_IDS = ["agent-a", "agent-b"];
-const CURRENT_SCHEMA_VERSION = "11";
+const CURRENT_SCHEMA_VERSION = "12";
 function parseJson(value) {
   return JSON.parse(value);
 }
@@ -2746,6 +3008,12 @@ class SqliteSessionPersistence {
         has_pending_from_other INTEGER NOT NULL DEFAULT 0,
         has_children INTEGER NOT NULL DEFAULT 0,
         can_spawn_child INTEGER NOT NULL DEFAULT 0,
+        compression_reminder_shown INTEGER NOT NULL DEFAULT 0,
+        compression_reminder_chars INTEGER,
+        compression_reminder_threshold_chars INTEGER,
+        truncation_applied INTEGER NOT NULL DEFAULT 0,
+        truncation_reason TEXT NOT NULL DEFAULT 'none',
+        truncation_level INTEGER NOT NULL DEFAULT 0,
         output_message_id TEXT,
         effective_turn INTEGER,
         created_at INTEGER NOT NULL
@@ -3124,8 +3392,10 @@ class SqliteSessionPersistence {
         unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
         memory_snapshot_rowid, agent_md_rowid, level,
         has_pending_from_other, has_children, can_spawn_child,
+        compression_reminder_shown, compression_reminder_chars, compression_reminder_threshold_chars,
+        truncation_applied, truncation_reason, truncation_level,
         effective_turn, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       recipe.unitId,
       recipe.agentId,
@@ -3138,6 +3408,12 @@ class SqliteSessionPersistence {
       recipe.hasPendingFromOther ? 1 : 0,
       recipe.hasChildren ? 1 : 0,
       recipe.canSpawnChild ? 1 : 0,
+      recipe.compressionReminderShown ? 1 : 0,
+      recipe.compressionReminderChars,
+      recipe.compressionReminderThresholdChars,
+      recipe.truncationApplied ? 1 : 0,
+      recipe.truncationReason,
+      recipe.truncationLevel,
       recipe.effectiveTurn,
       Date.now()
     );
@@ -3152,7 +3428,9 @@ class SqliteSessionPersistence {
     const row = this.db.prepare(
       `SELECT recipe_id, unit_id, agent_id, recent_raw_start_seq, visible_end_seq, newly_visible_seq,
               memory_snapshot_rowid, agent_md_rowid, level,
-              has_pending_from_other, has_children, can_spawn_child, effective_turn
+              has_pending_from_other, has_children, can_spawn_child,
+              compression_reminder_shown, compression_reminder_chars, compression_reminder_threshold_chars,
+              truncation_applied, truncation_reason, truncation_level, effective_turn
        FROM context_recipe WHERE output_message_id = ? LIMIT 1`
     ).get(messageId);
     if (!row) return null;
@@ -3168,6 +3446,12 @@ class SqliteSessionPersistence {
       hasPendingFromOther: row.has_pending_from_other !== 0,
       hasChildren: row.has_children !== 0,
       canSpawnChild: row.can_spawn_child !== 0,
+      compressionReminderShown: row.compression_reminder_shown !== 0,
+      compressionReminderChars: row.compression_reminder_chars,
+      compressionReminderThresholdChars: row.compression_reminder_threshold_chars,
+      truncationApplied: row.truncation_applied !== 0,
+      truncationReason: row.truncation_reason,
+      truncationLevel: row.truncation_level,
       effectiveTurn: row.effective_turn
     };
   }
@@ -3180,7 +3464,7 @@ class SqliteSessionPersistence {
   }
   getLedgerMessagesBySeqRange(unitId, startSeq, endSeq) {
     const rows = this.db.prepare(
-      `SELECT body FROM (
+      `SELECT seq, body FROM (
         SELECT body, seq, message_id, version,
                ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
         FROM ledger_messages
@@ -3188,7 +3472,10 @@ class SqliteSessionPersistence {
       ) WHERE rn = 1
       ORDER BY seq ASC`
     ).all(unitId, startSeq, endSeq);
-    return rows.map((row) => parseJson(row.body));
+    return rows.map((row) => ({
+      seq: row.seq,
+      message: parseJson(row.body)
+    }));
   }
 }
 const store = new ElectronStore({
@@ -3352,28 +3639,23 @@ function reconstructContext(deps, messageId) {
     workspaceRoot2,
     workspaceKnowledge
   );
-  const allMessages = persistence2.getLedgerMessagesBySeqRange(
+  const sequencedMessages = persistence2.getLedgerMessagesBySeqRange(
     recipe.unitId,
     recipe.recentRawStartSeq,
     recipe.visibleEndSeq
   );
+  const allMessages = sequencedMessages.map((entry) => entry.message);
   const projector = new ConversationProjector();
-  let oldMessages;
-  let newMessages;
+  let oldMessages = allMessages;
+  let newMessages = [];
   if (recipe.newlyVisibleSeq !== null) {
     const splitIndex = allMessages.findIndex(
-      (m) => m.turnAuthored >= recipe.effectiveTurn
+      (_message, index) => sequencedMessages[index].seq >= recipe.newlyVisibleSeq
     );
     if (splitIndex >= 0) {
       oldMessages = allMessages.slice(0, splitIndex);
       newMessages = allMessages.slice(splitIndex);
-    } else {
-      oldMessages = allMessages;
-      newMessages = [];
     }
-  } else {
-    oldMessages = allMessages;
-    newMessages = [];
   }
   const messages = [];
   if (recipe.memorySnapshotRowid !== null) {
@@ -3392,6 +3674,13 @@ function reconstructContext(deps, messageId) {
   if (newMessages.length > 0) {
     messages.push(projector.buildNewlyVisibleBoundaryOverlay(recipe.agentId, newMessages.length));
     messages.push(...projector.projectVisibleMessages(newMessages));
+  }
+  if (recipe.compressionReminderShown && recipe.compressionReminderChars !== null && recipe.compressionReminderThresholdChars !== null) {
+    messages.push(projector.buildCompressionReminderOverlay(
+      recipe.agentId,
+      recipe.compressionReminderChars,
+      recipe.compressionReminderThresholdChars
+    ));
   }
   const tools = getBuiltInToolList(
     recipe.hasPendingFromOther,
@@ -3478,6 +3767,7 @@ function registerDataIpc() {
   ipcMain.handle("send-message", async (_event, content) => {
     const s = getSession();
     if (!s) return { ok: false, error: "No active session" };
+    console.log(`[IPC] send-message: "${content.slice(0, 100)}", unitState=${s.getState()}`);
     s.sendUserMessage(content);
     return { ok: true };
   });

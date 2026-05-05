@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
-date: 2026-05-03
-version: 10.1
+date: 2026-05-05
+version: 10.2
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -80,7 +80,7 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 - **公共事实 vs 控制 overlay**：共享历史写入 ledger；当前轮动作约束只作为私有 overlay 注入。
 - **轮次可见性边界**：消息在异步写入后，仅从 `visibleFromTurn` 起被后续轮次看到。
 - **方向命名显式化**：收到的消息使用 `incoming`，向上发送的消息使用 `upward`。
-- **双表 append-only 事实模型**：上下文重建仅依赖两张 append-only 事实表——`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。所有记录写入后不可变；重建仅读取，不回写。`context_recipe` 记录每次 LLM 调用的输入事实边界（seq 范围 + rowid 引用），使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
+- **双表 append-only 事实模型**：上下文重建仅依赖两张 append-only 事实表——`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。所有记录写入后不可变；重建仅读取，不回写。`context_recipe` 记录每次 LLM 调用**最终实际采用的投影边界**（seq 范围 + rowid 引用 + reminder/truncation 元数据），使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 2.3 压缩视图摘要
 
@@ -91,6 +91,7 @@ Elenchus 将“消息内容”与“消息记录”分开处理：
 
 压缩属于投影层派生视图，不能回写或污染 `ConversationLedger`。详细约束见 [`context-compression.md`](./framework-design/context-compression.md)。
 当存在已持久化的 `Memory Snapshot` 时，冷启动恢复不必急于加载完整聊天历史，而应优先用 `Memory Snapshot + Recent Raw Window` 重建继续 deliberation 所需的最小工作集。Memory Snapshot 现通过 `context_text_history`（category: `memory_snapshot`）持久化，取代旧的 `unit_memory_state` 表；recipe 通过 `memory_snapshot_rowid` 精确引用快照行，无需扫描全表。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
+当上下文预算超限时，运行时允许在投影层对 `Recent Raw Window` 做确定性的、仅当前 turn 生效的边界收紧。该 budget-driven truncation 只改变本轮的 recent-raw 起点，不改写 ledger 历史；recipe 会记录最终实际使用的 recent-raw 边界与截断元数据。详细设计见 [`context-compression.md`](./framework-design/context-compression.md) 与 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 2.4 知识视图（已收敛方向）
 
@@ -177,9 +178,9 @@ Agent 之间的协作依赖两个本质不同的通信通道：
 
 父层对失控子单元的强制终止属于**控制平面**操作，而非一条普通聊天消息。这一点保证“协作消息”和“强制控制”在语义上不混杂。
 
-当前实现还引入了面向冷启动的恢复边界：运行目录下的 `elenchus.db` 保存可恢复的 session 持久化状态。SQLite 中保留全量 durable history，而冷启动恢复只重建继续 deliberation 所需的工作集。当前 schema 明确不依赖数据库外键维护 unit graph 完整性；关系一致性由应用层持久化逻辑与“先保存 unit、后保存 relation”的写入顺序保证。当前 schema 通过 `schema_meta` 中的显式版本号管理（当前版本 11）；在快速演进阶段，如版本不匹配则直接重建本地数据库，而不承诺旧库兼容迁移。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
+当前实现还引入了面向冷启动的恢复边界：运行目录下的 `elenchus.db` 保存可恢复的 session 持久化状态。SQLite 中保留全量 durable history，而冷启动恢复只重建继续 deliberation 所需的工作集。当前 schema 明确不依赖数据库外键维护 unit graph 完整性；关系一致性由应用层持久化逻辑与“先保存 unit、后保存 relation”的写入顺序保证。当前 schema 通过 `schema_meta` 中的显式版本号管理（当前版本 12）；在快速演进阶段，如版本不匹配则直接重建本地数据库，而不承诺旧库兼容迁移。重启时不会尝试恢复半个 turn 或半个执行过程；若持久化状态是 `TurnA`、`TurnB` 或 `Executing`，则统一归一化到 `Idle`，并补写恢复事实供后续轮次理解中断背景。
 
-上下文可观测性采用双表 append-only 事实模型：`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。旧的 `unit_memory_state` 表已被移除，Memory Snapshot 统一通过 `context_text_history` 持久化。`context_recipe` 记录每次 LLM 调用的输入事实边界，使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
+上下文可观测性采用双表 append-only 事实模型：`ledger_messages`（连续事件流，按 seq 范围引用）与 `context_text_history`（离散文本快照，按 rowid 引用）。旧的 `unit_memory_state` 表已被移除，Memory Snapshot 统一通过 `context_text_history` 持久化。`context_recipe` 记录每次 LLM 调用最终实际采用的输入事实边界与关键投影元数据，使上下文可精确重建。详细设计见 [`context-observability.md`](./framework-design/context-observability.md)。
 
 ### 3.5 本章相关核心原则
 

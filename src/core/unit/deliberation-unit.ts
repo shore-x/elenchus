@@ -10,17 +10,25 @@
 
 import { AgentTurn } from "./agent-turn.js";
 import { getBuiltInToolRegistry } from "../tools.js";
+import { assembleTurnContext, type TurnContextPlan } from "../context/context-assembler.js";
+import { createTurnContextBudgetPlan, tightenTurnContextBudgetPlan, type TurnContextBudgetPlan } from "../context/context-budget-controller.js";
 import { type ActiveCompressionTask, CompressionTaskManager } from "./compression-task-manager.js";
 import { ConversationLedger, type MessagePersistenceSink } from "../conversation-ledger.js";
 import { ConversationProjector } from "../conversation-projector.js";
-import { buildCompressionSystemPrompt } from "../prompts.js";
+import { buildCompressionSystemPrompt, readRootAgentMd } from "../prompts.js";
 import type { LlmClient, LlmMessage, ToolExecutor } from "../ports.js";
-import { type AgentId, type ChildCommitView, type CommittedStep, type ContextRecipeData, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
+import { type AgentId, type ChildCommitView, type CommittedStep, type ContextRecipeData, type ConversationMessage, type DeliberationUnitSnapshot, type LedgerMessageMeta, type OnSystemEvent, type PendingProposal, type PersistedChildSnapshot, type SequencedConversationMessage, type SystemEvent, type ToolLevel, type UnitScope, type UnitState, type UpwardDeliveryMode } from "../types.js";
 
 const AGENT_NAMES: Record<AgentId, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
 };
+
+interface PersistedContextTextRefs {
+  memorySnapshotRowid: number | null;
+  agentMdRowid: number | null;
+  workspaceKnowledge: string | null;
+}
 
 export interface ContextPersistenceSink {
   saveContextTextHistory(unitId: string, category: string, content: string, metadata: string): number;
@@ -29,7 +37,7 @@ export interface ContextPersistenceSink {
   updateRecipeOutputMessageId(recipeId: number, outputMessageId: string): void;
   getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
   getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
-  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): ConversationMessage[];
+  getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[];
 }
 
 export interface DeliberationUnitOptions {
@@ -91,8 +99,8 @@ export class DeliberationUnit {
     this.ledger = new ConversationLedger(options.messagePersistenceSink);
     this.projector = new ConversationProjector();
     this.compressionManager = new CompressionTaskManager();
-    this.agentA = new AgentTurn("agent-a", this.llmClient, this.level, this.workspaceRoot);
-    this.agentB = new AgentTurn("agent-b", this.llmClient, this.level, this.workspaceRoot);
+    this.agentA = new AgentTurn("agent-a", this.llmClient);
+    this.agentB = new AgentTurn("agent-b", this.llmClient);
     this.onSystemEvent = options.onSystemEvent ?? (() => {});
     this.onDurableStateChange = options.onDurableStateChange ?? (() => {});
     this.messagePersistenceSink = options.messagePersistenceSink;
@@ -109,14 +117,18 @@ export class DeliberationUnit {
     this.notifyDurableStateChange();
     this.emit({ type: "incoming-message", scope: this.scope, content });
 
+    console.log(`[DU:${this.unitId}] injectUserMessage: state=${this.state}, loopRunning=${this.loopRunning}`);
     if (this.state === "idle" && !this.loopRunning) {
       this.transition(this.state, "turn-a");
       this.loopRunning = true;
+      console.log(`[DU:${this.unitId}] Starting runLoop from idle → turn-a`);
       this.runLoop()
         .catch((err) => {
+          console.error(`[DU:${this.unitId}] runLoop crashed:`, err);
           this.emit({ type: "error", scope: this.scope, message: `Deliberation loop crashed: ${err}` });
         })
         .finally(() => {
+          console.log(`[DU:${this.unitId}] runLoop finished, state=${this.state}`);
           this.loopRunning = false;
         });
     }
@@ -437,59 +449,91 @@ export class DeliberationUnit {
       && left.path.every((segment, index) => segment === right.path[index]);
   }
 
-  private buildTurnMessages(
-    agentId: AgentId,
-    visibleMessages: readonly ConversationMessage[],
-    newlyVisibleMessages: readonly ConversationMessage[],
-    pendingProposal: PendingProposal | null,
-    childCommitViews: readonly ChildCommitView[],
-  ): LlmMessage[] {
-    const messages: LlmMessage[] = [];
+  private buildImmediateVisibilityMeta(): LedgerMessageMeta {
+    return {
+      turnAuthored: this.turnCounter,
+      visibleFromTurn: this.turnCounter,
+    };
+  }
+
+  private appendChildCommitViewSnapshot(agentId: AgentId, childCommitViews: readonly ChildCommitView[]): void {
+    if (childCommitViews.length === 0) {
+      return;
+    }
+
+    const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
+    if (rendered && rendered.role === "user") {
+      this.ledger.appendChildCommitViewMessage(rendered.content as string, this.buildImmediateVisibilityMeta());
+      this.notifyDurableStateChange();
+    }
+  }
+
+  private persistContextTextRefs(): PersistedContextTextRefs {
     const memorySnapshot = this.compressionManager.getMemorySnapshot();
-    const recentRawMessages = this.compressionManager.getRecentRawMessages(visibleMessages);
-    const recentNewMessageIds = new Set(newlyVisibleMessages.map((message) => message.id));
-    const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
-    const oldRecentRawMessages = firstRecentNewIndex === -1
-      ? recentRawMessages
-      : recentRawMessages.slice(0, firstRecentNewIndex);
-    const newRecentRawMessages = firstRecentNewIndex === -1
-      ? []
-      : recentRawMessages.slice(firstRecentNewIndex);
+    const workspaceKnowledge = readRootAgentMd(this.workspaceRoot);
+    if (!this.contextPersistenceSink) {
+      return {
+        memorySnapshotRowid: null,
+        agentMdRowid: null,
+        workspaceKnowledge,
+      };
+    }
 
+    let memorySnapshotRowid: number | null = null;
     if (memorySnapshot) {
-      messages.push(this.projector.buildMemorySnapshotMessage(memorySnapshot));
+      const metadata = JSON.stringify({
+        sourceMessageCount: memorySnapshot.sourceMessageCount,
+        requirements: memorySnapshot.requirements,
+      });
+      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
+        this.unitId,
+        "memory_snapshot",
+        memorySnapshot.content,
+        metadata,
+      );
     }
 
-    messages.push(...this.projector.projectVisibleMessages(oldRecentRawMessages));
+    const agentMdRowid = workspaceKnowledge !== null
+      ? this.contextPersistenceSink.saveContextTextHistory(
+        this.unitId,
+        "agent_md",
+        workspaceKnowledge,
+        JSON.stringify({ path: `${this.workspaceRoot}/AGENT.md` }),
+      )
+      : null;
 
-    if (newRecentRawMessages.length > 0) {
-      messages.push(this.projector.buildNewlyVisibleBoundaryOverlay(agentId, newRecentRawMessages.length));
-      messages.push(...this.projector.projectVisibleMessages(newRecentRawMessages));
-    }
+    return {
+      memorySnapshotRowid,
+      agentMdRowid,
+      workspaceKnowledge,
+    };
+  }
 
-    if (this.compressionManager.shouldShowReminder(visibleMessages)) {
-      messages.push(this.projector.buildCompressionReminderOverlay(
-        agentId,
-        this.compressionManager.estimateRecentRawChars(visibleMessages),
-        this.compressionManager.getReminderThresholdChars(),
-      ));
-    }
+  private createContextRecipeFromPlan(plan: TurnContextPlan): void {
+    if (!this.contextPersistenceSink) return;
 
-    if (childCommitViews.length > 0) {
-      const rendered = this.projector.buildChildCommitViewMessage(agentId, childCommitViews);
-      if (rendered && rendered.role === "user") {
-        this.ledger.appendChildCommitViewMessage(rendered.content as string, this.buildDeferredVisibilityMeta());
-        this.notifyDurableStateChange();
-      }
-    }
+    const recipe: ContextRecipeData = {
+      unitId: this.unitId,
+      agentId: plan.agentId,
+      recentRawStartSeq: plan.recentRawStartSeq,
+      visibleEndSeq: plan.visibleEndSeq,
+      newlyVisibleSeq: plan.newlyVisibleSeq,
+      memorySnapshotRowid: plan.memorySnapshotRowid,
+      agentMdRowid: plan.agentMdRowid,
+      level: plan.level,
+      hasPendingFromOther: plan.hasPendingFromOther,
+      hasChildren: plan.hasChildren,
+      canSpawnChild: plan.canSpawnChild,
+      compressionReminderShown: plan.compressionReminderShown,
+      compressionReminderChars: plan.compressionReminderChars,
+      compressionReminderThresholdChars: plan.compressionReminderThresholdChars,
+      truncationApplied: plan.truncationApplied,
+      truncationReason: plan.truncationReason,
+      truncationLevel: plan.truncationLevel,
+      effectiveTurn: plan.effectiveTurn,
+    };
 
-    if (pendingProposal && pendingProposal.proposer !== agentId) {
-      const proposerName = AGENT_NAMES[pendingProposal.proposer] ?? pendingProposal.proposer;
-      const voterName = AGENT_NAMES[agentId] ?? agentId;
-      messages.push(this.projector.buildProposalNotification(pendingProposal, proposerName, voterName));
-    }
-
-    return messages;
+    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
   }
 
   private buildCompressionTaskStartMessage(task: ActiveCompressionTask): string {
@@ -526,55 +570,6 @@ export class DeliberationUnit {
         `Write a refreshed Memory Snapshot that integrates the earlier snapshot reference with the recent raw window. Overlap between them is expected rather than erroneous.`,
       timestamp: Date.now(),
     };
-  }
-
-  private createContextRecipe(
-    agentId: AgentId,
-    visibleSnapshot: { visibleMessages: readonly ConversationMessage[]; newlyVisibleMessages: readonly ConversationMessage[] },
-    hasPendingFromOther: boolean,
-    hasChildren: boolean,
-    canSpawnChild: boolean,
-  ): void {
-    if (!this.contextPersistenceSink) return;
-
-    const memorySnapshot = this.compressionManager.getMemorySnapshot();
-    let memorySnapshotRowid: number | null = null;
-    if (memorySnapshot) {
-      const metadata = JSON.stringify({
-        sourceMessageCount: memorySnapshot.sourceMessageCount,
-        requirements: memorySnapshot.requirements,
-      });
-      memorySnapshotRowid = this.contextPersistenceSink.saveContextTextHistory(
-        this.unitId, "memory_snapshot", memorySnapshot.content, metadata,
-      );
-    }
-
-    const recentRawStartSeq = this.ledger.currentSequenceStart +
-      this.compressionManager.getRecentRawStartIndex();
-
-    const visibleEndSeq = this.ledger.currentSequenceStart + this.ledger.currentMessageCount;
-
-    const newlyVisibleSeq = visibleSnapshot.newlyVisibleMessages.length > 0
-      ? this.ledger.currentSequenceStart +
-        (this.ledger.currentMessageCount - visibleSnapshot.newlyVisibleMessages.length)
-      : null;
-
-    const recipe: ContextRecipeData = {
-      unitId: this.unitId,
-      agentId,
-      recentRawStartSeq,
-      visibleEndSeq,
-      newlyVisibleSeq,
-      memorySnapshotRowid,
-      agentMdRowid: null,
-      level: this.level,
-      hasPendingFromOther,
-      hasChildren,
-      canSpawnChild,
-      effectiveTurn: this.turnCounter,
-    };
-
-    this.activeRecipeId = this.contextPersistenceSink.createRecipe(recipe);
   }
 
   private linkRecipeOutputMessage(outputMessageId: string): void {
@@ -636,6 +631,19 @@ export class DeliberationUnit {
     }
   }
 
+  private static isContextTooLongError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return (
+      msg.includes("max message tokens") ||
+      msg.includes("context_length_exceeded") ||
+      msg.includes("context window") ||
+      msg.includes("maximum context") ||
+      msg.includes("tokens exceed") ||
+      msg.includes("token limit") ||
+      (msg.includes("400") && msg.includes("tokens"))
+    );
+  }
+
   private async runLoop(): Promise<void> {
     while (this.state === "turn-a" || this.state === "turn-b") {
       const currentAgent: AgentId = this.state === "turn-a" ? "agent-a" : "agent-b";
@@ -644,22 +652,52 @@ export class DeliberationUnit {
 
       this.turnCounter++;
       this.notifyDurableStateChange();
-      const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
-
       const hasChildren = this.hasChildren();
-      const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
       const childCommitViews = hasChildren ? this.buildChildCommitViews() : [];
+      this.appendChildCommitViewSnapshot(currentAgent, childCommitViews);
+      const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
+      const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
       const pendingProposal = this.getPendingProposal();
-      const hasPendingFromOther = pendingProposal !== null && pendingProposal.proposer !== currentAgent;
-      const turnMessages = this.buildTurnMessages(
-        currentAgent,
-        visibleSnapshot.visibleMessages,
-        visibleSnapshot.newlyVisibleMessages,
+      const persistedContextTextRefs = this.persistContextTextRefs();
+      const reminderShown = this.compressionManager.shouldShowReminder(visibleSnapshot.visibleMessages);
+      const reminderChars = reminderShown
+        ? this.compressionManager.estimateRecentRawChars(visibleSnapshot.visibleMessages)
+        : null;
+      const reminderThresholdChars = reminderShown
+        ? this.compressionManager.getReminderThresholdChars()
+        : null;
+
+      let budgetPlan: TurnContextBudgetPlan = createTurnContextBudgetPlan({
+        visibleMessages: visibleSnapshot.visibleMessages,
+        newlyVisibleMessages: visibleSnapshot.newlyVisibleMessages,
+        currentSequenceStart: this.ledger.currentSequenceStart,
+        baseRecentRawStartSeq: this.ledger.currentSequenceStart + this.compressionManager.getRecentRawStartIndex(),
+        compressionReminderShown: reminderShown,
+        compressionReminderChars: reminderChars,
+        compressionReminderThresholdChars: reminderThresholdChars,
+        hardRecentRawCharLimit: this.compressionManager.getRecentRawTargetChars(),
+      });
+
+      const assembleCurrentTurn = (plan: TurnContextBudgetPlan) => assembleTurnContext({
+        unitId: this.unitId,
+        agentId: currentAgent,
+        level: this.level,
+        workspaceRoot: this.workspaceRoot,
+        workspaceKnowledge: persistedContextTextRefs.workspaceKnowledge,
+        agentMdRowid: persistedContextTextRefs.agentMdRowid,
+        visibleMessages: visibleSnapshot.visibleMessages,
+        newlyVisibleMessages: visibleSnapshot.newlyVisibleMessages,
         pendingProposal,
         childCommitViews,
-      );
+        hasChildren,
+        canSpawnChild,
+        memorySnapshot: this.compressionManager.getMemorySnapshot(),
+        memorySnapshotRowid: persistedContextTextRefs.memorySnapshotRowid,
+        budgetPlan: plan,
+        effectiveTurn: this.turnCounter,
+      });
 
-      this.createContextRecipe(currentAgent, visibleSnapshot, hasPendingFromOther, hasChildren, canSpawnChild);
+      let assembled = assembleCurrentTurn(budgetPlan);
 
       this.emit({
         type: "turn-start",
@@ -667,27 +705,63 @@ export class DeliberationUnit {
         turn: this.turnCounter,
         agent: currentAgent,
         state: this.state,
-        contextSize: turnMessages.length,
+        contextSize: assembled.llmContext.messages.length,
         newMessages: visibleSnapshot.newlyVisibleMessages.length,
       });
 
       let result;
-      try {
-        result = await agentTurn.execute(
-          turnMessages,
-          hasPendingFromOther,
-          hasChildren,
-          canSpawnChild,
-        );
-      } catch (err) {
-        this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
-        this.transition(this.state, "idle");
-        return;
+      while (true) {
+        this.createContextRecipeFromPlan(assembled.plan);
+
+        if (assembled.plan.truncationApplied) {
+          this.emit({
+            type: "warning",
+            scope: this.scope,
+            message: `Context pressure required truncation before calling ${agentName} (reason: ${assembled.plan.truncationReason}, level: ${assembled.plan.truncationLevel}).`,
+          });
+        }
+
+        console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: calling LLM with ${assembled.llmContext.messages.length} messages, recentRawStartSeq=${assembled.plan.recentRawStartSeq}, visibleEndSeq=${assembled.plan.visibleEndSeq}, truncationLevel=${assembled.plan.truncationLevel}`);
+
+        try {
+          result = await agentTurn.execute(assembled.llmContext, assembled.tools);
+          break;
+        } catch (err) {
+          console.error(`[DU:${this.unitId}] LLM call failed (truncation level ${assembled.plan.truncationLevel}):`, err);
+          if (!DeliberationUnit.isContextTooLongError(err)) {
+            this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
+            this.transition(this.state, "idle");
+            return;
+          }
+
+          const tightenedPlan = tightenTurnContextBudgetPlan({
+            visibleMessages: visibleSnapshot.visibleMessages,
+            currentSequenceStart: this.ledger.currentSequenceStart,
+            currentPlan: budgetPlan,
+            targetRecentRawChars: Math.max(Math.floor(this.compressionManager.getRecentRawTargetChars() / 2), 1200),
+          });
+          if (!tightenedPlan) {
+            this.emit({ type: "error", scope: this.scope, message: `Context too long for ${agentName} even after deterministic recent-raw truncation. Please compress the context manually using compressContext.` });
+            this.transition(this.state, "idle");
+            return;
+          }
+
+          budgetPlan = tightenedPlan;
+          assembled = assembleCurrentTurn(budgetPlan);
+          this.emit({
+            type: "warning",
+            scope: this.scope,
+            message: `Context too long — rebuilding ${agentName}'s turn with a tighter recent-raw window (truncation level ${assembled.plan.truncationLevel}).`,
+          });
+        }
       }
+
+      console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: reply=${JSON.stringify(result.reply?.slice(0, 100))}, action=${result.action?.kind ?? "none"}, stopReason=${result.stopReason}, broadcasts=${result.unitRuntimeBroadcasts?.length ?? 0}`);
 
       const isEmpty = !result.reply?.trim() && !result.action && !(result.unitRuntimeBroadcasts?.length);
       if (isEmpty) {
         this.consecutiveEmptyTurns++;
+        console.warn(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: EMPTY response (consecutive=${this.consecutiveEmptyTurns}/${DeliberationUnit.MAX_EMPTY_TURNS})`);
         if (this.consecutiveEmptyTurns >= DeliberationUnit.MAX_EMPTY_TURNS) {
           this.emit({ type: "error", scope: this.scope, message: `${DeliberationUnit.MAX_EMPTY_TURNS} consecutive empty responses detected. Halting — likely API misconfiguration (wrong key, URL, or model).` });
           this.transition(this.state, "idle");
@@ -725,13 +799,14 @@ export class DeliberationUnit {
         if (vote.approve) {
           const approvedProposal = pendingProposal;
           this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: true, reason: vote.reason });
-          this.ledger.appendVoteMessage({
+          const voteMessage = this.ledger.appendVoteMessage({
             voter: currentAgent,
             proposalId: approvedProposal.messageId,
             approve: true,
             reason: vote.reason,
             ...voteMeta,
           });
+          this.linkRecipeOutputMessage(voteMessage.id);
           this.ledger.markProposalApproved(approvedProposal.messageId);
           this.recordCommittedStep(approvedProposal);
           this.notifyDurableStateChange();
@@ -778,13 +853,14 @@ export class DeliberationUnit {
           }
         } else {
           this.emit({ type: "vote", scope: this.scope, voter: currentAgent, proposer: pendingProposal.proposer, toolName, approve: false, reason: vote.reason });
-          this.ledger.appendVoteMessage({
+          const voteMessage = this.ledger.appendVoteMessage({
             voter: currentAgent,
             proposalId: pendingProposal.messageId,
             approve: false,
             reason: vote.reason,
             ...voteMeta,
           });
+          this.linkRecipeOutputMessage(voteMessage.id);
           this.ledger.markProposalRejected(pendingProposal.messageId);
           this.notifyDurableStateChange();
         }
@@ -792,13 +868,14 @@ export class DeliberationUnit {
 
       if (result.action?.kind === "proposal") {
         const proposal = result.action.proposal;
-        this.ledger.appendProposalMessage({
+        const proposalMessage = this.ledger.appendProposalMessage({
           authoredBy: currentAgent,
           toolName: proposal.toolName,
           args: proposal.args,
           proposedStep: proposal.proposedStep,
           ...this.buildDeferredVisibilityMeta(),
         });
+        this.linkRecipeOutputMessage(proposalMessage.id);
         this.notifyDurableStateChange();
         this.emit({ type: "proposal", scope: this.scope, agent: currentAgent, toolName: proposal.toolName, args: proposal.args });
 

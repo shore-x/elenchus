@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ConversationMessage, DeliberationUnitSnapshot } from "../../../core/types.js";
+import type { ConversationMessage, DeliberationUnitSnapshot, SequencedConversationMessage } from "../../../core/types.js";
 import type { SessionPersistenceAdapter } from "../../../application/session-persistence.js";
 
 interface PersistedSessionFile {
@@ -97,7 +97,7 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
     return null;
   }
 
-  getLedgerMessagesBySeqRange(): import("../../../core/types.js").ConversationMessage[] {
+  getLedgerMessagesBySeqRange(): SequencedConversationMessage[] {
     return [];
   }
 }
