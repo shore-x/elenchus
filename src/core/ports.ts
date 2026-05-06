@@ -62,7 +62,7 @@ export interface LlmModelInfo {
 }
 
 export interface LlmClient {
-  complete(context: LlmContext, options: { maxTokens: number }): Promise<LlmResponse>;
+  complete(context: LlmContext, options: { maxTokens: number; signal?: AbortSignal }): Promise<LlmResponse>;
   getModelInfo(): LlmModelInfo;
 }
 
@@ -73,5 +73,5 @@ export interface ToolExecutionResult {
 }
 
 export interface ToolExecutor {
-  execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string }): Promise<ToolExecutionResult>;
+  execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string; signal?: AbortSignal }): Promise<ToolExecutionResult>;
 }

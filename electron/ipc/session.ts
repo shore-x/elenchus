@@ -197,7 +197,7 @@ export function registerSessionIpc(
 
     return {
       has_session: hasSession,
-      config: (provider && modelName) ? { provider, model_name: modelName, base_url: baseUrl, project_root: projectRoot } : null,
+      config: (provider && modelName) ? { provider, modelName, baseUrl, projectRoot } : null,
     };
   });
 

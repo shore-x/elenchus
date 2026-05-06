@@ -80,13 +80,13 @@ export default function App() {
       const status = await ipc.checkWorkspaceStatus();
       if (status.has_session && status.config) {
         const persisted = await ipc.loadPersistedConfig();
-        if (persisted && persisted.api_key) {
+        if (persisted && persisted.apiKey) {
           const result = await ipc.startSession({
             provider: status.config.provider,
-            modelName: status.config.model_name,
-            apiKey: persisted.api_key,
-            baseUrl: status.config.base_url,
-            projectRoot: status.config.project_root,
+            modelName: status.config.modelName,
+            apiKey: persisted.apiKey,
+            baseUrl: status.config.baseUrl,
+            projectRoot: status.config.projectRoot,
           });
           if (result && "unitId" in result) {
             setSessionInfo(result as SessionInfo);
@@ -99,22 +99,22 @@ export default function App() {
         // Need API key from user — show onboarding with pre-filled fields
         setWorkspaceConfig({
           provider: status.config.provider,
-          modelName: status.config.model_name,
-          baseUrl: status.config.base_url ?? undefined,
-          projectRoot: status.config.project_root ?? "",
+          modelName: status.config.modelName,
+          baseUrl: status.config.baseUrl ?? undefined,
+          projectRoot: status.config.projectRoot ?? "",
         });
         return;
       }
 
       // 3. No workspace session — try persisted config
       const persisted = await ipc.loadPersistedConfig();
-      if (persisted && persisted.provider && persisted.api_key) {
+      if (persisted && persisted.provider && persisted.apiKey) {
         const result = await ipc.startSession({
           provider: persisted.provider,
-          modelName: persisted.model_name ?? persisted.modelName ?? "",
-          apiKey: persisted.api_key,
-          baseUrl: persisted.base_url ?? persisted.baseUrl,
-          projectRoot: persisted.project_root ?? persisted.projectRoot,
+          modelName: persisted.modelName ?? "",
+          apiKey: persisted.apiKey,
+          baseUrl: persisted.baseUrl,
+          projectRoot: persisted.projectRoot,
         });
         if (result && "unitId" in result) {
           setSessionInfo(result as SessionInfo);

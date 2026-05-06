@@ -27,7 +27,7 @@ export interface ElectronAPI {
   validateConfig: (config: { provider: string; modelName: string; baseUrl?: string }) => Promise<{ valid: boolean; error?: string }>;
   loadPersistedConfig: () => Promise<Record<string, string> | null>;
   savePersistedConfig: (config: Record<string, unknown>) => Promise<{ ok: boolean }>;
-  checkWorkspaceStatus: () => Promise<{ has_session: boolean; config: { provider: string; model_name: string; base_url?: string; project_root?: string } | null }>;
+  checkWorkspaceStatus: () => Promise<{ has_session: boolean; config: { provider: string; modelName: string; baseUrl?: string; projectRoot?: string } | null }>;
 
   // --- Event streams ---
   onSystemEvent: (callback: (event: ServerEvent) => void) => () => void;

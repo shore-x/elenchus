@@ -37,13 +37,14 @@ export class AgentTurn {
   async execute(
     context: LlmContext,
     tools: readonly ElenchusTool[],
+    signal?: AbortSignal,
   ): Promise<TurnResult> {
     const providerContext: LlmContext = {
       ...context,
       tools: toProviderTools([...tools]),
     };
 
-    const response = await this.llmClient.complete(providerContext, { maxTokens: 8192 });
+    const response = await this.llmClient.complete(providerContext, { maxTokens: 8192, signal });
     const rawBlocks = (response as any).content ?? response.content;
     console.log(`[AgentTurn:${this.selfId}] LLM response: stopReason=${response.stopReason}, contentBlocks=${response.content.length}, types=[${response.content.map((b: any) => b.type).join(",")}]`);
     if (response.stopReason === "error") {

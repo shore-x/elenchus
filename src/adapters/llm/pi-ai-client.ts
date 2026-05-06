@@ -20,12 +20,12 @@ export class PiAiLlmClient implements LlmClient {
     };
   }
 
-  async complete(context: LlmContext, options: { maxTokens: number }): Promise<LlmResponse> {
+  async complete(context: LlmContext, options: { maxTokens: number; signal?: AbortSignal }): Promise<LlmResponse> {
     const response = await complete(this.model, {
       systemPrompt: context.systemPrompt,
       messages: context.messages as Context["messages"],
       tools: context.tools as Tool[],
-    }, options);
+    }, { maxTokens: options.maxTokens, signal: options.signal });
 
     const result = response as unknown as LlmResponse;
     if ((response as any).errorMessage) {

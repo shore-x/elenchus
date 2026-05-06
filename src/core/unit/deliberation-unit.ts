@@ -52,6 +52,10 @@ export interface DeliberationUnitOptions {
   onDurableStateChange?: () => void;
   messagePersistenceSink?: MessagePersistenceSink;
   contextPersistenceSink?: ContextPersistenceSink;
+  /** Maximum time (ms) to wait for a single LLM call before triggering T10 timeout guard. Default: 180000 (180s). */
+  llmTimeoutMs?: number;
+  /** Maximum time (ms) to wait for a blocking tool execution before triggering T10 timeout guard. Default: 300000 (300s). */
+  toolTimeoutMs?: number;
 }
 
 export class DeliberationUnit {
@@ -87,12 +91,18 @@ export class DeliberationUnit {
   private static readonly MAX_EMPTY_TURNS = 4;
   private static readonly CHILD_COMMIT_VIEW_LIMIT = 3;
   private static readonly COMPRESSION_MAX_TOKENS = 4096;
+  private static readonly DEFAULT_LLM_TIMEOUT_MS = 180_000;
+  private static readonly DEFAULT_TOOL_TIMEOUT_MS = 300_000;
+  private readonly llmTimeoutMs: number;
+  private readonly toolTimeoutMs: number;
 
 
   constructor(options: DeliberationUnitOptions) {
     this.level = options.level ?? "L0";
     this.llmClient = options.llmClient;
     this.toolExecutor = options.toolExecutor;
+    this.llmTimeoutMs = options.llmTimeoutMs ?? DeliberationUnit.DEFAULT_LLM_TIMEOUT_MS;
+    this.toolTimeoutMs = options.toolTimeoutMs ?? DeliberationUnit.DEFAULT_TOOL_TIMEOUT_MS;
     this.workspaceRoot = options.workspaceRoot;
     this.projectRoot = options.projectRoot;
     this.unitId = options.unitId ?? DeliberationUnit.buildUnitId(this.level, options.path ?? []);
@@ -727,9 +737,15 @@ export class DeliberationUnit {
         console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: calling LLM with ${assembled.llmContext.messages.length} messages, recentRawStartSeq=${assembled.plan.recentRawStartSeq}, visibleEndSeq=${assembled.plan.visibleEndSeq}, truncationLevel=${assembled.plan.truncationLevel}`);
 
         try {
-          result = await agentTurn.execute(assembled.llmContext, assembled.tools);
+          const llmSignal = AbortSignal.timeout(this.llmTimeoutMs);
+          result = await agentTurn.execute(assembled.llmContext, assembled.tools, llmSignal);
           break;
         } catch (err) {
+          if (err instanceof DOMException && err.name === "TimeoutError") {
+            this.handleTimeout("llm", this.llmTimeoutMs);
+            return;
+          }
+
           console.error(`[DU:${this.unitId}] LLM call failed (truncation level ${assembled.plan.truncationLevel}):`, err);
           if (!DeliberationUnit.isContextTooLongError(err)) {
             this.emit({ type: "error", scope: this.scope, message: `LLM call failed for ${agentName}: ${err}. Check API key, base URL, and network connectivity.` });
@@ -834,7 +850,17 @@ export class DeliberationUnit {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: approvedProposal.toolName, args: approvedProposal.args });
-            const execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.projectRoot, level: this.level });
+            let execResult;
+            try {
+              const toolSignal = AbortSignal.timeout(this.toolTimeoutMs);
+              execResult = await this.toolExecutor.execute(approvedProposal.toolName, approvedProposal.args, { cwd: this.projectRoot, level: this.level, signal: toolSignal });
+            } catch (err) {
+              if (err instanceof DOMException && err.name === "TimeoutError") {
+                this.handleTimeout("tool", this.toolTimeoutMs);
+                return;
+              }
+              throw err;
+            }
             this.ledger.appendToolResultMessage({
               proposalId: approvedProposal.messageId,
               toolName,
@@ -899,7 +925,17 @@ export class DeliberationUnit {
             this.executingFromState = this.state as "turn-a" | "turn-b";
             this.transition(this.state, "executing");
             this.emit({ type: "tool-executing", scope: this.scope, toolName: autoApprovedProposal.toolName, args: autoApprovedProposal.args });
-            const execResult = await this.toolExecutor.execute(autoApprovedProposal.toolName, autoApprovedProposal.args, { cwd: this.projectRoot, level: this.level });
+            let execResult;
+            try {
+              const toolSignal = AbortSignal.timeout(this.toolTimeoutMs);
+              execResult = await this.toolExecutor.execute(autoApprovedProposal.toolName, autoApprovedProposal.args, { cwd: this.projectRoot, level: this.level, signal: toolSignal });
+            } catch (err) {
+              if (err instanceof DOMException && err.name === "TimeoutError") {
+                this.handleTimeout("tool", this.toolTimeoutMs);
+                return;
+              }
+              throw err;
+            }
             this.ledger.appendToolResultMessage({
               proposalId: autoApprovedProposal.messageId,
               toolName: proposal.toolName,
@@ -1004,6 +1040,17 @@ export class DeliberationUnit {
       this.notifyDurableStateChange();
       this.emit({ type: "child-message-sent", scope: child.scope, message });
     }
+  }
+
+  private handleTimeout(source: "llm" | "tool", timeoutMs: number): void {
+    const label = source === "llm" ? "LLM call" : "blocking tool execution";
+    const message = `Turn timed out after ${Math.round(timeoutMs / 1000)}s waiting for ${label}. Unit is yielding to parent.`;
+    console.warn(`[DU:${this.unitId}] T10 timeout guard: ${message}`);
+    this.ledger.appendSystemMessage(message, this.buildDeferredVisibilityMeta());
+    this.notifyDurableStateChange();
+    this.emitUpwardMessage("yield", message);
+    this.executingFromState = null;
+    this.transition(this.state, "idle");
   }
 
   private emit(event: SystemEvent): void {

@@ -117,7 +117,7 @@ async function executeWriteFile(path: string, content: string): Promise<{ succes
 
 export class LocalNodeToolExecutor implements ToolExecutor {
 
-  async execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string }): Promise<ToolExecutionResult> {
+  async execute(toolName: string, args: Record<string, unknown>, options?: { cwd?: string; level?: string; signal?: AbortSignal }): Promise<ToolExecutionResult> {
     const start = Date.now();
     let result: { success: boolean; output: string };
     switch (toolName) {

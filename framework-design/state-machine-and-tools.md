@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - State Machine and Tools"
 date: 2026-04-13
-version: 4.0
+version: 7.0
 ---
 
 # State Machine and Tools
@@ -63,6 +63,7 @@ A unit's reachable state space depends on its tool usage. L0 can now reach `Exec
 | T7 | Executing | Result returns after entering from TurnB | TurnA |
 | T8 | TurnA/TurnB | Approved `yield` or `sleep` | Idle |
 | T9 | non-Terminated | Parent forces termination | Terminated |
+| T10 | TurnA/TurnB/Executing | LLM call or blocking tool execution times out | Idle |
 
 Additional notes:
 
@@ -71,6 +72,7 @@ Additional notes:
 - `report` never triggers T8
 - `yield` should be read as an upward handoff plus pause, not only as a completion signal
 - `report` should be read as routine upward coordination at key moments, not as a minor exception path
+- T10 is a system-initiated safety transition: the runtime aborts the pending operation and yields upward on behalf of the unit, so the parent can decide whether to re-trigger
 
 ## 4. Turn-Internal Output Protocol
 
@@ -184,6 +186,28 @@ No partner vote is required. The partner sees the full execution chain in the ne
 
 `readFile` also supports line-range reading via optional `offset` (1-indexed start line) and `limit` (max line count) parameters. This allows agents to read only the relevant section of large files, reducing context consumption.
 
+### 7.6 Turn-Level Timeout Guard (T10)
+
+The runtime guards each asynchronous wait point in the turn loop with a configurable timeout. If the operation does not complete within the timeout, the runtime:
+
+1. **Aborts** the pending operation via `AbortSignal`
+2. **Writes a system message** to the ledger describing the timeout
+3. **Emits a system-initiated yield** (`upward_message(deliveryMode = "yield")`) with a timeout report, so the parent unit receives the same signal as an agent-initiated yield
+4. **Transitions to Idle** via T10
+
+The parent unit then decides whether to re-trigger the child (e.g., by sending a new message) or to ignore it.
+
+Two timeout thresholds exist:
+
+| Wait point | Default | Rationale |
+| :--- | :--- | :--- |
+| LLM call | 180 s | Normal responses arrive in 5–60 s; 180 s covers extended thinking |
+| Blocking tool execution | 300 s | Bash and similar tools may legitimately run long |
+
+Both values are configurable via `DeliberationUnitOptions` and default to the static constants on `DeliberationUnit`.
+
+The `LlmClient.complete` port accepts an optional `AbortSignal` so the underlying HTTP request can be cancelled on timeout.
+
 ## 8. Related Detailed Documents
 
 - Communication and projection foundations: [conversation-model.md](./conversation-model.md)
@@ -195,6 +219,7 @@ No partner vote is required. The partner sees the full execution chain in the ne
 
 ## Change Log
 
+- **v7.0 (2026-05-06)**: Add T10 (turn-level timeout guard). When an LLM call or blocking tool execution exceeds its timeout threshold, the runtime aborts the operation, writes a system message, emits a system-initiated yield, and transitions to Idle. `LlmClient.complete` now accepts an optional `AbortSignal`. Two configurable timeout thresholds: LLM call (180 s default) and blocking tool (300 s default). Added §7.6.
 - **v6.0 (2026-04-19)**: Add P30 (pure read operations may bypass voting). `readFile` is now auto-approved and marked in §5.3, §6 table, and §7.5. L0 role policy (§7.4) updated to note that readFile enforcement relies on prompt guidance rather than vote rejection. `readFile` gains `offset`/`limit` parameters for line-range reading.
 - **v5.0 (2026-04-18)**: Remove `unmountChild` from child-management tools. Child lifecycle now uses fixed slot pool model — all children always visible, no unmount/remount. Updated §5.2, §6 availability table, §7 tool-surface notes, changelog.
 - **v4.0 (2026-04-16)**: L0 gains environment tools (bash, readFile, writeFile) with role policy constraint (P28). Tool availability table updated: L0 environment tools marked with role policy constraint. L0 can now reach `Executing` state. Removed `installSkill` from tool list (already removed in code, doc now catches up). Added §7.5 L0 Environment Tool Role Policy. Updated rules summary to reflect all-layer environment tool availability.
