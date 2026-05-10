@@ -1038,4 +1038,20 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
       message: parseJson<ConversationMessage>(row.body),
     }));
   }
+
+  getLatestChildCommitViewMessage(unitId: string, beforeSeq: number): { content: string } | null {
+    const row = this.db.prepare(
+      `SELECT body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND kind = 'child_commit_view_message' AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT 1`,
+    ).get(unitId, beforeSeq) as MessageRow | undefined;
+    if (!row) return null;
+    const message = parseJson<ConversationMessage>(row.body);
+    if (message.kind !== "child_commit_view_message") return null;
+    return { content: message.content };
+  }
 }

@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design: Dual-Agent Deliberation Unit"
-date: 2026-05-05
-version: 10.2
+date: 2026-05-07
+version: 10.3
 ---
 
 # Elenchus Framework Design: Dual-Agent Deliberation Unit
@@ -253,7 +253,7 @@ Elenchus 使用固定三层架构：`L0 | L1 | L2`。
 
 `commitLog` 记录的是 **accepted steps**，不是 success history；`APPROVE` 是提交边界。
 
-从实现角度，child commit view 现在作为 `child_commit_view_message` 事实事件写入父 agent 的 ConversationLedger，而非仅作为投影层临时派生。这使得 recipe 的 seq 范围自然覆盖子单元可见性内容，无需跨单元引用。详细设计见 [`context-observability.md`](./framework-design/context-observability.md) §4.2。
+从实现角度，child commit view 现在作为 `child_commit_view_message` 写入父 agent 的 ConversationLedger，但**从正常投影中过滤**，仅注入最新一条作为 turn-local overlay。这使得历史快照不累积在 agent 可见上下文中，同时保留在 ledger 中供可观测性/调试使用。重建时通过 `getLatestChildCommitViewMessage()` 获取最新快照。详细设计见 [`context-observability.md`](./framework-design/context-observability.md) §4.2。
 
 ### 4.5 本章相关核心原则
 
@@ -392,12 +392,14 @@ L0 现在可以进入 `Executing` 状态（当执行 `readFile`/`writeFile`/`bas
 | commitLog | 归属于 Agent Unit 的已提交步骤的历史序列，表示该单元正式接受过哪些任务推进步骤，而非成功历史 |
 | context_text_history | Append-only 事实表，存储不可变文本快照（Memory Snapshot、AGENT.md 等），按 rowid 离散引用。同一 `(unit_id, category)` 下相同内容通过 SHA-256 去重，仅存一份 |
 | context_recipe | 记录一次 LLM 调用输入事实边界的不可变记录。通过 seq 范围引用 `ledger_messages`，通过 rowid 引用 `context_text_history`，使上下文可精确重建 |
-| child_commit_view_message | 子单元已提交步骤快照，作为事实事件写入父 agent 的 ConversationLedger。使 recipe 的 seq 范围自然覆盖子单元可见性内容，无需跨单元引用 |
+| child_commit_view_message | 子单元已提交步骤快照，写入父 agent 的 ConversationLedger 供可观测性，但从正常投影中过滤，仅注入最新一条作为 turn-local overlay（防止 token 累积）。重建时通过 `getLatestChildCommitViewMessage()` 获取 |
 | ContextRecipeData | 创建 recipe 时的输入数据结构，包含 unitId、agentId、seq 边界、rowid 引用、工具列表参数等 |
 | 双表 append-only 事实模型（P33） | 上下文重建仅依赖 `ledger_messages`（连续事件流，seq 范围引用）与 `context_text_history`（离散文本快照，rowid 引用）两张 append-only 事实表。所有记录写入后不可变；重建仅读取，不回写 |
 
 ## 版本历史
 
+- **v10.3 (2026-05-07)**：`child_commit_view_message` 从累积的公共事实重新分类为 turn-local overlay：写入 ledger 供可观测性，但从正常投影中过滤，仅注入最新一条作为 overlay（防止 token 累积）。预算估算排除该消息类型。重建通过 `getLatestChildCommitViewMessage()` 获取最新快照。同步更新 §4.4、术语表、`context-observability.md` §2.2/§3.1/§3.2/§4.2/§6.3、`conversation-model.md` §9。
+- **v10.2 (2026-05-05)**：同步更新文档版本号与日期。
 - **v10.1 (2026-05-03)**：新增 GUI 工作台专题文档 `framework-design/gui-workbench.md`，记录 Electron GUI 的组件级 redesign spec：统一工作台视觉定位、semantic tokens、侧栏/聊天/预览组件重设计、overlay 与交互状态规范，以及与当前 `gui/` 前端文件的落位映射。同步更新文档地图。
 - **v10.0 (2026-04-26)**：引入上下文可观测性与重建机制。核心变更：**双表 append-only 事实模型**（P33）——上下文重建仅依赖 `ledger_messages`（seq 范围引用）与 `context_text_history`（rowid 离散引用）两张 append-only 事实表；移除 `unit_memory_state` 表，Memory Snapshot 统一通过 `context_text_history` 持久化；新增 `context_recipe` 记录每次 LLM 调用的输入事实边界；child commit view 作为 `child_commit_view_message` 事实事件写入父 agent ledger，而非投影层临时派生；SQLite schema 升至 v11。新增专题文档 `context-observability.md`。同步更新 §1.2、§2.2、§2.3、§3.4、§4.4、原则索引、术语表。
 - **v9.3 (2026-04-26)**：引入 **agent team** 概念作为面向 agent 的集合术语，替代 prompt 和运行时广播中对 "hierarchy" 的集合体用法。L0 orientation 从负面约束（"you cannot execute"）翻转为正面身份框架（"execution is not your function; it is a division of labor within the team"）。清除 agent 可见信息中的内部设计概念泄漏：移除所有 P-number 引用（P30/P31/P28）、FSM state/SQLite 等实现细节、cold-start/persisted 等内部术语。修正 spawnChild 默认描述的层级错误。同步更新 `hierarchy-and-layers.md`。

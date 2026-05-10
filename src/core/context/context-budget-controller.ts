@@ -62,7 +62,11 @@ function estimateMessageChars(message: ConversationMessage): number {
 }
 
 function estimateMessagesChars(messages: readonly ConversationMessage[]): number {
-  return messages.reduce((total, message) => total + estimateMessageChars(message), 0);
+  return messages.reduce((total, message) => {
+    // child_commit_view_message is a turn-local overlay, not accumulated in recent-raw
+    if (message.kind === "child_commit_view_message") return total;
+    return total + estimateMessageChars(message);
+  }, 0);
 }
 
 function clamp(value: number, min: number, max: number): number {

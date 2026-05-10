@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Protocol and Runtime"
-date: 2026-04-12
-version: 4.0
+date: 2026-05-07
+version: 5.1
 ---
 
 # Protocol and Runtime
@@ -238,6 +238,7 @@ This keeps recovery semantically honest while still preserving durable history a
 - **v3.5 (2026-04-12)**: Added the schema-version boundary for SQLite persistence. During the current rapid-iteration phase, a schema mismatch causes the local `.elenchus/state.db` store to be rebuilt rather than migrated in place.
 - **v3.4 (2026-04-12)**: Updated the persistence implementation note from filesystem snapshots to SQLite-backed durable storage in `.elenchus/state.db`. Clarified that SQLite retains the full durable history while cold-start recovery rebuilds only the next working set.
 - **v3.3 (2026-04-12)**: Added the cold-start recovery boundary. Documented that resumable session state is stored under the run-directory-local `.elenchus/` folder, and clarified that persisted `turn-a` / `turn-b` / `executing` normalize to `idle` rather than resuming mid-turn or mid-execution.
+- **v5.1 (2026-05-07)**: Synchronized version number with content. `child_commit_view_message` reclassified as turn-local overlay (see `context-observability.md` §4.2).
 - **v5.0 (2026-04-19)**: Add P30 (pure read operations may bypass voting). `readFile` is now auto-approved: proposals execute immediately without partner vote, while still entering Executing state and recording results as public facts. Add `autoApprove` flag to tool definitions. Add §4.1 Auto-Approved Blocking Tools. Update §1 proposal-vote to include the P30 exception. `readFile` also gains line-range reading (`offset`/`limit` parameters) for context-efficient file access.
 - **v4.0 (2026-04-18)**: Remove `unmountChild` from non-blocking tools. Replace remount contract with fixed slot pool model: all children always visible, no remount needed. Updated §5, §7, changelog.
 - **v3.2 (2026-04-12)**: Added `unmountChild` to the non-blocking runtime model and documented the approved child remount contract. [Superseded by v4.0]

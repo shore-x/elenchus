@@ -213,7 +213,20 @@ export class ConversationProjector {
       content:
         `[Directive]\n` +
         `${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.\n` +
-        `${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.`,
+        `${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.\n` +
+        `If you do not vote this turn, the proposal will be automatically superseded.`,
+      timestamp: Date.now(),
+    };
+  }
+
+  buildProposerWaitNotification(proposerName: string, voterName: string, toolName: string): LlmMessage {
+    return {
+      role: "user",
+      content:
+        `[Directive]\n` +
+        `${proposerName}, your ${toolName} proposal is pending and awaiting ${voterName}'s vote.\n` +
+        `You cannot vote on your own proposal. Do not call the vote tool. Wait for ${voterName} to decide.\n` +
+        `If ${voterName} does not vote this turn, the proposal will be automatically superseded and you may propose again.`,
       timestamp: Date.now(),
     };
   }

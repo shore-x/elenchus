@@ -38,6 +38,7 @@ export interface ContextPersistenceSink {
   getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
   getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
   getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[];
+  getLatestChildCommitViewMessage(unitId: string, beforeSeq: number): { content: string } | null;
 }
 
 export interface DeliberationUnitOptions {
@@ -669,7 +670,20 @@ export class DeliberationUnit {
       this.appendChildCommitViewSnapshot(currentAgent, childCommitViews);
       const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
       const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
-      const pendingProposal = this.getPendingProposal();
+      let pendingProposal = this.getPendingProposal();
+
+      // Proposal auto-expiration: if the current agent is the proposer of a pending proposal,
+      // the voter has already had their turn and did not vote — supersede the stale proposal.
+      if (pendingProposal && pendingProposal.proposer === currentAgent) {
+        const voterName = AGENT_NAMES[currentAgent === "agent-a" ? "agent-b" : "agent-a"];
+        this.ledger.markProposalSuperseded(pendingProposal.messageId);
+        this.ledger.appendSystemMessage(
+          `The pending ${pendingProposal.toolName} proposal (ID: ${pendingProposal.messageId}) by ${agentName} has been automatically superseded because ${voterName} did not vote on it during their turn. ${agentName} may propose again if needed.`,
+          this.buildDeferredVisibilityMeta(),
+        );
+        this.notifyDurableStateChange();
+        pendingProposal = null;
+      }
       const persistedContextTextRefs = this.persistContextTextRefs();
       const reminderShown = this.compressionManager.shouldShowReminder(visibleSnapshot.visibleMessages);
       const reminderChars = reminderShown
@@ -738,7 +752,7 @@ export class DeliberationUnit {
 
         try {
           const llmSignal = AbortSignal.timeout(this.llmTimeoutMs);
-          result = await agentTurn.execute(assembled.llmContext, assembled.tools, llmSignal);
+          result = await agentTurn.execute(assembled.llmContext, assembled.tools, llmSignal, { hasPendingProposalFromOther: pendingProposal !== null && pendingProposal.proposer !== currentAgent });
           break;
         } catch (err) {
           if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -897,6 +911,18 @@ export class DeliberationUnit {
 
       if (result.action?.kind === "proposal") {
         const proposal = result.action.proposal;
+
+        // Supersede any existing pending proposals before appending a new one.
+        // This handles the case where the voter proposes an alternative instead of voting.
+        const supersededCount = this.ledger.supersedeAllPendingProposals();
+        if (supersededCount > 0) {
+          this.ledger.appendSystemMessage(
+            `A new ${proposal.toolName} proposal by ${agentName} supersedes the previous pending proposal(s).`,
+            this.buildDeferredVisibilityMeta(),
+          );
+          this.notifyDurableStateChange();
+        }
+
         const proposalMessage = this.ledger.appendProposalMessage({
           authoredBy: currentAgent,
           toolName: proposal.toolName,

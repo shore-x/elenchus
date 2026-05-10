@@ -1,9 +1,7 @@
 // Elenchus - Shared Type Definitions
-// Three-layer architecture (v1.5): L0 (coordination) / L1 (planning+execution) / L2 (execution).
-// All layers share the same FSM and protocol (P9). Differences are only in injected tool sets:
-//   - Child management tools (SpawnChild, SendToChild, Sleep) → non-leaf (L0, L1)
-//   - Environment tools (Bash, ReadFile, WriteFile) → non-coordination (L1, L2)
-//   - Protocol tools (Yield, Vote) → all layers
+// Three-layer architecture: L0 (coordination) / L1 (planning+execution) / L2 (execution).
+// All layers share the same FSM, protocol, and tool set (P9). Behavioral differences emerge from
+// layer role policy injected via prompt, not from tool availability.
 // User messages are async — they can arrive at any time and are processed at the next turn boundary (P4).
 // Agent-visible context is reconstructed per turn from ConversationLedger, not cached inside AgentTurn.
 // Unit-level context compression is projected as Memory Snapshot + Recent Raw Window,

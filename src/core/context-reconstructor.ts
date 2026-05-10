@@ -70,7 +70,12 @@ export function reconstructContext(
     recipe.recentRawStartSeq,
     recipe.visibleEndSeq,
   );
-  const allMessages = sequencedMessages.map((entry) => entry.message);
+  // child_commit_view_message is stored in ledger but projected as turn-local overlay,
+  // not accumulated — filter it out and inject the latest one separately.
+  const filteredSequenced = sequencedMessages.filter(
+    (entry) => entry.message.kind !== "child_commit_view_message",
+  );
+  const allMessages = filteredSequenced.map((entry) => entry.message);
 
   const projector = new ConversationProjector();
 
@@ -78,8 +83,8 @@ export function reconstructContext(
   let newMessages: typeof allMessages = [];
 
   if (recipe.newlyVisibleSeq !== null) {
-    const splitIndex = allMessages.findIndex(
-      (_message, index) => sequencedMessages[index].seq >= recipe.newlyVisibleSeq!,
+    const splitIndex = filteredSequenced.findIndex(
+      (entry) => entry.seq >= recipe.newlyVisibleSeq!,
     );
     if (splitIndex >= 0) {
       oldMessages = allMessages.slice(0, splitIndex);
@@ -100,6 +105,16 @@ export function reconstructContext(
         createdAt: 0,
       }));
     }
+  }
+
+  // Inject latest child commit view as turn-local overlay (matches runtime behavior)
+  const latestChildCommitView = persistence.getLatestChildCommitViewMessage(recipe.unitId, recipe.visibleEndSeq);
+  if (latestChildCommitView) {
+    messages.push({
+      role: "user",
+      content: latestChildCommitView.content,
+      timestamp: 0,
+    });
   }
 
   messages.push(...projector.projectVisibleMessages(oldMessages));

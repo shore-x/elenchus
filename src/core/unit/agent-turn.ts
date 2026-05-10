@@ -25,6 +25,10 @@ function getDisplayName(agentId: AgentId): string {
   return DISPLAY_NAMES[agentId] ?? agentId;
 }
 
+export interface TurnInfo {
+  hasPendingProposalFromOther?: boolean;
+}
+
 export class AgentTurn {
   private selfId: AgentId;
   private llmClient: LlmClient;
@@ -38,6 +42,7 @@ export class AgentTurn {
     context: LlmContext,
     tools: readonly ElenchusTool[],
     signal?: AbortSignal,
+    turnInfo?: TurnInfo,
   ): Promise<TurnResult> {
     const providerContext: LlmContext = {
       ...context,
@@ -66,10 +71,10 @@ export class AgentTurn {
         }
       }
     }
-    return this.parseTurnResult(response, tools);
+    return this.parseTurnResult(response, tools, turnInfo);
   }
 
-  private parseTurnResult(response: Awaited<ReturnType<LlmClient["complete"]>>, tools: readonly ElenchusTool[]): TurnResult {
+  private parseTurnResult(response: Awaited<ReturnType<LlmClient["complete"]>>, tools: readonly ElenchusTool[], turnInfo?: TurnInfo): TurnResult {
     const result: TurnResult = {
       reply: response.content
         .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
@@ -97,11 +102,9 @@ export class AgentTurn {
     const [toolCall] = toolCalls;
     const validToolNames = new Set(tools.map((tool) => tool.name));
     if (!validToolNames.has(toolCall.name)) {
+      const specificMessage = this.buildToolNotAvailableMessage(toolCall.name, agentName, turnInfo);
       result.unitRuntimeBroadcasts = [
-        this.createUnitRuntimeBroadcast(
-          "tool_not_available",
-          `${agentName}'s tool invocation was rejected because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`,
-        ),
+        this.createUnitRuntimeBroadcast("tool_not_available", specificMessage),
       ];
       return result;
     }
@@ -161,6 +164,16 @@ export class AgentTurn {
       args: toolArgs,
       proposedStep,
     };
+  }
+
+  private buildToolNotAvailableMessage(toolName: string, agentName: string, turnInfo?: TurnInfo): string {
+    if (toolName === "vote") {
+      if (turnInfo?.hasPendingProposalFromOther) {
+        return `${agentName} called the vote tool, but it was not available in the current turn. This should not happen — if you see this message, the vote tool should have been available. No vote was recorded.`;
+      }
+      return `${agentName}'s vote invocation was rejected because there is no pending proposal from the other agent to vote on. The vote tool is only available when the other agent has a pending proposal awaiting your decision. If you want to take action, propose one using the available tools instead. No vote was recorded.`;
+    }
+    return `${agentName}'s tool invocation was rejected because tool "${toolName}" was not available in the current turn. No proposal or vote was recorded.`;
   }
 
   private createUnitRuntimeBroadcast(code: UnitRuntimeBroadcast["code"], content: string): UnitRuntimeBroadcast {

@@ -130,13 +130,13 @@ export class LocalNodeToolExecutor implements ToolExecutor {
         break;
       case "readFile":
         result = await executeReadFile(
-          args.path as string,
+          (args.path ?? args.filePath) as string,
           args.offset as number | undefined,
           args.limit as number | undefined,
         );
         break;
       case "writeFile":
-        result = await executeWriteFile(args.path as string, args.content as string);
+        result = await executeWriteFile((args.path ?? args.filePath) as string, args.content as string);
         break;
       default:
         result = { success: false, output: `Unknown blocking tool: ${toolName}` };

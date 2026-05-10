@@ -42,7 +42,10 @@ function estimateMessageChars(message: ConversationMessage): number {
 }
 
 function estimateMessagesChars(messages: readonly ConversationMessage[]): number {
-  return messages.reduce((total, message) => total + estimateMessageChars(message), 0);
+  return messages.reduce((total, message) => {
+    if (message.kind === "child_commit_view_message") return total;
+    return total + estimateMessageChars(message);
+  }, 0);
 }
 
 function findRecentRawStartIndex(messages: readonly ConversationMessage[], targetChars: number): number {

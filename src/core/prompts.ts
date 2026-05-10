@@ -335,10 +335,10 @@ If the project is a git repository, you can use \`git status\`, \`git diff\`, an
 ### Knowledge Space Boundary
 Your **workspace root** is \`{{WORKSPACE_ROOT}}\`. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing knowledge structure — should stay within the working world accessible from the workspace root.
 
-The workspace root AGENT.md, if present, is shown below as **Workspace Knowledge**.`;
+`;
 
 function buildWorkspaceKnowledge(content: string | null): string {
-  if (!content) return "";
+  if (!content?.trim()) return "";
   return `\n\n## Workspace Knowledge\nThe following is the content of the workspace root AGENT.md:\n\n${content}`;
 }
 
@@ -351,8 +351,10 @@ export function readRootAgentMd(runDirectory: string): string | null {
 }
 
 export function buildSystemPrompt(agentId: AgentId, level: ToolLevel, workspaceRoot: string, workspaceKnowledge?: string | null): string {
+  const hasKnowledge = !!workspaceKnowledge?.trim();
   const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE
-    .replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot);
+    .replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot)
+    + (hasKnowledge ? "\nThe workspace root AGENT.md is shown below as **Workspace Knowledge**." : "");
   return buildGuideline()
     + buildLayerOrientation(level)
     + knowledgeViewGuideline

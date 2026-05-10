@@ -100,4 +100,8 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   getLedgerMessagesBySeqRange(): SequencedConversationMessage[] {
     return [];
   }
+
+  getLatestChildCommitViewMessage(): { content: string } | null {
+    return null;
+  }
 }

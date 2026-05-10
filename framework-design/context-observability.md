@@ -48,12 +48,13 @@ An agent's LLM input (`LlmContext`) consists of three parts: **system prompt**, 
 | Newly-visible boundary overlay | Derived from `newlyVisibleMessages` | Per-turn, not persisted | — | Re-derived from `newly_visible_seq` in recipe |
 | New recent-raw messages | `ConversationLedger` visible messages | Various (see §2.4) | `ledger_messages` | seq range |
 | Compression reminder overlay | Derived from `shouldShowReminder()` | Per-turn, not persisted | — | Re-derived from recipe params |
-| Child commit view | Child units' `committedSteps` | Per-turn, **written to ledger** | `ledger_messages` | seq range |
+| Child commit view (turn-local overlay) | Child units' `committedSteps` | Per-turn, **written to ledger but filtered from projection** | `ledger_messages` (stored) / re-derived (injected) | Latest entry by `getLatestChildCommitViewMessage` |
 | Proposal notification | Derived from `PendingProposal` | Per-turn, not persisted | — | Re-derived from `has_pending_from_other` + ledger |
 
 **Message classification** (DECIDED):
 
-- **Fact events** — describe world state the agent perceived. Persisted in `ledger_messages`. Includes: all conversation message kinds + child commit view (new).
+- **Fact events** — describe world state the agent perceived. Persisted in `ledger_messages` and projected into agent context. Includes: all conversation message kinds except `child_commit_view_message`.
+- **Turn-local overlays** — persisted in `ledger_messages` for observability, but **filtered from normal projection** and injected as a single overlay per turn. Includes: `child_commit_view_message` (only the latest snapshot is injected; historical entries are excluded from projection to prevent token accumulation).
 - **Rendering directives** — describe how to interpret messages. Not persisted; re-derived during reconstruction from recipe parameters + projector logic. Includes: boundary overlay, compression reminder, proposal notification.
 
 ### 2.3 Tool List
@@ -83,7 +84,7 @@ Every message kind in `ledger_messages` is written at a different moment:
 | `upward_message` | After proposal approval | Agent uses yield/report |
 | `child_report_message` | External event | Child unit emits report/yield |
 | `system_message` | Various runtime events | Compression start/success/failure, malformed calls, etc. |
-| `child_commit_view` (NEW) | Turn start | Building context for current turn |
+| `child_commit_view_message` | Turn start | Building context for current turn (stored for observability, projected as turn-local overlay) |
 
 All are append-only. `proposal_message` and `vote_message` support version increments (same `message_id`, new `version`) for status updates.
 
@@ -98,7 +99,7 @@ The projection pipeline transforms raw persisted facts into an `LlmContext`. Thi
 ```
 DeliberationUnit.runLoop()
   ├─ buildChildCommitViews()
-  ├─ append child_commit_view_message (visible in current turn)
+  ├─ append child_commit_view_message to ledger (stored for observability)
   ├─ ledger.readVisibleSnapshotForAgent(agentId, turnCounter)
   │    → visibleMessages[], newlyVisibleMessages[]
   ├─ persistContextTextRefs()
@@ -110,6 +111,8 @@ DeliberationUnit.runLoop()
   │
   ├─ assembleTurnContext(plan)
   │    ├─ buildSystemPrompt(agentId, level, workspaceRoot, persisted AGENT.md content)
+  │    ├─ Filter child_commit_view_message from visibleMessages
+  │    ├─ Inject childCommitViews as single turn-local overlay
   │    ├─ projector.projectVisibleMessages(oldRecentRaw)
   │    ├─ IF newlyVisible: boundary overlay + projectVisibleMessages(newRecentRaw)
   │    ├─ IF reminderShown: projector.buildCompressionReminderOverlay()
@@ -136,11 +139,13 @@ ContextBuilder.reconstruct(recipeId)
   │
   ├─ Messages:
   │    ├─ IF memory_snapshot_rowid: projector.buildMemorySnapshotMessage(snapshot from row)
-  │    ├─ Split ledger messages at newly_visible_seq using persisted seq values
+  │    ├─ Load latest child_commit_view_message via getLatestChildCommitViewMessage()
+  │    ├─ Filter child_commit_view_message from ledger messages
+  │    ├─ Split remaining messages at newly_visible_seq using persisted seq values
   │    ├─ projector.projectVisibleMessages(old portion)
   │    ├─ IF newly_visible_seq: boundary overlay + projector.projectVisibleMessages(new portion)
   │    ├─ Re-derive compression reminder directly from recipe params
-  │    └─ (child commit view and proposal notification are already in ledger messages)
+  │    └─ (proposal notification is re-derived from recipe params)
   │
   └─ Tool list: getBuiltInToolList(from recipe params)
 ```
@@ -155,9 +160,13 @@ ContextBuilder.reconstruct(recipeId)
 
 See §2.2 — fact events are persisted in ledger; rendering directives are re-derived during reconstruction.
 
-### 4.2 Child commit view → ledger_messages
+### 4.2 Child commit view → ledger_messages (stored) + turn-local overlay (projected)
 
-Child commit view is written into the parent unit's `ledger_messages` as a fact event at turn start. This eliminates cross-unit references in the recipe and makes the seq range sufficient to capture all message content.
+Child commit view is written into the parent unit's `ledger_messages` at turn start for observability, but **filtered from normal message projection** to prevent token accumulation. Instead, only the latest snapshot is injected as a single turn-local overlay during context assembly.
+
+Rationale: `child_commit_view_message` is a periodic state snapshot whose new version supersedes the old. Accumulating all historical snapshots in the recent-raw window wastes context budget with no information gain. The overlay model ensures the agent always sees the current child state while historical entries remain accessible for observability/debugging.
+
+Reconstruction uses `getLatestChildCommitViewMessage(unitId, beforeSeq)` to retrieve the latest snapshot within the recipe's seq range, matching the runtime's single-overlay injection behavior.
 
 ### 4.3 Proposal status versioning
 
@@ -269,7 +278,7 @@ CREATE INDEX idx_recipe_output_message
 
 ### 6.3 `ledger_messages` (EXISTING, behavior change)
 
-Child commit view is now written as a fact event message at turn start. The seq range in the recipe naturally covers it — no cross-unit reference needed.
+Child commit view is written as a `child_commit_view_message` at turn start for observability, but **filtered from normal projection** and injected as a single turn-local overlay. Historical entries remain in the ledger for debugging but are excluded from the agent-visible context to prevent token accumulation. Reconstruction uses `getLatestChildCommitViewMessage()` to inject only the latest entry.
 
 ### 6.4 `unit_memory_state` (REMOVED)
 

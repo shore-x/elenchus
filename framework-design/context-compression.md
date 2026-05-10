@@ -1,7 +1,7 @@
 ---
 title: "Elenchus Framework Design - Context Compression"
-date: 2026-05-05
-version: 3.2
+date: 2026-05-07
+version: 3.3
 ---
 
 # Context Compression
@@ -16,7 +16,8 @@ version: 3.2
 This document defines the framework's unit-level context compression model, including:
 
 - `Memory Snapshot + Recent Raw Window`
-- the injection contract for compressed context
+- the injection contract for compressed cont
+ext
 - context-pressure reminder overlays
 - the semantic boundary of `compressContext`
 - `CompressionTaskManager`
@@ -117,8 +118,9 @@ The reminder must remain:
 - **soft** rather than mandatory
 - **persistent while pressure remains high**
 - **hidden while a compression task is already active**
+- **calculated excluding `child_commit_view_message`** — these are turn-local overlays stored in ledger for observability but filtered from projection; including them in the threshold calculation would inflate the apparent context pressure
 
-> **原则 P22（压缩提醒是柔性的状态提示）**：当Recent Raw Window的粗略长度超过预警阈值时，投影层应向两个agent提供一条柔性压缩提醒 overlay；该提醒表示上下文压力已升高并值得考虑压缩，但不构成必须立即行动的命令。
+> **原则 P22（压缩提醒是柔性的状态提示）**：当Recent Raw Window的粗略长度超过预警阈值时，投影层应向两个agent提供一条柔性压缩提醒 overlay；该提醒表示上下文压力已升高并值得考虑压缩，但不构成必须立即行动的命令。`child_commit_view_message` 不计入阈值估算。
 
 > **原则 P23（压缩提醒受活动任务抑制）**：压缩提醒 overlay 是一种派生状态提示，而不是一次性事件通知；只要上下文仍超阈值且没有活动中的压缩任务，它就应持续可见。若已有压缩任务正在运行，则该提醒应暂时隐藏。
 
@@ -229,6 +231,7 @@ At the current stage:
 
 ## Change Log
 
+- **v3.3 (2026-05-07)**: Budget estimation (reminder threshold, compression task char estimation) now excludes `child_commit_view_message` since these are turn-local overlays filtered from projection. Updated §6 and P22.
 - **v3.2 (2026-05-05)**: Added budget-driven recent-raw truncation as a projection-layer fallback for token pressure. Clarified that truncation only tightens the current turn's recent-raw boundary and must preserve ledger truth and higher-priority context layers.
 - **v3.0 (2026-04-12)**: Extracted from `framework-design.md` during the overview/module split. This file now holds the detailed compression view and task-management semantics while the overview remains the canonical entry point and index.
 - **v3.1 (2026-04-13)**: Added a future-boundary section clarifying that broader knowledge anti-entropy work is deferred beyond the current conversation-context compression scope.

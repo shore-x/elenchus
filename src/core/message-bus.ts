@@ -1,7 +1,6 @@
-// Elenchus MVP - MessageBus
-// Implements P1 (Uniform Message Model) and P4 (Turn Visibility Boundary).
-// All external inputs are uniform Messages. Visibility is determined at turn start.
-// User messages can arrive asynchronously at any time — they are buffered and
-// only become visible at the next turn boundary.
+// Legacy compat — use ConversationLedger directly.
+// MessageBus was the original name; ConversationLedger is the current canonical name.
 
+export { ConversationLedger } from "./conversation-ledger.js";
+/** @deprecated Use ConversationLedger instead. */
 export { ConversationLedger as MessageBus } from "./conversation-ledger.js";

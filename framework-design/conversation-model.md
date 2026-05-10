@@ -178,13 +178,13 @@ A key design boundary is that `AgentTurn` should not keep a persistent cross-tur
 
 > **原则 P14（每轮统一投影视图）**：在当前阶段，每次Agent执行都必须基于ConversationLedger在该turn时点的完整可见快照重新投影上下文；AgentTurn不得依赖跨轮持久化的本地消息缓存。
 
-## 9. Public Fact Broadcast vs. Private Directive Overlay
+## 9. Message Classification: Facts, Turn-Local Overlays, and Directive Overlays
 
 The projected context contains two qualitatively different layers:
 
 ### 9.1 Public Fact Broadcast
 
-These are shared facts that enter `ConversationLedger` and remain part of the unit's persistent shared history.
+These are shared facts that enter `ConversationLedger` and remain part of the unit's persistent shared history. They are projected into agent-visible context in every subsequent turn.
 
 Typical examples include:
 
@@ -195,12 +195,19 @@ Typical examples include:
 - `vote_message`
 - `tool_result_message`
 - `child_report_message`
-- `child_commit_view_message`
 - some runtime-generated broadcasts
 
-### 9.2 Private Directive Overlay
+### 9.2 Turn-Local Overlay (stored in ledger, filtered from projection)
 
-These are turn-local control hints injected only for the currently executing agent. They exist to express current-turn constraints, not long-lived shared facts.
+These are messages written to `ConversationLedger` for observability, but **filtered from normal projection** and injected as a single overlay per turn. They represent periodic state snapshots where the new version supersedes the old — accumulating all historical entries in the agent-visible context would waste budget with no information gain.
+
+Typical examples include:
+
+- `child_commit_view_message` — only the latest snapshot is injected as a turn-local overlay; historical entries remain in the ledger for observability/debugging but are excluded from projection
+
+### 9.3 Private Directive Overlay
+
+These are turn-local control hints injected only for the currently executing agent. They exist to express current-turn constraints, not long-lived shared facts. They are not persisted in the ledger.
 
 Typical examples include:
 
@@ -243,6 +250,7 @@ should remain third-person and explicitly name `Agent A` or `Agent B` when relev
 
 ## Change Log
 
+- **v3.6 (2026-05-07)**: Reclassified `child_commit_view_message` from public fact broadcast (§9.1) to new turn-local overlay category (§9.2). These messages are stored in ledger for observability but filtered from normal projection; only the latest snapshot is injected as a single overlay per turn to prevent token accumulation. Added §9.2, renumbered §9.2 → §9.3.
 - **v3.5 (2026-05-05)**: Clarified that `ConversationProjector` now serves as a reusable rendering primitive while final turn-scoped context assembly belongs to `ContextAssembler`. Documented `child_commit_view_message` as a current-turn-visible public fact that is written before the turn snapshot is read, so recipe boundaries and runtime-visible context stay aligned.
 - **v3.4 (2026-04-19)**: Added §1.1 Message Channel Conversational Style (P29). P29 refines P7 in the writing-style dimension and derives from P27: message payloads should use natural conversational language rather than document-style Markdown; structured output belongs in .md files via the knowledge channel.
 - **v3.3 (2026-04-12)**: Added the implementation boundary for SQLite-backed persistence. The durable store remains authoritative, but unit-graph integrity is maintained by the application-layer persistence logic rather than DB-level foreign keys.

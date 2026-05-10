@@ -27,4 +27,5 @@ export interface SessionPersistenceAdapter {
   getRecipeByOutputMessageId(messageId: string): ContextRecipeData | null;
   getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
   getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[];
+  getLatestChildCommitViewMessage(unitId: string, beforeSeq: number): { content: string } | null;
 }

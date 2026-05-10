@@ -69,13 +69,25 @@ export function assembleTurnContext(input: AssembleTurnContextInput): AssembledT
     input.hasChildren,
     input.canSpawnChild,
   );
-  const recentRawStartIndex = clamp(
+
+  // child_commit_view_message is stored in ledger for observability but excluded from
+  // normal projection — it is injected as a single turn-local overlay from childCommitViews.
+  const filteredVisible = input.visibleMessages.filter(m => m.kind !== "child_commit_view_message");
+  const filteredNewlyVisible = input.newlyVisibleMessages.filter(m => m.kind !== "child_commit_view_message");
+
+  // seq-to-index offset uses the original (unfiltered) array since seq is a ledger-level concept.
+  // Then we find the corresponding position in the filtered array.
+  const originalRecentRawStartIndex = clamp(
     input.budgetPlan.recentRawStartSeq - (input.budgetPlan.visibleEndSeq - input.visibleMessages.length),
     0,
     input.visibleMessages.length,
   );
-  const recentRawMessages = input.visibleMessages.slice(recentRawStartIndex);
-  const recentNewMessageIds = new Set(input.newlyVisibleMessages.map((message) => message.id));
+  const startMessage = input.visibleMessages[originalRecentRawStartIndex];
+  const recentRawStartIndex = startMessage
+    ? Math.max(0, filteredVisible.findIndex(m => m.id === startMessage.id))
+    : 0;
+  const recentRawMessages = filteredVisible.slice(recentRawStartIndex);
+  const recentNewMessageIds = new Set(filteredNewlyVisible.map((message) => message.id));
   const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
   const oldRecentRawMessages = firstRecentNewIndex === -1
     ? recentRawMessages
@@ -87,6 +99,12 @@ export function assembleTurnContext(input: AssembleTurnContextInput): AssembledT
   const messages: LlmMessage[] = [];
   if (input.memorySnapshot) {
     messages.push(projector.buildMemorySnapshotMessage(input.memorySnapshot));
+  }
+
+  // Inject child commit view as turn-local overlay (single message, not accumulated)
+  const childCommitOverlay = projector.buildChildCommitViewMessage(input.agentId, input.childCommitViews);
+  if (childCommitOverlay) {
+    messages.push(childCommitOverlay);
   }
 
   messages.push(...projector.projectVisibleMessages(oldRecentRawMessages));
@@ -113,6 +131,10 @@ export function assembleTurnContext(input: AssembleTurnContextInput): AssembledT
     const proposerName = AGENT_NAMES[input.pendingProposal.proposer] ?? input.pendingProposal.proposer;
     const voterName = AGENT_NAMES[input.agentId] ?? input.agentId;
     messages.push(projector.buildProposalNotification(input.pendingProposal, proposerName, voterName));
+  } else if (input.pendingProposal && input.pendingProposal.proposer === input.agentId) {
+    const proposerName = AGENT_NAMES[input.agentId] ?? input.agentId;
+    const voterName = AGENT_NAMES[input.pendingProposal.proposer === "agent-a" ? "agent-b" : "agent-a"];
+    messages.push(projector.buildProposerWaitNotification(proposerName, voterName, input.pendingProposal.toolName));
   }
 
   return {
