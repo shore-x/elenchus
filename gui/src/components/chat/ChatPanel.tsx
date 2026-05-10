@@ -11,6 +11,9 @@ interface ChatPanelProps {
   unitId: string | null;
   sessionInfo: SessionInfo | null;
   messages: ConversationMessage[];
+  hasMore: boolean;
+  onLoadMore: () => void;
+  isLoadingMore: boolean;
   onSendMessage: (content: string) => Promise<void>;
   onSelectUnit: (unitId: string) => void;
   onOpenFile: (path: string, name: string, startLine?: number) => void;
@@ -336,18 +339,59 @@ function formatRefForMessage(ref: FileReference): string {
   return `@${ref.path}:${formatLineRange(ref.startLine, ref.endLine)}`;
 }
 
-function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef, notifications, onDismissNotification }: ChatPanelProps) {
+function ChatPanelInner({ unitId, sessionInfo, messages, hasMore, onLoadMore, isLoadingMore, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef, notifications, onDismissNotification }: ChatPanelProps) {
   useRenderTime("ChatPanel");
   const [input, setInput] = useState("");
   const [sendKeyMode, setSendKeyMode] = useState<SendKeyMode>("cmd-enter");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const isL0 = unitId === sessionInfo?.unitId;
   const crumbs = buildBreadcrumb(sessionInfo, unitId);
 
+  // Track message count to distinguish new messages from older messages being prepended
+  const prevMessageCountRef = useRef(0);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Only auto-scroll to bottom when new messages are appended at the end
+    // (not when older messages are prepended at the top)
+    if (messages.length > prevMessageCountRef.current) {
+      const container = scrollContainerRef.current;
+      const nearBottom = container ? container.scrollHeight - container.scrollTop - container.clientHeight < 150 : true;
+      if (nearBottom) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+    prevMessageCountRef.current = messages.length;
+  }, [messages]);
+
+  // Infinite scroll: detect scroll-to-top and load older messages
+  const prevScrollHeightRef = useRef(0);
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      if (container.scrollTop < 100 && hasMore && !isLoadingMore) {
+        prevScrollHeightRef.current = container.scrollHeight;
+        onLoadMore();
+      }
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [hasMore, isLoadingMore, onLoadMore]);
+
+  // Preserve scroll position after older messages are prepended
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || prevScrollHeightRef.current === 0) return;
+    const delta = container.scrollHeight - prevScrollHeightRef.current;
+    if (delta > 0) {
+      container.scrollTop += delta;
+      prevScrollHeightRef.current = 0;
+    }
   }, [messages]);
 
   // Close dropdown on outside click
@@ -442,7 +486,10 @@ function ChatPanelInner({ unitId, sessionInfo, messages, onSendMessage, onSelect
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 bg-[var(--color-canvas)]">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 bg-[var(--color-canvas)]">
+        {isLoadingMore && (
+          <div className="text-center text-[var(--color-text-quaternary)] text-xs py-2">Loading older messages...</div>
+        )}
         {messages.length === 0 ? (
           <div className="text-center text-[var(--color-text-quaternary)] text-sm mt-8">No messages yet</div>
         ) : (

@@ -51,6 +51,9 @@ export default function App() {
   const [sessionInfo, setSessionInfo] = useState<SessionInfo | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [oldestLoadedSeq, setOldestLoadedSeq] = useState<number | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [fsTree, setFsTree] = useState<FsTreeNode[]>([]);
   const [fsMode, setFsMode] = useState<"docs" | "all">("docs");
   const [previewTabs, setPreviewTabs] = useState<PreviewTab[]>([]);
@@ -136,7 +139,11 @@ export default function App() {
   // Load messages when selected unit changes
   useEffect(() => {
     if (!selectedUnitId) return;
-    ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
+    ipc.getUnitMessages(selectedUnitId).then((res) => {
+      setMessages(res.messages);
+      setHasMoreMessages(res.hasMore);
+      setOldestLoadedSeq(res.oldestSeq);
+    });
   }, [selectedUnitId]);
 
   // Handle pushed events from main process
@@ -149,7 +156,21 @@ export default function App() {
         event.type === "state-transition" || event.type === "turn-start" ||
         event.type === "incoming-message") {
       if (selectedUnitId) {
-        ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
+        ipc.getUnitMessages(selectedUnitId).then((res) => {
+          setMessages((prev) => {
+            // Merge: keep older messages already loaded, append new ones
+            const existingIds = new Set(prev.map((m) => m.id));
+            const newMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+            if (newMsgs.length === 0) return prev;
+            return [...prev, ...newMsgs];
+          });
+          setHasMoreMessages(res.hasMore);
+          if (oldestLoadedSeq !== null && res.oldestSeq !== null && res.oldestSeq < oldestLoadedSeq) {
+            setOldestLoadedSeq(res.oldestSeq);
+          } else if (oldestLoadedSeq === null) {
+            setOldestLoadedSeq(res.oldestSeq);
+          }
+        });
       }
     }
 
@@ -245,6 +266,24 @@ export default function App() {
     await ipc.sendMessage(content);
     setFileRefs([]);
   }, []);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!selectedUnitId || oldestLoadedSeq === null || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await ipc.getUnitMessages(selectedUnitId, { before: oldestLoadedSeq, limit: 50 });
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const olderMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+        if (olderMsgs.length === 0) return prev;
+        return [...olderMsgs, ...prev];
+      });
+      setHasMoreMessages(res.hasMore);
+      setOldestLoadedSeq(res.oldestSeq);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [selectedUnitId, oldestLoadedSeq, isLoadingMore, ipc]);
 
   const handleAddReference = useCallback((ref: FileReference) => {
     setFileRefs((prev) => {
@@ -366,6 +405,9 @@ export default function App() {
         unitId={selectedUnitId}
         sessionInfo={sessionInfo}
         messages={messages}
+        hasMore={hasMoreMessages}
+        onLoadMore={handleLoadMore}
+        isLoadingMore={isLoadingMore}
         onSendMessage={handleSendMessage}
         onSelectUnit={setSelectedUnitId}
         onOpenFile={handleOpenFile}

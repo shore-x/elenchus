@@ -4,6 +4,7 @@
 
 import { useCallback, useMemo } from "react";
 import type { SessionInfo, UnitInfo, ConversationMessage, FsTreeNode, FileContent, ProviderInfo, ModelInfo } from "../lib/types";
+import type { PaginatedMessagesResponse } from "../lib/electron-api";
 
 function getApi() {
   if (!window.electronAPI) {
@@ -21,7 +22,7 @@ export function useIpc() {
     return getApi().getUnitInfo(unitId);
   }, []);
 
-  const getUnitMessages = useCallback(async (unitId: string, opts?: { before?: number; limit?: number }): Promise<ConversationMessage[]> => {
+  const getUnitMessages = useCallback(async (unitId: string, opts?: { before?: number; limit?: number }): Promise<PaginatedMessagesResponse> => {
     return getApi().getUnitMessages(unitId, opts);
   }, []);
 

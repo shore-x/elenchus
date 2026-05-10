@@ -31,28 +31,22 @@ export function registerDataIpc(): void {
     };
   });
 
-  // --- Unit messages (paginated) ---
+  // --- Unit messages (paginated via SQLite) ---
   ipcMain.handle("get-unit-messages", async (_event, unitId: string, opts?: { before?: number; limit?: number }) => {
-    const s = getSession();
-    if (!s) return [];
-    const unit = s.getRootUnit().findUnitById(unitId);
-    if (!unit) return [];
-
-    const snapshot = unit.exportSnapshot();
-    let messages = snapshot.ledger.messages as ConversationMessage[];
-
-    if (opts?.before !== undefined && opts.before >= 0) {
-      messages = messages.filter((_m, i) => {
-        const seq = snapshot.ledger.sequenceStart + i;
-        return seq < opts.before!;
-      });
-    }
+    const persistence = getPersistence();
+    if (!persistence) return { messages: [], hasMore: false, oldestSeq: null };
 
     const limit = opts?.limit ?? 50;
-    const hasMore = messages.length > limit;
-    const result = hasMore ? messages.slice(-limit) : messages;
 
-    return result;
+    if (opts?.before !== undefined && opts.before >= 0) {
+      const result = persistence.getMessagesBefore(unitId, opts.before, limit);
+      const oldestSeq = result.messages.length > 0 ? result.messages[0].seq : null;
+      return { messages: result.messages.map((m) => m.message), hasMore: result.hasMore, oldestSeq };
+    }
+
+    const result = persistence.getLatestMessages(unitId, limit);
+    const oldestSeq = result.messages.length > 0 ? result.messages[0].seq : null;
+    return { messages: result.messages.map((m) => m.message), hasMore: result.hasMore, oldestSeq };
   });
 
   // --- Send user message ---

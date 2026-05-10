@@ -3,6 +3,12 @@
 
 import type { SessionInfo, UnitInfo, ConversationMessage, FsTreeNode, FileContent, ProviderInfo, ModelInfo, ServerEvent } from "./types";
 
+export interface PaginatedMessagesResponse {
+  messages: ConversationMessage[];
+  hasMore: boolean;
+  oldestSeq: number | null;
+}
+
 export interface ElectronAPI {
   // --- Session lifecycle ---
   startSession: (config: Record<string, unknown>) => Promise<SessionInfo | { error: string }>;
@@ -11,7 +17,7 @@ export interface ElectronAPI {
 
   // --- Data queries ---
   getUnitInfo: (unitId: string) => Promise<UnitInfo | null>;
-  getUnitMessages: (unitId: string, opts?: { before?: number; limit?: number }) => Promise<ConversationMessage[]>;
+  getUnitMessages: (unitId: string, opts?: { before?: number; limit?: number }) => Promise<PaginatedMessagesResponse>;
   sendMessage: (content: string) => Promise<{ ok: boolean; error?: string }>;
 
   // --- File system ---

@@ -1054,4 +1054,58 @@ export class SqliteSessionPersistence implements SessionPersistenceAdapter {
     if (message.kind !== "child_commit_view_message") return null;
     return { content: message.content };
   }
+
+  getMessageSeqRange(unitId: string): { minSeq: number; maxSeq: number } | null {
+    const row = this.db.prepare(
+      `SELECT MIN(seq) AS minSeq, MAX(seq) AS maxSeq FROM ledger_messages WHERE unit_id = ?`,
+    ).get(unitId) as { minSeq: number | null; maxSeq: number | null } | undefined;
+    if (!row || row.minSeq === null || row.maxSeq === null) return null;
+    return { minSeq: row.minSeq, maxSeq: row.maxSeq };
+  }
+
+  getLatestMessages(unitId: string, limit: number): { messages: SequencedConversationMessage[]; hasMore: boolean } {
+    const range = this.getMessageSeqRange(unitId);
+    if (!range) return { messages: [], hasMore: false };
+
+    const rows = this.db.prepare(
+      `SELECT seq, body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT ?`,
+    ).all(unitId, limit) as MessageRow[];
+
+    const messages = rows.reverse().map((row) => ({
+      seq: row.seq,
+      message: parseJson<ConversationMessage>(row.body),
+    }));
+
+    const hasMore = messages.length > 0 && messages[0].seq > range.minSeq;
+    return { messages, hasMore };
+  }
+
+  getMessagesBefore(unitId: string, beforeSeq: number, limit: number): { messages: SequencedConversationMessage[]; hasMore: boolean } {
+    const range = this.getMessageSeqRange(unitId);
+    if (!range) return { messages: [], hasMore: false };
+
+    const rows = this.db.prepare(
+      `SELECT seq, body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT ?`,
+    ).all(unitId, beforeSeq, limit) as MessageRow[];
+
+    const messages = rows.reverse().map((row) => ({
+      seq: row.seq,
+      message: parseJson<ConversationMessage>(row.body),
+    }));
+
+    const hasMore = messages.length > 0 && messages[0].seq > range.minSeq;
+    return { messages, hasMore };
+  }
 }

@@ -104,4 +104,16 @@ export class FileSystemSessionPersistence implements SessionPersistenceAdapter {
   getLatestChildCommitViewMessage(): { content: string } | null {
     return null;
   }
+
+  getMessageSeqRange(): { minSeq: number; maxSeq: number } | null {
+    return null;
+  }
+
+  getLatestMessages(): { messages: SequencedConversationMessage[]; hasMore: boolean } {
+    return { messages: [], hasMore: false };
+  }
+
+  getMessagesBefore(): { messages: SequencedConversationMessage[]; hasMore: boolean } {
+    return { messages: [], hasMore: false };
+  }
 }

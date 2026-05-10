@@ -12519,7 +12519,10 @@ function useIpc() {
   const checkWorkspaceStatus = reactExports.useCallback(async () => {
     return getApi().checkWorkspaceStatus();
   }, []);
-  return {
+  const reconstructContext = reactExports.useCallback(async (messageId) => {
+    return getApi().reconstructContext(messageId);
+  }, []);
+  return reactExports.useMemo(() => ({
     getSessionInfo,
     getUnitInfo,
     getUnitMessages,
@@ -12533,8 +12536,25 @@ function useIpc() {
     startSession,
     loadPersistedConfig,
     savePersistedConfig,
-    checkWorkspaceStatus
-  };
+    checkWorkspaceStatus,
+    reconstructContext
+  }), [
+    getSessionInfo,
+    getUnitInfo,
+    getUnitMessages,
+    sendMessage,
+    terminateSession,
+    getFsTree,
+    readFile,
+    getProviders,
+    getModels,
+    validateConfig,
+    startSession,
+    loadPersistedConfig,
+    savePersistedConfig,
+    checkWorkspaceStatus,
+    reconstructContext
+  ]);
 }
 const MIN_LEFT = 180;
 const MIN_CENTER = 300;
@@ -12571,30 +12591,37 @@ function ThreeColumnLayout({ children }) {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }, [leftWidth]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "flex h-full w-full overflow-hidden", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { width: leftWidth, minWidth: MIN_LEFT }, className: "flex-shrink-0 h-full overflow-hidden border-r border-stone-200 bg-white", children: children[0] }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "flex h-full w-full overflow-hidden bg-[var(--color-canvas)]", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       "div",
       {
-        className: "w-1 flex-shrink-0 cursor-col-resize hover:bg-stone-300 active:bg-stone-400 transition-colors",
+        style: { width: leftWidth, minWidth: MIN_LEFT },
+        className: "workbench-panel flex-shrink-0 h-full overflow-hidden border-r border-[var(--color-border)]",
+        children: children[0]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--color-surface-muted)] active:bg-[var(--color-border)] transition-colors",
         onMouseDown: (e) => onMouseDown("left", e)
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 min-w-[300px] h-full overflow-hidden bg-[var(--color-bg)]", children: children[1] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 min-w-[300px] h-full overflow-hidden border-l border-stone-200 bg-white", children: children[2] })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 min-w-[300px] h-full overflow-hidden bg-[var(--color-canvas)]", children: children[1] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "workbench-panel flex-1 min-w-[300px] h-full border-l border-[var(--color-border)]", children: children[2] })
   ] });
 }
 function stateDotClass(state) {
   switch (state) {
     case "turn-a":
     case "turn-b":
-      return "bg-stone-500 animate-pulse";
+      return "bg-[var(--color-accent)] animate-pulse";
     case "executing":
-      return "bg-stone-700 animate-pulse";
+      return "bg-[var(--color-text-secondary)] animate-pulse";
     case "idle":
     case "terminated":
     default:
-      return "bg-stone-300";
+      return "bg-[var(--color-border-strong)]";
   }
 }
 function stateLabel(state) {
@@ -12609,14 +12636,14 @@ function TreeNode({ node: node2, selectedUnitId, onSelectUnit, depth }) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `flex items-center gap-1.5 px-2 py-1 cursor-pointer hover:bg-stone-50 rounded text-sm ${isSelected ? "bg-stone-100 text-gray-800" : "text-gray-700"}`,
+        className: `sidebar-row cursor-pointer text-sm ${isSelected ? "is-active" : ""}`,
         style: { paddingLeft: `${depth * 16 + 8}px` },
         onClick: () => onSelectUnit(node2.unitId),
         children: [
           hasChildren ? /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
-              className: "w-4 h-4 flex items-center justify-center text-stone-400 hover:text-stone-600",
+              className: "sidebar-disclosure",
               onClick: (e) => {
                 e.stopPropagation();
                 setExpanded(!expanded);
@@ -12624,10 +12651,10 @@ function TreeNode({ node: node2, selectedUnitId, onSelectUnit, depth }) {
               children: expanded ? "▾" : "▸"
             }
           ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "w-4" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${stateDotClass(node2.state)}` }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium", children: node2.level }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-gray-400 truncate", children: node2.unitId.replace(/^(L\d+-)/, "") }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400 ml-auto", children: stateLabel(node2.state) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `sidebar-state-dot ${stateDotClass(node2.state)}` }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-[13px] text-[var(--color-text-secondary)]", children: node2.level }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sidebar-secondary-label truncate", children: node2.unitId.replace(/^(L\d+-)/, "") }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sidebar-row-meta ml-auto", children: stateLabel(node2.state) })
         ]
       }
     ),
@@ -12643,19 +12670,47 @@ function TreeNode({ node: node2, selectedUnitId, onSelectUnit, depth }) {
     ))
   ] });
 }
-function AgentTree({ tree, selectedUnitId, onSelectUnit }) {
+function AgentTreeInner({ tree, selectedUnitId, onSelectUnit }) {
   if (!tree) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 text-sm text-gray-400", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-semibold text-gray-600 mb-2", children: "Agents" }),
-      "No active session"
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-section-header", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-section-title", children: "Agents" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 py-3 text-sm text-[var(--color-text-quaternary)]", children: "No active session" })
     ] });
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-2", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-semibold text-gray-600 text-xs uppercase tracking-wider px-2 mb-1", children: "Agents" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(TreeNode, { node: tree, selectedUnitId, onSelectUnit, depth: 0 })
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-section-header", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-section-title", children: "Agents" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto py-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(TreeNode, { node: tree, selectedUnitId, onSelectUnit, depth: 0 }) })
   ] });
 }
-function FileNode({ node: node2, onOpenFile, openFilePaths, activeFilePath, depth }) {
+const AgentTree = React.memo(AgentTreeInner);
+let switchId = 0;
+function markTabSwitchStart(key) {
+  switchId++;
+  const id = `tab-switch-${switchId}`;
+  performance.mark(`${id}-start`);
+  console.time(`[perf] tab-switch → ${key}`);
+  console.log(`[perf] 🔵 tab-switch START → ${key} (id=${id})`);
+  return id;
+}
+function markTabSwitchPhase(id, phase) {
+  performance.mark(`${id}-${phase}`);
+  try {
+    performance.measure(`[perf] ${phase}`, `${id}-start`, `${id}-${phase}`);
+  } catch {
+  }
+  console.log(`[perf]   ↳ ${phase} @ ${performance.now().toFixed(1)}ms`);
+}
+function useRenderTime(label) {
+  const renderStart = reactExports.useRef(performance.now());
+  renderStart.current = performance.now();
+  reactExports.useEffect(() => {
+    const duration = performance.now() - renderStart.current;
+    if (duration > 1) {
+      console.log(`[perf] ⏱ ${label} render+commit: ${duration.toFixed(1)}ms`);
+    }
+  });
+}
+const FileNode = React.memo(function FileNode2({ node: node2, onOpenFile, activeFilePath, depth }) {
   const [expanded, setExpanded] = reactExports.useState(true);
   const isActive = node2.path === activeFilePath;
   if (node2.isDirectory) {
@@ -12663,22 +12718,21 @@ function FileNode({ node: node2, onOpenFile, openFilePaths, activeFilePath, dept
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: "flex items-center gap-1.5 px-2 py-0.5 cursor-pointer hover:bg-gray-50 rounded text-sm text-gray-600",
+          className: "sidebar-row cursor-pointer text-sm",
           style: { paddingLeft: `${depth * 16 + 8}px` },
           onClick: () => setExpanded(!expanded),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400", children: expanded ? "▾" : "▸" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "w-3.5 h-3.5 text-stone-400 flex-shrink-0", viewBox: "0 0 16 16", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5V5.5A1.5 1.5 0 0 0 14.5 4H7.707L6.354 2.646A.5.5 0 0 0 6 2H1.5z" }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: node2.name })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sidebar-disclosure", children: expanded ? "▾" : "▸" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "w-3.5 h-3.5 text-[var(--color-text-quaternary)] flex-shrink-0", viewBox: "0 0 16 16", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5V5.5A1.5 1.5 0 0 0 14.5 4H7.707L6.354 2.646A.5.5 0 0 0 6 2H1.5z" }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-[13px] text-[var(--color-text-secondary)]", children: node2.name })
           ]
         }
       ),
       expanded && node2.children?.map((child) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-        FileNode,
+        FileNode2,
         {
           node: child,
           onOpenFile,
-          openFilePaths,
           activeFilePath,
           depth: depth + 1
         },
@@ -12689,26 +12743,27 @@ function FileNode({ node: node2, onOpenFile, openFilePaths, activeFilePath, dept
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "div",
     {
-      className: `flex items-center gap-1.5 px-2 py-0.5 cursor-pointer rounded text-sm ${isActive ? "bg-stone-100 text-gray-800" : "hover:bg-stone-50 text-gray-700"}`,
+      className: `sidebar-row cursor-pointer text-sm ${isActive ? "is-active" : ""}`,
       style: { paddingLeft: `${depth * 16 + 8}px` },
       onClick: () => onOpenFile(node2.path, node2.name),
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "w-4" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-stone-300 text-xs", children: "·" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: node2.name })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[var(--color-text-quaternary)] text-xs", children: "·" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-[13px]", children: node2.name })
       ]
     }
   );
-}
-function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths, activeFilePath }) {
+});
+function WorkspaceDirInner({ tree, mode, onModeChange, onOpenFile, activeFilePath }) {
+  useRenderTime("WorkspaceDir");
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between px-3 py-1.5 border-b border-stone-100", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-semibold text-gray-600 text-xs uppercase tracking-wider", children: "Workspace" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex rounded-md border border-stone-200 overflow-hidden text-xs", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sidebar-section-header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sidebar-section-title", children: "Workspace" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "segmented-control", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            className: `px-2 py-0.5 ${mode === "docs" ? "bg-stone-100 text-gray-800" : "text-gray-500 hover:bg-stone-50"}`,
+            className: mode === "docs" ? "is-active" : "",
             onClick: () => onModeChange("docs"),
             children: "Docs"
           }
@@ -12716,19 +12771,18 @@ function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths, act
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            className: `px-2 py-0.5 ${mode === "all" ? "bg-stone-100 text-gray-800" : "text-gray-500 hover:bg-stone-50"}`,
+            className: mode === "all" ? "is-active" : "",
             onClick: () => onModeChange("all"),
             children: "All"
           }
         )
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto py-1", children: tree.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-3 py-2 text-xs text-gray-400", children: "Empty workspace" }) : tree.map((node2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto py-2", children: tree.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 py-3 text-sm text-[var(--color-text-quaternary)]", children: "Empty workspace" }) : tree.map((node2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
       FileNode,
       {
         node: node2,
         onOpenFile,
-        openFilePaths,
         activeFilePath,
         depth: 0
       },
@@ -12736,6 +12790,7 @@ function WorkspaceDir({ tree, mode, onModeChange, onOpenFile, openFilePaths, act
     )) })
   ] });
 }
+const WorkspaceDir = React.memo(WorkspaceDirInner);
 const FILE_EXTENSIONS = /* @__PURE__ */ new Set([
   // Code
   ".ts",
@@ -12973,84 +13028,120 @@ function renderInlineContent(text2, options) {
   return nodes;
 }
 function agentTagClass(agent) {
-  return agent === "agent-a" ? "bg-sky-50 text-sky-500" : "bg-indigo-50 text-indigo-500";
-}
-function agentBorderClass(agent) {
-  return agent === "agent-a" ? "border-l-2 border-sky-200" : "border-l-2 border-indigo-200";
+  return agent === "agent-a" ? "ui-badge ui-badge-identity-a" : "ui-badge ui-badge-identity-b";
 }
 function proposalStatusBadge(status) {
   switch (status) {
     case "pending":
-      return { label: "pending", cls: "bg-stone-100 text-stone-600" };
+      return { label: "pending", cls: "ui-badge ui-badge-status-muted" };
     case "approved":
-      return { label: "approved", cls: "bg-emerald-50 text-emerald-500" };
+      return { label: "approved", cls: "ui-badge ui-badge-status-success" };
     case "rejected":
-      return { label: "rejected", cls: "bg-stone-100 text-stone-400" };
+      return { label: "rejected", cls: "ui-badge ui-badge-status-danger" };
     case "superseded":
-      return { label: "superseded", cls: "bg-stone-50 text-stone-400" };
+      return { label: "superseded", cls: "ui-badge ui-badge-status-muted" };
   }
+}
+function deliveryModeBadgeClass(mode) {
+  return mode === "yield" ? "ui-badge ui-badge-status-warning" : "ui-badge ui-badge-status-muted";
+}
+function ContextMenuPopup({ x, y, onAction }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: "overlay-menu",
+      style: { left: x, top: y },
+      onClick: (e) => e.stopPropagation(),
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "overlay-menu-item",
+          onClick: onAction,
+          children: "View Context"
+        }
+      )
+    }
+  );
+}
+function groupMessagesByTurn(messages) {
+  const result = [];
+  const groups = /* @__PURE__ */ new Map();
+  for (const msg of messages) {
+    if (msg.kind === "agent_message" || msg.kind === "proposal_message" || msg.kind === "vote_message") {
+      const key = `${msg.turnAuthored}:${msg.authoredBy}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = { type: "agent-turn-group", turn: msg.turnAuthored, agent: msg.authoredBy };
+        groups.set(key, group);
+        result.push(group);
+      }
+      if (msg.kind === "agent_message") group.reply = msg;
+      else group.action = msg;
+    } else {
+      result.push(msg);
+    }
+  }
+  return result;
 }
 function MessageBubble({ message, onOpenFile }) {
   const [expanded, setExpanded] = reactExports.useState(false);
   switch (message.kind) {
     case "incoming_message":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-end mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-w-[80%] bg-stone-100 text-gray-800 rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed", children: renderInlineContent(message.content, { onOpenFile }) }) });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-end mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-card message-card-user", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body message-body-inline", children: renderInlineContent(message.content, { onOpenFile }) }) }) });
     case "agent_message":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-start mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `max-w-[80%] bg-white border border-stone-200 rounded-2xl rounded-bl-md px-4 py-2.5 text-sm leading-relaxed ${agentBorderClass(message.authoredBy)}`, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`, children: message.authoredBy === "agent-a" ? "Agent A" : "Agent B" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 text-gray-800", children: renderInlineContent(message.content, { onOpenFile }) })
-      ] }) });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body", children: renderInlineContent(message.content, { onOpenFile }) });
     case "proposal_message": {
       const badge = proposalStatusBadge(message.status);
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: "bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50",
+          className: "message-card-interactive",
           onClick: () => setExpanded(!expanded),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`, children: message.authoredBy === "agent-a" ? "Agent A" : "Agent B" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-gray-600", children: "propose:" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-gray-600", children: message.toolName }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-xs px-2 py-0.5 rounded-full ${badge.cls}`, children: badge.label }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400 ml-auto", children: expanded ? "▾" : "▸" })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-label", children: "propose" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-title truncate", children: message.toolName }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: badge.cls, children: badge.label }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-chevron ml-auto", children: expanded ? "▾" : "▸" })
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-gray-500 text-xs mt-1", children: message.proposedStep }),
-            expanded && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "mt-2 text-xs bg-stone-50 rounded-lg p-3 overflow-x-auto text-gray-600", children: JSON.stringify(message.args, null, 2) })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body-compact", children: message.proposedStep }),
+            expanded && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "message-expand", children: JSON.stringify(message.args, null, 2) })
           ]
         }
-      ) });
+      );
     }
     case "vote_message":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: "text-sm leading-relaxed cursor-pointer hover:bg-stone-100 rounded-lg px-3 py-1.5",
+          className: "message-card-interactive",
           onClick: () => setExpanded(!expanded),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-block text-xs font-medium px-2 py-0.5 rounded-full ${agentTagClass(message.authoredBy)}`, children: message.authoredBy === "agent-a" ? "Agent A" : "Agent B" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `ml-1 text-xs font-medium ${message.approve ? "text-stone-600" : "text-stone-500"}`, children: message.approve ? "Approve" : "Reject" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-gray-500 text-xs ml-2", children: expanded ? message.reason : message.reason.slice(0, 80) + (message.reason.length > 80 ? "..." : "") })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: message.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger", children: message.approve ? "Approve" : "Reject" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-chevron ml-auto", children: expanded ? "▾" : "▸" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `message-body-compact ${expanded ? "" : "truncate"}`, children: expanded ? message.reason : message.reason.slice(0, 120) + (message.reason.length > 120 ? "..." : "") })
           ]
         }
-      ) });
+      );
     case "tool_result_message":
       return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: "bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-100/80",
+          className: "message-card message-card-muted message-card-interactive",
           onClick: () => setExpanded(!expanded),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `font-medium ${message.success ? "text-emerald-500" : "text-stone-400"}`, children: message.success ? "Success" : "Failed" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-gray-700", children: message.toolName }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-gray-400", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: message.success ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger", children: message.success ? "Success" : "Failed" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-title", children: message.toolName }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "panel-meta", children: [
                 (message.durationMs / 1e3).toFixed(1),
                 "s"
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400 ml-auto", children: expanded ? "▾" : "▸" })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-chevron ml-auto", children: expanded ? "▾" : "▸" })
             ] }),
-            expanded && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "mt-2 text-xs bg-white rounded-lg p-3 overflow-x-auto max-h-60 overflow-y-auto text-gray-600 border border-stone-200", children: message.output })
+            expanded && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "message-expand max-h-60 overflow-y-auto", children: message.output })
           ]
         }
       ) });
@@ -13058,26 +13149,118 @@ function MessageBubble({ message, onOpenFile }) {
       return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
         {
-          className: "bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed cursor-pointer hover:bg-stone-50",
+          className: "message-card message-card-interactive",
           onClick: () => setExpanded(!expanded),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-gray-600", children: message.childId }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-xs px-2 py-0.5 rounded-full ${message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"}`, children: message.deliveryMode }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400 ml-auto", children: expanded ? "▾" : "▸" })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-title", children: message.childId }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: deliveryModeBadgeClass(message.deliveryMode), children: message.deliveryMode }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-chevron ml-auto", children: expanded ? "▾" : "▸" })
             ] }),
-            expanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 text-gray-600", children: renderInlineContent(message.content, { onOpenFile }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 text-gray-500 text-xs truncate", children: message.content })
+            expanded ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body", children: renderInlineContent(message.content, { onOpenFile }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body-compact truncate", children: message.content })
           ]
         }
       ) });
     case "upward_message":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-white border border-stone-200 rounded-xl px-4 py-2.5 text-sm leading-relaxed", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-xs font-medium px-2 py-0.5 rounded-full ${message.deliveryMode === "yield" ? "bg-stone-200 text-stone-700" : "bg-stone-100 text-stone-600"}`, children: message.deliveryMode }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 text-gray-700", children: renderInlineContent(message.content, { onOpenFile }) })
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-card", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-meta-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: deliveryModeBadgeClass(message.deliveryMode), children: message.deliveryMode }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body", children: renderInlineContent(message.content, { onOpenFile }) })
       ] }) });
     case "system_message":
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-center mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-stone-500 bg-stone-100 rounded-full px-3 py-1", children: message.content }) });
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-center mb-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-system-pill", children: message.content }) });
   }
+}
+function AgentTurnGroupBubble({ group, onOpenFile, onViewContext }) {
+  const [contextMenu, setContextMenu] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    if (!contextMenu) return;
+    const onClickOutside = () => setContextMenu(null);
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    document.addEventListener("click", onClickOutside);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClickOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenu]);
+  const hasReply = !!group.reply;
+  const hasAction = !!group.action;
+  if (hasReply && !hasAction) {
+    const msg = group.reply;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-start mb-3", onContextMenu: (e) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY });
+    }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-card", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-meta-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: agentTagClass(group.agent), children: group.agent === "agent-a" ? "Agent A" : "Agent B" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body", children: renderInlineContent(msg.content, { onOpenFile }) })
+      ] }),
+      contextMenu && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenuPopup, { x: contextMenu.x, y: contextMenu.y, onAction: () => {
+        setContextMenu(null);
+        onViewContext(msg.id);
+      } })
+    ] });
+  }
+  if (!hasReply && hasAction) {
+    const action = group.action;
+    if (action.kind === "proposal_message") {
+      const badge = proposalStatusBadge(action.status);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3", onContextMenu: (e) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY });
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-card message-card-interactive", onClick: () => {
+        }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: agentTagClass(group.agent), children: group.agent === "agent-a" ? "Agent A" : "Agent B" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-label", children: "propose" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "message-title truncate", children: action.toolName }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: badge.cls, children: badge.label })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body-compact", children: action.proposedStep })
+        ] }),
+        contextMenu && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenuPopup, { x: contextMenu.x, y: contextMenu.y, onAction: () => {
+          setContextMenu(null);
+          onViewContext(action.id);
+        } })
+      ] });
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3 pl-2", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-card message-card-muted message-card-compact message-card-interactive", onClick: () => {
+    }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-meta-row", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: agentTagClass(group.agent), children: group.agent === "agent-a" ? "Agent A" : "Agent B" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: action.approve ? "ui-badge ui-badge-status-success" : "ui-badge ui-badge-status-danger", children: action.approve ? "Approve" : "Reject" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body-compact truncate", children: action.reason })
+    ] }) });
+  }
+  const contextId = group.reply?.id ?? group.action?.id ?? "";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-start mb-3", onContextMenu: (e) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  }, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "message-card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-meta-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: agentTagClass(group.agent), children: group.agent === "agent-a" ? "Agent A" : "Agent B" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-body", children: renderInlineContent(group.reply.content, { onOpenFile }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "message-divider" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MessageBubble, { message: group.action, onOpenFile })
+    ] }),
+    contextMenu && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenuPopup, { x: contextMenu.x, y: contextMenu.y, onAction: () => {
+      setContextMenu(null);
+      onViewContext(contextId);
+    } })
+  ] });
+}
+function isAgentTurnGroup(item) {
+  return item.type === "agent-turn-group";
+}
+function GroupedChatItemBubble({ item, onOpenFile, onViewContext }) {
+  if (isAgentTurnGroup(item)) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(AgentTurnGroupBubble, { group: item, onOpenFile, onViewContext });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(MessageBubble, { message: item, onOpenFile });
 }
 function buildBreadcrumb(sessionInfo, unitId) {
   if (!sessionInfo || !unitId) return [];
@@ -13098,22 +13281,54 @@ const SEND_KEY_LABEL = {
   "cmd-enter": "⌘↵",
   "enter": "↵"
 };
-function formatLineRange$1(startLine, endLine) {
+function formatLineRange(startLine, endLine) {
   return startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
 }
 function formatRefForMessage(ref) {
-  return `@${ref.path}:${formatLineRange$1(ref.startLine, ref.endLine)}`;
+  return `@${ref.path}:${formatLineRange(ref.startLine, ref.endLine)}`;
 }
-function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit, onOpenFile, refs, onRemoveRef }) {
+function ChatPanelInner({ unitId, sessionInfo, messages, hasMore, onLoadMore, isLoadingMore, onSendMessage, onSelectUnit, onOpenFile, onViewContext, refs, onRemoveRef, notifications, onDismissNotification }) {
+  useRenderTime("ChatPanel");
   const [input, setInput] = reactExports.useState("");
   const [sendKeyMode, setSendKeyMode] = reactExports.useState("cmd-enter");
   const [dropdownOpen, setDropdownOpen] = reactExports.useState(false);
   const messagesEndRef = reactExports.useRef(null);
+  const scrollContainerRef = reactExports.useRef(null);
   const dropdownRef = reactExports.useRef(null);
   const isL0 = unitId === sessionInfo?.unitId;
   const crumbs = buildBreadcrumb(sessionInfo, unitId);
+  const prevMessageCountRef = reactExports.useRef(0);
   reactExports.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length > prevMessageCountRef.current) {
+      const container = scrollContainerRef.current;
+      const nearBottom = container ? container.scrollHeight - container.scrollTop - container.clientHeight < 150 : true;
+      if (nearBottom) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+    prevMessageCountRef.current = messages.length;
+  }, [messages]);
+  const prevScrollHeightRef = reactExports.useRef(0);
+  reactExports.useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      if (container.scrollTop < 100 && hasMore && !isLoadingMore) {
+        prevScrollHeightRef.current = container.scrollHeight;
+        onLoadMore();
+      }
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [hasMore, isLoadingMore, onLoadMore]);
+  reactExports.useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || prevScrollHeightRef.current === 0) return;
+    const delta = container.scrollHeight - prevScrollHeightRef.current;
+    if (delta > 0) {
+      container.scrollTop += delta;
+      prevScrollHeightRef.current = 0;
+    }
   }, [messages]);
   reactExports.useEffect(() => {
     if (!dropdownOpen) return;
@@ -13150,119 +13365,160 @@ function ChatPanel({ unitId, sessionInfo, messages, onSendMessage, onSelectUnit,
       }
     }
   }, [sendKeyMode, handleSend]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { "data-drop-zone": "chat-input", className: "flex flex-col h-full", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 px-4 py-2 border-b border-stone-200/80 bg-white/80 backdrop-blur-sm", children: [
-      crumbs.map((crumb, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2 text-sm", children: [
-        i > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-stone-300", children: "›" }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { "data-drop-zone": "chat-input", className: "flex flex-col h-full min-w-0", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel-header", children: [
+      crumbs.map((crumb, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2 text-sm min-w-0", children: [
+        i > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[var(--color-text-quaternary)]", children: "›" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "span",
           {
-            className: i === crumbs.length - 1 ? "font-medium text-gray-700" : "text-gray-500 hover:text-gray-700 cursor-pointer hover:underline",
+            className: i === crumbs.length - 1 ? "breadcrumb-current truncate" : "breadcrumb-link truncate",
             onClick: () => onSelectUnit(crumb.unitId),
             children: crumb.label
           }
         )
       ] }, crumb.unitId)),
-      unitId && sessionInfo && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ml-auto text-xs text-stone-400", children: [
+      unitId && sessionInfo && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ml-auto panel-meta", children: [
         sessionInfo.level,
         " · ",
         sessionInfo.state
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 overflow-y-auto px-4 py-3 bg-[var(--color-bg)]", children: [
-      messages.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-center text-gray-400 text-sm mt-8", children: "No messages yet" }) : messages.map((msg) => /* @__PURE__ */ jsxRuntimeExports.jsx(MessageBubble, { message: msg, onOpenFile }, msg.id)),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref: messagesEndRef })
-    ] }),
-    isL0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    notifications.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-1 px-3 py-2", children: notifications.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: "border-t border-stone-200/80 bg-white/80 backdrop-blur-sm px-4 py-3 transition-colors duration-150",
+        className: `flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${n.kind === "error" ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-amber-500/10 text-amber-400 border border-amber-500/20"}`,
         children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "data-ref-chips": true, className: "flex flex-wrap gap-1.5 mb-2 min-h-[0px]", children: refs.length > 0 && refs.map((ref, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ref-chip ref-chip-appear", children: [
-            "@",
-            (() => {
-              const segs = ref.path.split("/").filter(Boolean);
-              const short = segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
-              return `${short}:${formatLineRange$1(ref.startLine, ref.endLine)}`;
-            })(),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "span",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "flex-1 min-w-0 break-words", children: n.message }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "shrink-0 opacity-60 hover:opacity-100 transition-opacity",
+              onClick: () => onDismissNotification(n.id),
+              children: "×"
+            }
+          )
+        ]
+      },
+      n.id
+    )) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: scrollContainerRef, className: "flex-1 overflow-y-auto px-4 py-4 bg-[var(--color-canvas)]", children: [
+      isLoadingMore && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-center text-[var(--color-text-quaternary)] text-xs py-2", children: "Loading older messages..." }),
+      messages.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-center text-[var(--color-text-quaternary)] text-sm mt-8", children: "No messages yet" }) : groupMessagesByTurn(messages).map((item) => {
+        const key = isAgentTurnGroup(item) ? `group-${item.turn}-${item.agent}` : item.id;
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(GroupedChatItemBubble, { item, onOpenFile, onViewContext }, key);
+      }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref: messagesEndRef })
+    ] }),
+    isL0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "composer-shell", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { "data-ref-chips": true, className: "flex flex-wrap gap-1.5 mb-2 min-h-[0px]", children: refs.length > 0 && refs.map((ref, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "ref-chip ref-chip-appear", children: [
+        "@",
+        (() => {
+          const segs = ref.path.split("/").filter(Boolean);
+          const short = segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
+          return `${short}:${formatLineRange(ref.startLine, ref.endLine)}`;
+        })(),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "span",
+          {
+            className: "ref-chip-remove",
+            onClick: () => onRemoveRef(i),
+            children: "×"
+          }
+        )
+      ] }, `${ref.path}:${ref.startLine}-${ref.endLine}`)) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "textarea",
+          {
+            className: "composer-textarea",
+            rows: 2,
+            placeholder: refs.length > 0 ? "Add a message (optional)..." : "Type your message...",
+            value: input,
+            onChange: (e) => setInput(e.target.value),
+            onKeyDown: handleKeyDown
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: dropdownRef, className: "relative self-center flex", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: "composer-button-primary rounded-r-none px-3 py-2.5 min-w-[5.75rem] disabled:cursor-not-allowed",
+              onClick: handleSend,
+              disabled: !input.trim() && refs.length === 0,
+              children: [
+                "Send ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-white/60 text-xs ml-0.5 inline-block w-[1.5em] text-center", children: SEND_KEY_LABEL[sendKeyMode] })
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: `composer-button-primary rounded-l-none border-l border-white/10 px-1.5 py-2.5 ${!input.trim() && refs.length === 0 ? "opacity-50" : ""}`,
+              onClick: () => setDropdownOpen(!dropdownOpen),
+              children: "▾"
+            }
+          ),
+          dropdownOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute bottom-full right-0 mb-2 min-w-[176px] rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[0_12px_24px_rgba(15,23,42,0.08),0_2px_6px_rgba(15,23,42,0.04)] z-10", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
               {
-                className: "ref-chip-remove",
-                onClick: () => onRemoveRef(i),
-                children: "×"
-              }
-            )
-          ] }, `${ref.path}:${ref.startLine}-${ref.endLine}`)) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "textarea",
-              {
-                className: "flex-1 resize-none border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-stone-400 focus:ring-1 focus:ring-stone-200",
-                rows: 2,
-                placeholder: refs.length > 0 ? "Add a message (optional)..." : "Type your message...",
-                value: input,
-                onChange: (e) => setInput(e.target.value),
-                onKeyDown: handleKeyDown
+                className: `w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[var(--color-surface-muted)] flex items-center justify-between ${sendKeyMode === "cmd-enter" ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-secondary)]"}`,
+                onClick: () => {
+                  setSendKeyMode("cmd-enter");
+                  setDropdownOpen(false);
+                },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "⌘+Enter 发送" }),
+                  sendKeyMode === "cmd-enter" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-[var(--color-text-quaternary)]", children: "●" })
+                ]
               }
             ),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: dropdownRef, className: "relative self-center flex", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                "button",
-                {
-                  className: "px-3 py-2 bg-stone-700 text-white rounded-l-lg text-sm font-medium hover:bg-stone-600 disabled:opacity-50 min-w-[5.5rem]",
-                  onClick: handleSend,
-                  disabled: !input.trim() && refs.length === 0,
-                  children: [
-                    "Send ",
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-stone-300 text-xs ml-0.5 inline-block w-[1.5em] text-center", children: SEND_KEY_LABEL[sendKeyMode] })
-                  ]
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "button",
-                {
-                  className: `px-1.5 py-2 bg-stone-700 text-white rounded-r-lg text-sm font-medium hover:bg-stone-600 border-l border-stone-600 ${!input.trim() && refs.length === 0 ? "opacity-50" : ""}`,
-                  onClick: () => setDropdownOpen(!dropdownOpen),
-                  children: "▾"
-                }
-              ),
-              dropdownOpen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute bottom-full right-0 mb-1 bg-white border border-stone-200 rounded-lg shadow-lg py-1 min-w-[160px] z-10", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "button",
-                  {
-                    className: `w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "cmd-enter" ? "text-stone-700 font-medium" : "text-gray-600"}`,
-                    onClick: () => {
-                      setSendKeyMode("cmd-enter");
-                      setDropdownOpen(false);
-                    },
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "⌘+Enter 发送" }),
-                      sendKeyMode === "cmd-enter" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-stone-500", children: "●" })
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "button",
-                  {
-                    className: `w-full text-left px-3 py-1.5 text-sm hover:bg-stone-50 flex items-center justify-between ${sendKeyMode === "enter" ? "text-stone-700 font-medium" : "text-gray-600"}`,
-                    onClick: () => {
-                      setSendKeyMode("enter");
-                      setDropdownOpen(false);
-                    },
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Enter 发送" }),
-                      sendKeyMode === "enter" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-stone-500", children: "●" })
-                    ]
-                  }
-                )
-              ] })
-            ] })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                className: `w-full text-left px-3 py-2 text-sm rounded-lg hover:bg-[var(--color-surface-muted)] flex items-center justify-between ${sendKeyMode === "enter" ? "text-[var(--color-text)] font-medium" : "text-[var(--color-text-secondary)]"}`,
+                onClick: () => {
+                  setSendKeyMode("enter");
+                  setDropdownOpen(false);
+                },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Enter 发送" }),
+                  sendKeyMode === "enter" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-[var(--color-text-quaternary)]", children: "●" })
+                ]
+              }
+            )
           ] })
-        ]
-      }
-    ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "border-t border-stone-200 bg-stone-50 px-4 py-3 text-center text-xs text-stone-400", children: "This is a child unit conversation view. Messages can only be sent from the L0 layer. Use the breadcrumb navigation to return to L0." })
+        ] })
+      ] })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "child-conversation-hint", children: "This is a child unit conversation view. Messages can only be sent from the L0 layer. Use the breadcrumb navigation to return to L0." })
   ] });
+}
+const ChatPanel = React.memo(ChatPanelInner);
+function TabBar({ tabs, activeKey, onSelectTab, onCloseTab }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "preview-header", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "preview-tabs", children: tabs.map((tab2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: `preview-tab whitespace-nowrap ${tab2.key === activeKey ? "is-active" : ""}`,
+      onClick: () => onSelectTab(tab2.key),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: tab2.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "preview-tab-close",
+            onClick: (e) => {
+              e.stopPropagation();
+              onCloseTab(tab2.key);
+            },
+            children: "×"
+          }
+        )
+      ]
+    },
+    tab2.key
+  )) }) });
 }
 function ok$1() {
 }
@@ -25842,6 +26098,419 @@ function remarkGfm(options) {
   fromMarkdownExtensions.push(gfmFromMarkdown());
   toMarkdownExtensions.push(gfmToMarkdown(settings));
 }
+const DRAG_THRESHOLD = 4;
+function pointInRect(x, y, rect, pad = 4) {
+  return x >= rect.left - pad && x <= rect.right + pad && y >= rect.top - pad && y <= rect.bottom + pad;
+}
+function animateFlyIn(startX, startY, endEl, label, onDone) {
+  const endRect = endEl.getBoundingClientRect();
+  const endX = endRect.left + endRect.width / 2;
+  const endY = endRect.top + endRect.height / 2;
+  const chip = document.createElement("span");
+  chip.className = "ref-fly-chip";
+  chip.textContent = label;
+  chip.style.left = `${startX}px`;
+  chip.style.top = `${startY}px`;
+  document.body.appendChild(chip);
+  chip.getBoundingClientRect();
+  chip.style.left = `${endX}px`;
+  chip.style.top = `${endY}px`;
+  chip.style.transform = "translate(-50%, -50%) scale(0.9)";
+  chip.style.opacity = "0.8";
+  chip.addEventListener("transitionend", () => {
+    chip.remove();
+    onDone();
+  }, { once: true });
+  setTimeout(() => {
+    if (chip.parentNode) {
+      chip.remove();
+      onDone();
+    }
+  }, 400);
+}
+function isPointInSelection$1(x, y) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+  const range = sel.getRangeAt(0);
+  const rects = range.getClientRects();
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (r && pointInRect(x, y, r, 2)) return true;
+  }
+  return false;
+}
+function useDragToChat({ getLineRange, onAddRef }) {
+  const hintElRef = reactExports.useRef(null);
+  const dragState = reactExports.useRef({ active: false, ref: null, startX: 0, startY: 0, chipEl: null, started: false });
+  reactExports.useEffect(() => {
+    const onSelectionChange = () => {
+      if (dragState.current.active) return;
+      const sel = window.getSelection();
+      if ((!sel || sel.isCollapsed || !sel.rangeCount) && hintElRef.current) {
+        hintElRef.current.remove();
+        hintElRef.current = null;
+      }
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
+  const handleMouseMove = reactExports.useCallback((e) => {
+    if (dragState.current.active) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) {
+      if (hintElRef.current) {
+        hintElRef.current.remove();
+        hintElRef.current = null;
+      }
+      return;
+    }
+    if (!hintElRef.current) {
+      const el = document.createElement("span");
+      el.className = "ref-drag-hint";
+      el.textContent = "drag to chat";
+      document.body.appendChild(el);
+      hintElRef.current = el;
+    }
+    hintElRef.current.style.left = `${e.clientX + 14}px`;
+    hintElRef.current.style.top = `${e.clientY + 16}px`;
+  }, []);
+  const handleMouseLeave = reactExports.useCallback(() => {
+    if (hintElRef.current) {
+      hintElRef.current.remove();
+      hintElRef.current = null;
+    }
+  }, []);
+  const handleMouseDown = reactExports.useCallback((e) => {
+    if (e.button !== 0) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    if (!isPointInSelection$1(e.clientX, e.clientY)) return;
+    e.preventDefault();
+    const ref = getLineRange();
+    if (!ref) return;
+    dragState.current = {
+      active: true,
+      ref,
+      startX: e.clientX,
+      startY: e.clientY,
+      chipEl: null,
+      started: false
+    };
+    if (hintElRef.current) {
+      hintElRef.current.remove();
+      hintElRef.current = null;
+    }
+  }, [getLineRange, onAddRef]);
+  reactExports.useEffect(() => {
+    const handleDocMouseMove = (e) => {
+      const ds = dragState.current;
+      if (!ds.active) return;
+      const dx = e.clientX - ds.startX;
+      const dy = e.clientY - ds.startY;
+      if (!ds.started) {
+        if (Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
+        ds.started = true;
+        const chip = document.createElement("span");
+        chip.className = "ref-drag-chip";
+        const shortPath = ds.ref.path.split("/").slice(-2).join("/");
+        chip.textContent = `@${shortPath}:${ds.ref.startLine}${ds.ref.startLine !== ds.ref.endLine ? `-${ds.ref.endLine}` : ""}`;
+        chip.style.left = `${e.clientX}px`;
+        chip.style.top = `${e.clientY}px`;
+        document.body.appendChild(chip);
+        ds.chipEl = chip;
+      }
+      if (ds.chipEl) {
+        ds.chipEl.style.left = `${e.clientX + 12}px`;
+        ds.chipEl.style.top = `${e.clientY - 16}px`;
+      }
+      const dropZone = document.querySelector("[data-drop-zone='chat-input']");
+      if (dropZone) {
+        const rect = dropZone.getBoundingClientRect();
+        if (pointInRect(e.clientX, e.clientY, rect, 0)) {
+          dropZone.classList.add("drop-zone-active");
+        } else {
+          dropZone.classList.remove("drop-zone-active");
+        }
+      }
+    };
+    const handleDocMouseUp = (e) => {
+      const ds = dragState.current;
+      if (!ds.active) return;
+      if (ds.chipEl) {
+        ds.chipEl.remove();
+        ds.chipEl = null;
+      }
+      const dropZone = document.querySelector("[data-drop-zone='chat-input']");
+      if (dropZone) dropZone.classList.remove("drop-zone-active");
+      if (ds.started && ds.ref && dropZone) {
+        const rect = dropZone.getBoundingClientRect();
+        if (pointInRect(e.clientX, e.clientY, rect, 0)) {
+          const chipsContainer = dropZone.querySelector("[data-ref-chips]");
+          const shortPath = ds.ref.path.split("/").slice(-2).join("/");
+          const label = `@${shortPath}:${ds.ref.startLine}${ds.ref.startLine !== ds.ref.endLine ? `-${ds.ref.endLine}` : ""}`;
+          if (chipsContainer) {
+            animateFlyIn(e.clientX, e.clientY, chipsContainer, label, () => {
+              onAddRef?.(ds.ref);
+            });
+          } else {
+            onAddRef?.(ds.ref);
+          }
+        }
+      }
+      dragState.current = { active: false, ref: null, startX: 0, startY: 0, chipEl: null, started: false };
+    };
+    document.addEventListener("mousemove", handleDocMouseMove);
+    document.addEventListener("mouseup", handleDocMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleDocMouseMove);
+      document.removeEventListener("mouseup", handleDocMouseUp);
+    };
+  }, [onAddRef]);
+  return { handleMouseMove, handleMouseLeave, handleMouseDown };
+}
+function isPointInSelection(x, y) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+  const range = sel.getRangeAt(0);
+  const rects = range.getClientRects();
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (r && x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2) {
+      return true;
+    }
+  }
+  return false;
+}
+function useTabContextMenu({ filePath, getLineRange, onAddRef }) {
+  const [menuState, setMenuState] = reactExports.useState(null);
+  const handleContextMenu = reactExports.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    let ref;
+    if (isPointInSelection(e.clientX, e.clientY)) {
+      const lineRef = getLineRange();
+      if (lineRef) {
+        ref = lineRef;
+      } else {
+        ref = { path: filePath, startLine: 1, endLine: 1 };
+      }
+    } else {
+      ref = { path: filePath, startLine: 0, endLine: 0 };
+    }
+    setMenuState({ x: e.clientX, y: e.clientY, ref });
+  }, [filePath, getLineRange]);
+  const closeMenu = reactExports.useCallback(() => {
+    setMenuState(null);
+  }, []);
+  const menuItems = menuState ? [
+    {
+      label: "Open in Finder",
+      onClick: () => {
+        window.electronAPI.showItemInFolder(filePath);
+      }
+    },
+    {
+      label: formatReferenceLabel(menuState.ref),
+      onClick: () => {
+        if (onAddRef && menuState.ref) {
+          onAddRef(menuState.ref);
+        }
+      },
+      disabled: !onAddRef
+    }
+  ] : [];
+  return {
+    menuState,
+    menuItems,
+    handleContextMenu,
+    closeMenu
+  };
+}
+function formatReferenceLabel(ref) {
+  if (!ref) return "Reference file";
+  if (ref.startLine === 0 && ref.endLine === 0) {
+    return "Reference file";
+  }
+  if (ref.startLine === ref.endLine) {
+    return `Reference line ${ref.startLine}`;
+  }
+  return `Reference lines ${ref.startLine}~${ref.endLine}`;
+}
+function ContextMenu({ x, y, items, onClose }) {
+  const menuRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    const handleClick = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", handleClick);
+      document.addEventListener("keydown", handleKeyDown);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+  const adjustedX = Math.min(x, window.innerWidth - 200);
+  const adjustedY = Math.min(y, window.innerHeight - items.length * 32 - 16);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      ref: menuRef,
+      className: "overlay-menu",
+      style: { left: adjustedX, top: adjustedY },
+      onClick: (e) => e.stopPropagation(),
+      children: items.map((item, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "overlay-menu-item",
+          disabled: item.disabled,
+          onClick: () => {
+            item.onClick();
+            onClose();
+          },
+          children: item.label
+        },
+        i
+      ))
+    }
+  );
+}
+const LINE_HEIGHT = 21;
+const BUFFER_LINES = 5;
+const OVERSCAN = 3;
+function getLineNumberFromNode(node2) {
+  let el = node2.nodeType === Node.ELEMENT_NODE ? node2 : node2.parentElement;
+  while (el) {
+    const dataLine = el.dataset.line;
+    if (dataLine) return parseInt(dataLine, 10);
+    el = el.parentElement;
+  }
+  return null;
+}
+function getLineRangeFromSelection(_lines, filePath) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  const startLine = getLineNumberFromNode(range.startContainer);
+  const endLine = getLineNumberFromNode(range.endContainer);
+  if (startLine === null || endLine === null) return null;
+  return { path: filePath, startLine: Math.min(startLine, endLine), endLine: Math.max(startLine, endLine) };
+}
+function VirtualCodeViewer({ lines, filePath, scrollToLine, onAddRef }) {
+  const containerRef = reactExports.useRef(null);
+  const [scrollTop, setScrollTop] = React.useState(0);
+  const [viewportHeight, setViewportHeight] = React.useState(0);
+  const getLineRange = reactExports.useCallback(() => getLineRangeFromSelection(lines, filePath), [lines, filePath]);
+  const { handleMouseMove, handleMouseLeave, handleMouseDown } = useDragToChat({ getLineRange, onAddRef });
+  const { menuState, menuItems, handleContextMenu, closeMenu } = useTabContextMenu({ filePath, getLineRange, onAddRef });
+  const useVirtual = lines.length > 100;
+  const visibleRange = reactExports.useMemo(() => {
+    if (!useVirtual) return { startIdx: 0, endIdx: lines.length - 1 };
+    const startIdx2 = Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - BUFFER_LINES - OVERSCAN);
+    const endIdx2 = Math.min(
+      lines.length - 1,
+      Math.ceil((scrollTop + viewportHeight) / LINE_HEIGHT) + BUFFER_LINES + OVERSCAN
+    );
+    return { startIdx: startIdx2, endIdx: endIdx2 };
+  }, [scrollTop, viewportHeight, lines.length, useVirtual]);
+  const handleScroll = reactExports.useCallback((e) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+  reactExports.useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setViewportHeight(entry.contentRect.height);
+      }
+    });
+    observer.observe(containerRef.current);
+    setViewportHeight(containerRef.current.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+  reactExports.useEffect(() => {
+    if (scrollToLine === void 0 || !containerRef.current) return;
+    const targetScroll = (scrollToLine - 1) * LINE_HEIGHT - viewportHeight / 2 + LINE_HEIGHT / 2;
+    containerRef.current.scrollTop = Math.max(0, targetScroll);
+  }, [scrollToLine, viewportHeight]);
+  const { startIdx, endIdx } = visibleRange;
+  if (!useVirtual) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          ref: containerRef,
+          className: "virtual-code-container native-scroll",
+          onScroll: handleScroll,
+          onMouseMove: handleMouseMove,
+          onMouseLeave: handleMouseLeave,
+          onMouseDown: handleMouseDown,
+          onContextMenu: handleContextMenu,
+          children: lines.map((line, i) => {
+            const lineNum = i + 1;
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "div",
+              {
+                className: "virtual-code-row",
+                "data-line": lineNum,
+                style: { height: LINE_HEIGHT },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "virtual-line-number", children: lineNum }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "virtual-code-line", children: line || " " })
+                ]
+              },
+              lineNum
+            );
+          })
+        }
+      ),
+      menuState && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenu, { x: menuState.x, y: menuState.y, items: menuItems, onClose: closeMenu })
+    ] });
+  }
+  const topPadding = startIdx * LINE_HEIGHT;
+  const bottomPadding = (lines.length - endIdx - 1) * LINE_HEIGHT;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        ref: containerRef,
+        className: "virtual-code-container",
+        onScroll: handleScroll,
+        onMouseMove: handleMouseMove,
+        onMouseLeave: handleMouseLeave,
+        onMouseDown: handleMouseDown,
+        onContextMenu: handleContextMenu,
+        children: [
+          topPadding > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { height: topPadding } }),
+          lines.slice(startIdx, endIdx + 1).map((line, i) => {
+            const lineNum = startIdx + i + 1;
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "div",
+              {
+                className: "virtual-code-row",
+                "data-line": lineNum,
+                style: { height: LINE_HEIGHT },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "virtual-line-number", children: lineNum }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "virtual-code-line", children: line || " " })
+                ]
+              },
+              lineNum
+            );
+          }),
+          bottomPadding > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { height: bottomPadding } })
+        ]
+      }
+    ),
+    menuState && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenu, { x: menuState.x, y: menuState.y, items: menuItems, onClose: closeMenu })
+  ] });
+}
 async function openExternalUrl(url) {
   window.open(url, "_blank", "noopener");
 }
@@ -25860,32 +26529,6 @@ function ExternalAnchor({ href, children, ...rest }) {
     }
   }, [href]);
   return /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href, onClick: handleClick, target: "_blank", rel: "noopener noreferrer", ...rest, children });
-}
-function getLineRangeFromSelection(container, filePath) {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
-  const range = sel.getRangeAt(0);
-  const lineEls = container.querySelectorAll("[data-line]");
-  const blockEls = container.querySelectorAll("[data-source-line-start]");
-  let startLine = Infinity;
-  let endLine = -Infinity;
-  for (const el of lineEls) {
-    const lineNum = parseInt(el.dataset.line, 10);
-    if (range.intersectsNode(el)) {
-      if (lineNum < startLine) startLine = lineNum;
-      if (lineNum > endLine) endLine = lineNum;
-    }
-  }
-  for (const el of blockEls) {
-    if (range.intersectsNode(el)) {
-      const s = parseInt(el.dataset.sourceLineStart, 10);
-      const e = parseInt(el.dataset.sourceLineEnd, 10);
-      if (s < startLine) startLine = s;
-      if (e > endLine) endLine = e;
-    }
-  }
-  if (startLine === Infinity) return null;
-  return { path: filePath, startLine, endLine };
 }
 const LEAF_BLOCK_TYPES = /* @__PURE__ */ new Set([
   "p",
@@ -25928,254 +26571,215 @@ function buildMdComponents() {
   return components;
 }
 const MD_COMPONENTS = buildMdComponents();
-function formatLineRange(startLine, endLine) {
-  return startLine === endLine ? String(startLine) : `${startLine}-${endLine}`;
+const REMARK_PLUGINS = [remarkGfm];
+function getMdLineFromNode(node2) {
+  let el = node2.nodeType === Node.ELEMENT_NODE ? node2 : node2.parentElement;
+  while (el) {
+    const start = el.dataset.sourceLineStart;
+    if (start) return parseInt(start, 10);
+    el = el.parentElement;
+  }
+  return null;
 }
-function formatRefLabel(ref) {
-  const segs = ref.path.split("/").filter(Boolean);
-  const short = segs.length <= 2 ? segs.join("/") : segs.slice(-2).join("/");
-  return `@${short}:${formatLineRange(ref.startLine, ref.endLine)}`;
+function getMdLineRangeFromSelection(filePath) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  const startLine = getMdLineFromNode(range.startContainer);
+  const endLine = getMdLineFromNode(range.endContainer);
+  if (startLine === null || endLine === null) return null;
+  return { path: filePath, startLine: Math.min(startLine, endLine), endLine: Math.max(startLine, endLine) };
 }
-function pointInRect(x, y, rect, pad = 4) {
-  return x >= rect.left - pad && x <= rect.right + pad && y >= rect.top - pad && y <= rect.bottom + pad;
-}
-function animateFlyIn(startX, startY, endEl, label, onDone) {
-  const endRect = endEl.getBoundingClientRect();
-  const endX = endRect.left + endRect.width / 2;
-  const endY = endRect.top + endRect.height / 2;
-  const chip = document.createElement("span");
-  chip.className = "ref-fly-chip";
-  chip.textContent = label;
-  chip.style.left = `${startX}px`;
-  chip.style.top = `${startY}px`;
-  document.body.appendChild(chip);
-  chip.getBoundingClientRect();
-  chip.style.left = `${endX}px`;
-  chip.style.top = `${endY}px`;
-  chip.style.transform = "translate(-50%, -50%) scale(0.9)";
-  chip.style.opacity = "0.8";
-  chip.addEventListener("transitionend", () => {
-    chip.remove();
-    onDone();
-  }, { once: true });
-  setTimeout(() => {
-    if (chip.parentNode) {
-      chip.remove();
-      onDone();
-    }
-  }, 400);
-}
-const DRAG_THRESHOLD = 4;
-function PreviewPanel({ tabs, activeTab, onSelectTab, onCloseTab, content: content2, onToggleRender, scrollToLine, onAddRef }) {
-  const isMarkdown = content2?.extension === ".md";
+const MarkdownTabContent = React.memo(function MarkdownTabContent2({ tabKey, content: content2, scrollToLine, onAddRef }) {
   const scrollRef = reactExports.useRef(null);
-  const activePath = tabs[activeTab]?.path ?? "";
-  const [selectionRef, setSelectionRef] = reactExports.useState(null);
-  const [cursorHint, setCursorHint] = reactExports.useState(null);
-  const dragState = reactExports.useRef({ active: false, ref: null, startX: 0, startY: 0, chipEl: null, started: false });
+  const [renderAsMarkdown, setRenderAsMarkdown] = reactExports.useState(true);
   const lines = reactExports.useMemo(() => {
-    if (!content2 || content2.renderAsMarkdown) return [];
+    if (!content2) return [];
+    return content2.content.split("\n");
+  }, [content2]);
+  const getMdLineRange = reactExports.useCallback(() => getMdLineRangeFromSelection(tabKey), [tabKey]);
+  const mdDrag = useDragToChat({ getLineRange: getMdLineRange, onAddRef });
+  const mdCtxMenu = useTabContextMenu({ filePath: tabKey, getLineRange: getMdLineRange, onAddRef });
+  reactExports.useEffect(() => {
+    if (!scrollToLine || !scrollRef.current) return;
+    if (renderAsMarkdown) {
+      const target = scrollRef.current.querySelector(
+        `[data-source-line-start="${scrollToLine}"]`
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [scrollToLine, renderAsMarkdown]);
+  if (!content2) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: scrollRef,
+      className: "overflow-y-auto h-full",
+      children: [
+        content2.extension === ".md" && !content2.fileDeleted && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "preview-toolbar-button absolute top-2 right-2 z-10 px-3 py-1.5 shadow-sm",
+            onClick: () => setRenderAsMarkdown((prev) => !prev),
+            children: renderAsMarkdown ? "Source" : "Render"
+          }
+        ),
+        content2.fileDeleted && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "preview-warning-banner", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "w-4 h-4 flex-shrink-0", viewBox: "0 0 16 16", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "This file has been deleted or moved. The content below is the last known version." })
+        ] }),
+        renderAsMarkdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: `markdown-body preview-content-body${content2.fileDeleted ? " preview-dimmed" : ""}`,
+              onMouseMove: mdDrag.handleMouseMove,
+              onMouseLeave: mdDrag.handleMouseLeave,
+              onMouseDown: mdDrag.handleMouseDown,
+              onContextMenu: mdCtxMenu.handleContextMenu,
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { remarkPlugins: REMARK_PLUGINS, components: MD_COMPONENTS, children: content2.content })
+            }
+          ),
+          mdCtxMenu.menuState && /* @__PURE__ */ jsxRuntimeExports.jsx(ContextMenu, { x: mdCtxMenu.menuState.x, y: mdCtxMenu.menuState.y, items: mdCtxMenu.menuItems, onClose: mdCtxMenu.closeMenu })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: content2.fileDeleted ? "preview-dimmed" : "", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          VirtualCodeViewer,
+          {
+            lines,
+            filePath: tabKey,
+            scrollToLine,
+            onAddRef
+          }
+        ) })
+      ]
+    }
+  );
+});
+const CodeTabContent = React.memo(function CodeTabContent2({ tabKey, content: content2, scrollToLine, onAddRef }) {
+  const scrollRef = reactExports.useRef(null);
+  const lines = reactExports.useMemo(() => {
+    if (!content2) return [];
     return content2.content.split("\n");
   }, [content2]);
   reactExports.useEffect(() => {
     if (!scrollToLine || !scrollRef.current) return;
     const target = scrollRef.current.querySelector(
-      `[data-line="${scrollToLine}"], [data-source-line-start="${scrollToLine}"]`
+      `[data-line="${scrollToLine}"]`
     );
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [scrollToLine]);
-  const handleSelectionChange = reactExports.useCallback(() => {
-    if (!scrollRef.current || !activePath) {
-      setSelectionRef(null);
-      setCursorHint(null);
-      return;
-    }
-    if (dragState.current.active) return;
-    const ref = getLineRangeFromSelection(scrollRef.current, activePath);
-    setSelectionRef(ref);
-    if (!ref) setCursorHint(null);
-  }, [activePath]);
-  reactExports.useEffect(() => {
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => document.removeEventListener("selectionchange", handleSelectionChange);
-  }, [handleSelectionChange]);
-  const handleMouseMove = reactExports.useCallback((e) => {
-    if (dragState.current.active) return;
-    if (!selectionRef || !scrollRef.current) {
-      setCursorHint(null);
-      return;
-    }
-    const sel = window.getSelection();
-    if (!sel || !sel.rangeCount) {
-      setCursorHint(null);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    const selRect = range.getBoundingClientRect();
-    if (pointInRect(e.clientX, e.clientY, selRect)) {
-      const scrollRect = scrollRef.current.getBoundingClientRect();
-      const relX = e.clientX - scrollRect.left + scrollRef.current.scrollLeft + 14;
-      const relY = e.clientY - scrollRect.top + scrollRef.current.scrollTop + 16;
-      setCursorHint({ x: relX, y: relY });
-    } else {
-      setCursorHint(null);
-    }
-  }, [selectionRef]);
-  const handleMouseLeave = reactExports.useCallback(() => {
-    if (!dragState.current.active) {
-      setCursorHint(null);
-    }
-  }, []);
-  const handleMouseDown = reactExports.useCallback((e) => {
-    if (!selectionRef || !scrollRef.current || e.button !== 0) return;
-    const sel = window.getSelection();
-    if (!sel || !sel.rangeCount) return;
-    const range = sel.getRangeAt(0);
-    const selRect = range.getBoundingClientRect();
-    if (!pointInRect(e.clientX, e.clientY, selRect)) return;
-    e.preventDefault();
-    dragState.current = {
-      active: true,
-      ref: selectionRef,
-      startX: e.clientX,
-      startY: e.clientY,
-      chipEl: null,
-      started: false
-    };
-    setCursorHint(null);
-  }, [selectionRef]);
-  reactExports.useEffect(() => {
-    const handleDocMouseMove = (e) => {
-      const ds = dragState.current;
-      if (!ds.active) return;
-      const dx = e.clientX - ds.startX;
-      const dy = e.clientY - ds.startY;
-      if (!ds.started) {
-        if (Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
-        ds.started = true;
-        const chip = document.createElement("span");
-        chip.className = "ref-drag-chip";
-        chip.textContent = formatRefLabel(ds.ref);
-        chip.style.left = `${e.clientX}px`;
-        chip.style.top = `${e.clientY}px`;
-        document.body.appendChild(chip);
-        ds.chipEl = chip;
-      }
-      if (ds.chipEl) {
-        ds.chipEl.style.left = `${e.clientX + 12}px`;
-        ds.chipEl.style.top = `${e.clientY - 16}px`;
-      }
-      const dropZone = document.querySelector("[data-drop-zone='chat-input']");
-      if (dropZone) {
-        const rect = dropZone.getBoundingClientRect();
-        if (pointInRect(e.clientX, e.clientY, rect, 0)) {
-          dropZone.classList.add("drop-zone-active");
-        } else {
-          dropZone.classList.remove("drop-zone-active");
-        }
-      }
-    };
-    const handleDocMouseUp = (e) => {
-      const ds = dragState.current;
-      if (!ds.active) return;
-      if (ds.chipEl) {
-        ds.chipEl.remove();
-        ds.chipEl = null;
-      }
-      const dropZone = document.querySelector("[data-drop-zone='chat-input']");
-      if (dropZone) {
-        dropZone.classList.remove("drop-zone-active");
-      }
-      if (ds.started && ds.ref && dropZone) {
-        const rect = dropZone.getBoundingClientRect();
-        if (pointInRect(e.clientX, e.clientY, rect, 0)) {
-          const chipsContainer = dropZone.querySelector("[data-ref-chips]");
-          if (chipsContainer) {
-            animateFlyIn(e.clientX, e.clientY, chipsContainer, formatRefLabel(ds.ref), () => {
-              onAddRef?.(ds.ref);
-            });
-          } else {
-            onAddRef?.(ds.ref);
+  if (!content2) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      ref: scrollRef,
+      className: "relative overflow-y-auto h-full",
+      children: [
+        content2.fileDeleted && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "preview-warning-banner", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "w-4 h-4 flex-shrink-0", viewBox: "0 0 16 16", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "This file has been deleted or moved. The content below is the last known version." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: content2.fileDeleted ? "preview-dimmed" : "", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          VirtualCodeViewer,
+          {
+            lines,
+            filePath: tabKey,
+            scrollToLine,
+            onAddRef
           }
-        }
-      }
-      dragState.current = { active: false, ref: null, startX: 0, startY: 0, chipEl: null, started: false };
-    };
-    document.addEventListener("mousemove", handleDocMouseMove);
-    document.addEventListener("mouseup", handleDocMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", handleDocMouseMove);
-      document.removeEventListener("mouseup", handleDocMouseUp);
-    };
-  }, [onAddRef]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center border-b border-stone-200 bg-stone-50 min-h-[32px]", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 overflow-x-auto", children: tabs.map((tab2, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
+        ) })
+      ]
+    }
+  );
+});
+const HtmlTabContent = React.memo(function HtmlTabContent2({ content: content2 }) {
+  if (!content2) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "iframe",
+    {
+      srcDoc: content2.content,
+      sandbox: "",
+      className: "html-tab-iframe",
+      title: "Context dump"
+    }
+  );
+});
+const registry = {
+  markdown: MarkdownTabContent,
+  code: CodeTabContent,
+  html: HtmlTabContent
+};
+function getTabComponent(type) {
+  return registry[type] ?? CodeTabContent;
+}
+function inferTabType(extension2) {
+  if (extension2 === ".md") return "markdown";
+  if (extension2 === ".html") return "html";
+  return "code";
+}
+const TabContentWrapper = React.memo(function TabContentWrapper2({
+  tab: tab2,
+  content: content2,
+  isActive,
+  scrollToLine,
+  onAddRef
+}) {
+  const Component = getTabComponent(tab2.type);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      style: {
+        position: "absolute",
+        inset: 0,
+        visibility: isActive ? "visible" : "hidden",
+        pointerEvents: isActive ? "auto" : "none"
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Component,
         {
-          className: `flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-r border-stone-200 whitespace-nowrap ${i === activeTab ? "bg-white text-gray-800 font-medium border-b-2 border-b-stone-400" : "text-gray-500 hover:text-gray-700 hover:bg-stone-100"}`,
-          onClick: () => onSelectTab(i),
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: tab2.name }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "ml-1 text-stone-300 hover:text-stone-500",
-                onClick: (e) => {
-                  e.stopPropagation();
-                  onCloseTab(i);
-                },
-                children: "×"
-              }
-            )
-          ]
-        },
-        tab2.path
-      )) }),
-      isMarkdown && content2 && /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "px-2 py-1 text-xs text-gray-500 hover:text-gray-700 border-l border-stone-200",
-          onClick: onToggleRender,
-          children: content2.renderAsMarkdown ? "Source" : "Render"
+          tabKey: tab2.key,
+          content: content2,
+          scrollToLine: isActive ? scrollToLine : void 0,
+          onAddRef
         }
       )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "div",
+    }
+  );
+}, (prev, next) => {
+  if (prev.isActive && next.isActive) {
+    return prev.tab.key === next.tab.key && prev.content === next.content && prev.scrollToLine === next.scrollToLine && prev.onAddRef === next.onAddRef;
+  }
+  if (!prev.isActive && !next.isActive) {
+    return prev.tab.key === next.tab.key && prev.content === next.content && prev.onAddRef === next.onAddRef;
+  }
+  return false;
+});
+function PreviewPanel({ tabs, activeKey, onSelectTab, onCloseTab, tabContents, scrollToLine, onAddRef }) {
+  useRenderTime("PreviewPanel");
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      TabBar,
       {
-        ref: scrollRef,
-        className: "flex-1 overflow-y-auto relative",
-        onMouseMove: handleMouseMove,
-        onMouseLeave: handleMouseLeave,
-        onMouseDown: handleMouseDown,
-        children: [
-          !content2 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-full text-sm text-gray-400", children: "Click a file in the workspace to preview" }) : content2.fileDeleted ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 px-4 py-2 bg-amber-50 border-b border-amber-200 text-amber-700 text-xs", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "w-4 h-4 flex-shrink-0", viewBox: "0 0 16 16", fill: "currentColor", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.446.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "This file has been deleted or moved. The content below is the last known version." })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto opacity-60 pointer-events-none", children: content2.renderAsMarkdown ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "markdown-body p-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { remarkPlugins: [remarkGfm], components: MD_COMPONENTS, children: content2.content }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "code-table text-sm font-mono text-gray-700", children: lines.map((line, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "code-row", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "line-number", children: i + 1 }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "code-line", "data-line": i + 1, children: line })
-            ] }, i + 1)) }) })
-          ] }) : content2.renderAsMarkdown ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "markdown-body p-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Markdown, { remarkPlugins: [remarkGfm], components: MD_COMPONENTS, children: content2.content }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "code-table text-sm font-mono text-gray-700", children: lines.map((line, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "code-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "line-number", children: i + 1 }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "code-line", "data-line": i + 1, children: line })
-          ] }, i + 1)) }),
-          selectionRef && cursorHint && !dragState.current.active && /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "span",
-            {
-              className: "ref-drag-hint",
-              style: { left: cursorHint.x, top: cursorHint.y },
-              children: "drag to chat"
-            }
-          )
-        ]
+        tabs,
+        activeKey,
+        onSelectTab,
+        onCloseTab
       }
-    )
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 min-h-0 relative", children: tabs.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "preview-empty-state", children: "Click a file in the workspace to preview" }) : tabs.map((tab2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      TabContentWrapper,
+      {
+        tab: tab2,
+        content: tabContents.get(tab2.key) ?? null,
+        isActive: tab2.key === activeKey,
+        scrollToLine,
+        onAddRef
+      },
+      tab2.key
+    )) })
   ] });
 }
 const KNOWN_PROVIDERS = [
@@ -26323,17 +26927,22 @@ function OnboardingPage({ onComplete, initialConfig, error }) {
   ] });
 }
 function App() {
+  useRenderTime("App");
   const [isConfigured, setIsConfigured] = reactExports.useState(false);
   const [sessionInfo, setSessionInfo] = reactExports.useState(null);
   const [selectedUnitId, setSelectedUnitId] = reactExports.useState(null);
   const [messages, setMessages] = reactExports.useState([]);
+  const [hasMoreMessages, setHasMoreMessages] = reactExports.useState(false);
+  const [oldestLoadedSeq, setOldestLoadedSeq] = reactExports.useState(null);
+  const [isLoadingMore, setIsLoadingMore] = reactExports.useState(false);
   const [fsTree, setFsTree] = reactExports.useState([]);
   const [fsMode, setFsMode] = reactExports.useState("docs");
   const [previewTabs, setPreviewTabs] = reactExports.useState([]);
-  const [activePreviewTab, setActivePreviewTab] = reactExports.useState(-1);
-  const [previewContent, setPreviewContent] = reactExports.useState(null);
+  const [activeTabKey, setActiveTabKey] = reactExports.useState("");
+  const [tabContents, setTabContents] = reactExports.useState(/* @__PURE__ */ new Map());
   const [scrollToLine, setScrollToLine] = reactExports.useState(void 0);
   const [fileRefs, setFileRefs] = reactExports.useState([]);
+  const [notifications, setNotifications] = reactExports.useState([]);
   const [workspaceConfig, setWorkspaceConfig] = reactExports.useState(null);
   const ipc = useIpc();
   const events = useEvents();
@@ -26349,13 +26958,13 @@ function App() {
       const status = await ipc.checkWorkspaceStatus();
       if (status.has_session && status.config) {
         const persisted2 = await ipc.loadPersistedConfig();
-        if (persisted2 && persisted2.api_key) {
+        if (persisted2 && persisted2.apiKey) {
           const result = await ipc.startSession({
             provider: status.config.provider,
-            modelName: status.config.model_name,
-            apiKey: persisted2.api_key,
-            baseUrl: status.config.base_url,
-            projectRoot: status.config.project_root
+            modelName: status.config.modelName,
+            apiKey: persisted2.apiKey,
+            baseUrl: status.config.baseUrl,
+            projectRoot: status.config.projectRoot
           });
           if (result && "unitId" in result) {
             setSessionInfo(result);
@@ -26366,20 +26975,20 @@ function App() {
         }
         setWorkspaceConfig({
           provider: status.config.provider,
-          modelName: status.config.model_name,
-          baseUrl: status.config.base_url ?? void 0,
-          projectRoot: status.config.project_root ?? ""
+          modelName: status.config.modelName,
+          baseUrl: status.config.baseUrl ?? void 0,
+          projectRoot: status.config.projectRoot ?? ""
         });
         return;
       }
       const persisted = await ipc.loadPersistedConfig();
-      if (persisted && persisted.provider && persisted.api_key) {
+      if (persisted && persisted.provider && persisted.apiKey) {
         const result = await ipc.startSession({
           provider: persisted.provider,
-          modelName: persisted.model_name ?? persisted.modelName ?? "",
-          apiKey: persisted.api_key,
-          baseUrl: persisted.base_url ?? persisted.baseUrl,
-          projectRoot: persisted.project_root ?? persisted.projectRoot
+          modelName: persisted.modelName ?? "",
+          apiKey: persisted.apiKey,
+          baseUrl: persisted.baseUrl,
+          projectRoot: persisted.projectRoot
         });
         if (result && "unitId" in result) {
           setSessionInfo(result);
@@ -26398,15 +27007,41 @@ function App() {
   }, [isConfigured, fsMode]);
   reactExports.useEffect(() => {
     if (!selectedUnitId) return;
-    ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
+    ipc.getUnitMessages(selectedUnitId).then((res) => {
+      setMessages(res.messages);
+      setHasMoreMessages(res.hasMore);
+      setOldestLoadedSeq(res.oldestSeq);
+    });
   }, [selectedUnitId]);
   reactExports.useEffect(() => {
     if (!events.lastEvent) return;
     const event = events.lastEvent;
     if (event.type === "agent-message" || event.type === "proposal" || event.type === "vote" || event.type === "tool-result" || event.type === "upward-message" || event.type === "state-transition" || event.type === "turn-start" || event.type === "incoming-message") {
       if (selectedUnitId) {
-        ipc.getUnitMessages(selectedUnitId).then((msgs) => setMessages(msgs));
+        ipc.getUnitMessages(selectedUnitId).then((res) => {
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id));
+            const newMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+            if (newMsgs.length === 0) return prev;
+            return [...prev, ...newMsgs];
+          });
+          setHasMoreMessages(res.hasMore);
+          if (oldestLoadedSeq !== null && res.oldestSeq !== null && res.oldestSeq < oldestLoadedSeq) {
+            setOldestLoadedSeq(res.oldestSeq);
+          } else if (oldestLoadedSeq === null) {
+            setOldestLoadedSeq(res.oldestSeq);
+          }
+        });
       }
+    }
+    if (event.type === "error" || event.type === "warning") {
+      const kind = event.type;
+      const message = event.message;
+      const notifId = Date.now() + Math.random();
+      setNotifications((prev) => [...prev, { id: notifId, kind, message }]);
+      setTimeout(() => {
+        setNotifications((prev) => prev.filter((n) => n.id !== notifId));
+      }, kind === "error" ? 15e3 : 8e3);
     }
     if (event.type === "unit-tree-change" || event.type === "child-spawned" || event.type === "state-transition") {
       ipc.getSessionInfo().then((info) => {
@@ -26419,47 +27054,85 @@ function App() {
       if (changes) {
         const deletedPaths = new Set(changes.filter((c) => c.kind === "delete").map((c) => c.path));
         const updatedPaths = new Set(changes.filter((c) => c.kind === "update").map((c) => c.path));
-        const currentTab = previewTabs[activePreviewTab];
-        if (currentTab) {
-          if (deletedPaths.has(currentTab.path)) {
-            setPreviewContent((prev) => prev ? { ...prev, fileDeleted: true } : null);
-          } else if (updatedPaths.has(currentTab.path)) {
-            ipc.readFile(currentTab.path).then((result) => {
-              if (result) {
-                setPreviewContent({
-                  content: result.content,
-                  extension: result.extension,
-                  renderAsMarkdown: result.extension === ".md"
-                });
-              }
-            });
+        setTabContents((prev) => {
+          const next = new Map(prev);
+          let changed = false;
+          for (const path2 of deletedPaths) {
+            const existing = next.get(path2);
+            if (existing && !existing.fileDeleted) {
+              next.set(path2, { ...existing, fileDeleted: true });
+              changed = true;
+            }
           }
-        }
+          for (const path2 of updatedPaths) {
+            const existing = next.get(path2);
+            if (existing) {
+              ipc.readFile(path2).then((result) => {
+                if (result) {
+                  setTabContents((prev2) => {
+                    const next2 = new Map(prev2);
+                    next2.set(path2, {
+                      content: result.content,
+                      extension: result.extension,
+                      renderAsMarkdown: existing.renderAsMarkdown
+                    });
+                    return next2;
+                  });
+                }
+              });
+            }
+          }
+          return changed ? next : prev;
+        });
       }
     }
   }, [events.lastEvent]);
-  reactExports.useEffect(() => {
-    if (activePreviewTab < 0 || !previewTabs[activePreviewTab]) {
-      setPreviewContent(null);
-      return;
-    }
-    const tab2 = previewTabs[activePreviewTab];
-    ipc.readFile(tab2.path).then((result) => {
+  const loadTabContent = reactExports.useCallback((path2) => {
+    ipc.readFile(path2).then((result) => {
       if (result) {
-        setPreviewContent({
-          content: result.content,
-          extension: result.extension,
-          renderAsMarkdown: result.extension === ".md"
+        setTabContents((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(path2);
+          next.set(path2, {
+            content: result.content,
+            extension: result.extension,
+            renderAsMarkdown: existing?.renderAsMarkdown ?? result.extension === ".md"
+          });
+          return next;
         });
       } else {
-        setPreviewContent((prev) => prev ? { ...prev, fileDeleted: true } : null);
+        setTabContents((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(path2);
+          if (existing) {
+            next.set(path2, { ...existing, fileDeleted: true });
+          }
+          return next;
+        });
       }
     });
-  }, [activePreviewTab, previewTabs]);
+  }, []);
   const handleSendMessage = reactExports.useCallback(async (content2) => {
     await ipc.sendMessage(content2);
     setFileRefs([]);
-  }, [ipc]);
+  }, []);
+  const handleLoadMore = reactExports.useCallback(async () => {
+    if (!selectedUnitId || oldestLoadedSeq === null || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await ipc.getUnitMessages(selectedUnitId, { before: oldestLoadedSeq, limit: 50 });
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const olderMsgs = res.messages.filter((m) => !existingIds.has(m.id));
+        if (olderMsgs.length === 0) return prev;
+        return [...olderMsgs, ...prev];
+      });
+      setHasMoreMessages(res.hasMore);
+      setOldestLoadedSeq(res.oldestSeq);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [selectedUnitId, oldestLoadedSeq, isLoadingMore, ipc]);
   const handleAddReference = reactExports.useCallback((ref) => {
     setFileRefs((prev) => {
       const exists = prev.some((r) => r.path === ref.path && r.startLine === ref.startLine && r.endLine === ref.endLine);
@@ -26471,28 +27144,47 @@ function App() {
     setFileRefs((prev) => prev.filter((_, i) => i !== index2));
   }, []);
   const handleOpenFile = reactExports.useCallback((path2, name2, startLine) => {
-    const existingIndex = previewTabs.findIndex((t) => t.path === path2);
-    if (existingIndex >= 0) {
-      setActivePreviewTab(existingIndex);
-    } else {
-      const newTabs = [...previewTabs, { path: path2, name: name2 }];
-      setPreviewTabs(newTabs);
-      setActivePreviewTab(newTabs.length - 1);
-    }
+    setPreviewTabs((prev) => {
+      const existing = prev.find((t) => t.key === path2);
+      if (existing) {
+        setActiveTabKey(path2);
+        return prev;
+      }
+      const newTab = { key: path2, title: name2, type: inferTabType(path2.slice(path2.lastIndexOf("."))) };
+      setActiveTabKey(path2);
+      loadTabContent(path2);
+      return [...prev, newTab];
+    });
     if (startLine !== void 0) {
       setScrollToLine(startLine);
       setTimeout(() => setScrollToLine(void 0), 100);
     }
-  }, [previewTabs]);
-  const handleCloseTab = reactExports.useCallback((index2) => {
-    const newTabs = previewTabs.filter((_, i) => i !== index2);
-    setPreviewTabs(newTabs);
-    if (activePreviewTab >= newTabs.length) {
-      setActivePreviewTab(Math.max(0, newTabs.length - 1));
-    } else if (activePreviewTab === index2) {
-      setActivePreviewTab(Math.min(index2, newTabs.length - 1));
+  }, []);
+  const handleViewContext = reactExports.useCallback(async (messageId) => {
+    const result = await ipc.reconstructContext(messageId);
+    if (result.ok && result.path && result.name) {
+      handleOpenFile(result.path, result.name);
+    } else {
+      console.error("[ViewContext] Failed:", result.error);
     }
-  }, [previewTabs, activePreviewTab]);
+  }, []);
+  const activeTabKeyRef = reactExports.useRef(activeTabKey);
+  activeTabKeyRef.current = activeTabKey;
+  const handleCloseTab = reactExports.useCallback((key) => {
+    setPreviewTabs((prev) => {
+      const newTabs = prev.filter((t) => t.key !== key);
+      if (key === activeTabKeyRef.current) {
+        const last = newTabs[newTabs.length - 1];
+        setActiveTabKey(last?.key ?? "");
+      }
+      return newTabs;
+    });
+    setTabContents((prev) => {
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
   const [configError, setConfigError] = reactExports.useState(null);
   const handleConfigComplete = reactExports.useCallback(async (config) => {
     setConfigError(null);
@@ -26506,7 +27198,7 @@ function App() {
       setSelectedUnitId(result.unitId);
       setIsConfigured(true);
     }
-  }, [ipc]);
+  }, []);
   if (!isConfigured) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingPage, { onComplete: handleConfigComplete, initialConfig: workspaceConfig ?? void 0, error: configError });
   }
@@ -26514,7 +27206,7 @@ function App() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "titlebar-drag" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 min-h-0", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(ThreeColumnLayout, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-full", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-1/2 min-h-0 overflow-y-auto border-b border-gray-200", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-1/2 min-h-0 overflow-y-auto border-b border-[var(--color-border)]", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
           AgentTree,
           {
             tree: sessionInfo?.tree ?? null,
@@ -26529,8 +27221,7 @@ function App() {
             mode: fsMode,
             onModeChange: setFsMode,
             onOpenFile: handleOpenFile,
-            openFilePaths: previewTabs.map((t) => t.path),
-            activeFilePath: previewTabs[activePreviewTab]?.path
+            activeFilePath: activeTabKey
           }
         ) })
       ] }),
@@ -26540,26 +27231,31 @@ function App() {
           unitId: selectedUnitId,
           sessionInfo,
           messages,
+          hasMore: hasMoreMessages,
+          onLoadMore: handleLoadMore,
+          isLoadingMore,
           onSendMessage: handleSendMessage,
           onSelectUnit: setSelectedUnitId,
           onOpenFile: handleOpenFile,
+          onViewContext: handleViewContext,
           refs: fileRefs,
-          onRemoveRef: handleRemoveRef
+          onRemoveRef: handleRemoveRef,
+          notifications,
+          onDismissNotification: (id) => setNotifications((prev) => prev.filter((n) => n.id !== id))
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         PreviewPanel,
         {
           tabs: previewTabs,
-          activeTab: activePreviewTab,
-          onSelectTab: setActivePreviewTab,
-          onCloseTab: handleCloseTab,
-          content: previewContent,
-          onToggleRender: () => {
-            if (previewContent) {
-              setPreviewContent({ ...previewContent, renderAsMarkdown: !previewContent.renderAsMarkdown });
-            }
+          activeKey: activeTabKey,
+          onSelectTab: (key) => {
+            const id = markTabSwitchStart(key);
+            setActiveTabKey(key);
+            markTabSwitchPhase(id, "setActiveTabKey-done");
           },
+          onCloseTab: handleCloseTab,
+          tabContents,
           scrollToLine,
           onAddRef: handleAddReference
         }

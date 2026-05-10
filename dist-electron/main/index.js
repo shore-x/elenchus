@@ -402,13 +402,8 @@ function getBuiltInToolList(hasPendingProposal, level, hasChildren = false, canS
     return { ...tool, description: levelDesc };
   });
 }
-const GUIDELINE_HEADER = `## Elenchus Architecture Overview
-- You are operating in the fixed **L0 -> L1 -> L2** layered structure.
-- All layers share the same dialogue protocol and proposal-vote mechanism.
-- Layers differ mainly in direct tool access, delegation structure, and the kind of progress they can make directly.
-
-## Identity and Role
-You are one of two agents in an Elenchus deliberation unit. You and your partner share a common goal: arriving at the most reliable and accurate understanding of the topic through structured dialogue.
+const SHARED_GUIDELINE = `## Architecture
+The unit you belong to operates within a fixed **L0 -> L1 -> L2** layered structure. All layers share the same dialogue protocol and proposal-vote mechanism. Layers differ mainly in direct tool access, delegation structure, and the kind of progress they can make directly.
 
 ## Collaboration Foundation
 
@@ -475,23 +470,48 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - A proposal should express the best next commitment, not an attempt to settle every open issue at once.
 
 ## Message Format
-- Dialogue from either agent appears as <message author="Agent A"> or <message author="Agent B">
-- Messages from outside the unit (user or parent agent) appear as <input-message>
-- User messages may include file references like \`@dir/file.ts:10-20\` (short path + line range). This means the user is pointing your attention to those specific lines. Use \`readFile\` with the full absolute path and relevant line range to examine the referenced content.
-- Shared public facts appear as XML tags: <proposal>, <vote>, <tool-result>, <upward-message>, <child-report>, <runtime-broadcast>
-- Current-turn control instructions appear as <directive>
-- Memory snapshots and non-real-time child summaries appear as <context-snapshot>
-- Context-pressure reminders appear as <context-reminder>
-- **These XML tags are injected by the system to provide context and instructions. Never reproduce or imitate them in your own text output.** Your responses should contain only natural dialogue — no XML tags, no bracket-style markers.
-- **Chat messages and upward communication (yield, report) are high-density coordination signals** — judgments, priorities, questions, direction changes, task assignments, and concise status updates. They are not containers for structured content. The same format rules apply to all text you produce: dialogue, yield content, and report content.
-- **No emoji.** Emoji add no information density and consume tokens and attention. Use plain words instead.
-- **No visual separators or table formatting.** Characters like \`|\`, \`---\`, \`===\`, \`***\` used to draw tables, grids, or dividers do not belong in any message or upward communication. If you need to present a comparison, classification, multi-option analysis, step-by-step procedure, or any content that would benefit from structure — write it to a .md file and reference the path.
-- Use plain sentences. Inline formatting that aids precision is welcome: \`backticks\` for file paths, command names, and code identifiers; occasional **bold** for emphasis. Anything that turns a message into a self-contained document is going too far.
-- **When in doubt, write it to a file.** If your message, yield, or report would need a list, a table, a heading, or more than a few sentences of exposition, that content belongs in a .md file. Your communication should then briefly state the conclusion or question and point to the file for detail.
+
+### Input Message Types
+All messages you receive are wrapped in XML tags that indicate their type and origin. Treat these tags as structural context — they tell you what kind of information you are reading.
+
+**Dialogue** — conversation between agents in this unit:
+- \`<message author="Agent A">\` or \`<message author="Agent B">\` — your partner's or your own earlier dialogue
+
+**External input** — requests or messages from outside the unit:
+- \`<input-message>\` — a request from the user or parent agent
+
+**Protocol actions** — the proposal-vote-execution cycle:
+- \`<proposal author="..." tool="..." status="...">\` — a tool call proposal requiring your vote
+- \`<vote voter="..." proposal="..." decision="...">\` — a vote on a pending proposal
+- \`<tool-result tool="..." success="...">\` — the execution result of an approved tool call
+
+**Upward output** — your unit's own outgoing communication:
+- \`<upward-message mode="yield|report">\` — a yield (handoff and pause) or report (coordination and continue)
+
+**Child output** — work products from child agents:
+- \`<child-report child="..." mode="...">\` — output from a child agent
+
+**System injections** — runtime-generated context and instructions:
+- \`<directive>\` — current-turn control instruction (e.g., you must vote now)
+- \`<context-snapshot type="memory|child-commits">\` — compressed memory or child commit summary
+- \`<context-boundary count="...">\` — marks messages below as newly visible this turn; prioritize interpreting them in light of earlier shared history
+- \`<context-reminder>\` — context pressure reminder (compression is worth considering, not an instruction to compress immediately)
+- \`<runtime-broadcast>\` — system-level notification (e.g., tool rejection)
+
+### Reading File References
+External input messages may include file references like \`@dir/file.ts:10-20\` (short path + line range). This means the sender is pointing your attention to those specific lines. Use \`readFile\` with the full absolute path and relevant line range to examine the referenced content.
+
+### Output Rules
+- **Never reproduce or imitate XML tags** in your own text output. Your responses contain only natural dialogue — no XML tags, no bracket-style markers.
+- Dialogue, yield content, and report content are high-density coordination signals — judgments, priorities, questions, concise status updates. Not containers for structured content.
+- **No emoji.** Use plain words.
+- **No visual separators or table formatting.** If content needs structure, write it to a .md file and reference the path.
+- Use plain sentences with \`backticks\` for paths/identifiers and occasional **bold** for emphasis.
+- **When in doubt, write it to a file.** Briefly state the conclusion, point to the file for detail.
 - Example of a good message: "Option A is stronger on performance but B is simpler to deploy — I wrote the comparison at /path/to/analysis.md, take a look and let me know which direction you prefer."
 - Example of what to avoid: a message full of \`| Option | Pros | Cons |\` rows, or a message starting with \`## Analysis\` followed by numbered subsections.`;
-function buildGuideline() {
-  return GUIDELINE_HEADER;
+function buildIdentitySection(agentId) {
+  return IDENTITY_SECTIONS[agentId];
 }
 const LAYER_ORIENTATION_L0 = `
 - You are currently at **L0** — the **coordinator, knowledge-space maintainer, and child output reviewer** of this agent team.
@@ -572,11 +592,15 @@ const LAYER_ORIENTATION_BY_LEVEL = {
 function buildLayerOrientation(level) {
   return LAYER_ORIENTATION_BY_LEVEL[level];
 }
-const AGENT_A_STYLE = `
+const AGENT_A_IDENTITY = `
 
-## Your Cognitive Style: Agent A
+## Your Identity: Agent A
 
-### Strategy
+You are **Agent A**, one of two agents in an Elenchus deliberation unit. You and your partner (Agent B) share a common goal: arriving at the most reliable and accurate understanding of the topic through structured dialogue. Elenchus is a dual-agent deliberation framework where two agents with complementary cognitive styles collaborate through structured dialogue and a proposal-vote mechanism.
+
+### Cognitive Style
+Your cognitive style shapes how you evaluate evidence and organize reasoning — it is your epistemic lens, not a role assignment:
+
 - **Evidence evaluation**: Lenient — form tentative conclusions from partial evidence, explore possibilities
 - **Reasoning organization**: Holist — grasp the big picture first, then fill in details
 - **Temporal orientation**: Prospective — think about consequences and implications
@@ -592,11 +616,15 @@ const AGENT_A_STYLE = `
    - [Possible]: plausible but speculative claims
 5. When your partner raises valid concerns, substantively address them — do not deflect, repeat your prior position unchanged, or rush to agreement to maintain conversational flow
 6. When you believe the discussion has converged sufficiently, or when the unit clearly needs upper-layer input before proceeding, call the **yield** tool with a clear summary or question`;
-const AGENT_B_STYLE = `
+const AGENT_B_IDENTITY = `
 
-## Your Cognitive Style: Agent B
+## Your Identity: Agent B
 
-### Strategy
+You are **Agent B**, one of two agents in an Elenchus deliberation unit. You and your partner (Agent A) share a common goal: arriving at the most reliable and accurate understanding of the topic through structured dialogue. Elenchus is a dual-agent deliberation framework where two agents with complementary cognitive styles collaborate through structured dialogue and a proposal-vote mechanism.
+
+### Cognitive Style
+Your cognitive style shapes how you evaluate evidence and organize reasoning — it is your epistemic lens, not a role assignment:
+
 - **Evidence evaluation**: Strict — require explicit evidence for each claim, seek disconfirmation
 - **Reasoning organization**: Atomist — decompose claims into independently verifiable units
 - **Temporal orientation**: Retrospective — trace how claims were derived, check each step
@@ -613,9 +641,9 @@ const AGENT_B_STYLE = `
 5. When a pending proposal is presented, carefully evaluate whether it is accurate and complete. If you identify concerns, raise them in dialogue before voting — do not silently approve after internal verification. Only call **vote** APPROVE when your scrutiny is satisfied
 6. You may also propose a **yield** yourself if you believe the discussion has converged, or if the unit should pause and ask the upper layer for missing information or judgment
 7. When reviewing child work products, apply the same scrutiny discipline: identify gaps, inaccuracies, or misalignment with the assigned task before the unit accepts the output`;
-const COGNITIVE_STYLES = {
-  "agent-a": AGENT_A_STYLE,
-  "agent-b": AGENT_B_STYLE
+const IDENTITY_SECTIONS = {
+  "agent-a": AGENT_A_IDENTITY,
+  "agent-b": AGENT_B_IDENTITY
 };
 const COMPRESSION_SYSTEM_PROMPT = `## Elenchus Context Compression
 You are refreshing a unit-level Memory Snapshot for an Elenchus deliberation unit.
@@ -726,7 +754,7 @@ function readRootAgentMd(runDirectory) {
 function buildSystemPrompt(agentId, level, workspaceRoot2, workspaceKnowledge) {
   const hasKnowledge = !!workspaceKnowledge?.trim();
   const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot2) + (hasKnowledge ? "\nThe workspace root AGENT.md is shown below as **Workspace Knowledge**." : "");
-  return buildGuideline() + buildLayerOrientation(level) + knowledgeViewGuideline + buildWorkspaceKnowledge(workspaceKnowledge ?? null) + COGNITIVE_STYLES[agentId];
+  return buildIdentitySection(agentId) + SHARED_GUIDELINE + buildLayerOrientation(level) + knowledgeViewGuideline + buildWorkspaceKnowledge(workspaceKnowledge ?? null);
 }
 function buildCompressionSystemPrompt() {
   return COMPRESSION_SYSTEM_PROMPT;
@@ -3631,6 +3659,51 @@ class SqliteSessionPersistence {
     if (message.kind !== "child_commit_view_message") return null;
     return { content: message.content };
   }
+  getMessageSeqRange(unitId) {
+    const row = this.db.prepare(
+      `SELECT MIN(seq) AS minSeq, MAX(seq) AS maxSeq FROM ledger_messages WHERE unit_id = ?`
+    ).get(unitId);
+    if (!row || row.minSeq === null || row.maxSeq === null) return null;
+    return { minSeq: row.minSeq, maxSeq: row.maxSeq };
+  }
+  getLatestMessages(unitId, limit) {
+    const range = this.getMessageSeqRange(unitId);
+    if (!range) return { messages: [], hasMore: false };
+    const rows = this.db.prepare(
+      `SELECT seq, body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT ?`
+    ).all(unitId, limit);
+    const messages = rows.reverse().map((row) => ({
+      seq: row.seq,
+      message: parseJson(row.body)
+    }));
+    const hasMore = messages.length > 0 && messages[0].seq > range.minSeq;
+    return { messages, hasMore };
+  }
+  getMessagesBefore(unitId, beforeSeq, limit) {
+    const range = this.getMessageSeqRange(unitId);
+    if (!range) return { messages: [], hasMore: false };
+    const rows = this.db.prepare(
+      `SELECT seq, body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT ?`
+    ).all(unitId, beforeSeq, limit);
+    const messages = rows.reverse().map((row) => ({
+      seq: row.seq,
+      message: parseJson(row.body)
+    }));
+    const hasMore = messages.length > 0 && messages[0].seq > range.minSeq;
+    return { messages, hasMore };
+  }
 }
 const store = new ElectronStore({
   name: "elenchus-config",
@@ -3896,14 +3969,16 @@ function formatContextAsHtml(ctx, messageId) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2);
-    const role = msg.role;
     const kind = classifyMessage(content);
-    const roleLabel = role === "user" ? "user" : role === "assistant" ? "assistant" : "tool-result";
+    const author = extractAuthor(content);
     const isLong = content.length > 600;
-    html.push(`<div class="ctx-msg ctx-msg-${kind}">`);
+    html.push(`<div class="ctx-msg ctx-msg-${kind}${author ? ` ctx-author-${author}-msg` : ""}">`);
     html.push(`<div class="ctx-msg-header">`);
     html.push(`<span class="ctx-msg-index">#${i + 1}</span>`);
-    html.push(`<span class="ctx-msg-role ctx-role-${roleLabel}">${esc(roleLabel)}</span>`);
+    if (author) {
+      const authorLabel = author === "agent-a" ? "Agent A" : author === "agent-b" ? "Agent B" : "User";
+      html.push(`<span class="ctx-msg-author ctx-author-${author}">${esc(authorLabel)}</span>`);
+    }
     html.push(`<span class="ctx-msg-kind ctx-kind-${kind}">${esc(kind)}</span>`);
     html.push(`</div>`);
     if (isLong) {
@@ -3950,6 +4025,16 @@ function classifyMessage(content) {
   if (content.startsWith("<message")) return "dialogue";
   return "dialogue";
 }
+function extractAuthor(content) {
+  const msgMatch = content.match(/^<message\s+author="(Agent [AB])"/);
+  if (msgMatch) return msgMatch[1] === "Agent A" ? "agent-a" : "agent-b";
+  const propMatch = content.match(/^<proposal\s+author="(Agent [AB])"/);
+  if (propMatch) return propMatch[1] === "Agent A" ? "agent-a" : "agent-b";
+  const voteMatch = content.match(/^<vote\s+voter="(Agent [AB])"/);
+  if (voteMatch) return voteMatch[1] === "Agent A" ? "agent-a" : "agent-b";
+  if (content.startsWith("<input-message")) return "user";
+  return null;
+}
 const CONTEXT_CSS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -3979,7 +4064,7 @@ const CONTEXT_CSS = `
   details { margin-bottom: 0.25rem; }
   summary { cursor: pointer; user-select: none; }
   summary::marker { color: #9ca3af; }
-  details[open] > .ctx-msg-summary { display: none; }
+  details[open] > .ctx-msg-summary::after { content: " ▴ collapse"; color: #9ca3af; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; font-size: 11px; margin-left: 0.5rem; }
 
   /* Pre blocks */
   .ctx-pre {
@@ -4008,12 +4093,13 @@ const CONTEXT_CSS = `
     font-size: 12px;
   }
   .ctx-msg-index { color: #9ca3af; font-weight: 600; }
-  .ctx-msg-role {
-    font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 11px;
+  .ctx-msg-author {
+    font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 11px;
+    letter-spacing: 0.02em;
   }
-  .ctx-role-user { background: #eff6ff; color: #2563eb; }
-  .ctx-role-assistant { background: #f0fdf4; color: #16a34a; }
-  .ctx-role-tool-result { background: #fefce8; color: #a16207; }
+  .ctx-author-agent-a { background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe; }
+  .ctx-author-agent-b { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .ctx-author-user { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
 
   .ctx-msg-kind {
     font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 11px;
@@ -4037,6 +4123,10 @@ const CONTEXT_CSS = `
     border: none; background: transparent; margin: 0;
     padding: 0.5rem 0.75rem;
   }
+  /* Author-aware border accents for dialogue/input-message */
+  .ctx-msg-dialogue.ctx-author-agent-a-msg { border-left: 3px solid #4338ca; }
+  .ctx-msg-dialogue.ctx-author-agent-b-msg { border-left: 3px solid #047857; }
+  .ctx-msg-input-message.ctx-author-user-msg { border-left: 3px solid #c2410c; }
   .ctx-msg-summary {
     padding: 0.375rem 0.75rem;
     font-family: "SF Mono", "Menlo", monospace;
@@ -4046,7 +4136,11 @@ const CONTEXT_CSS = `
 
   /* Border accent by kind */
   .ctx-msg-proposal { border-left: 3px solid #2563eb; }
+  .ctx-msg-proposal.ctx-author-agent-a-msg { border-left-color: #4338ca; }
+  .ctx-msg-proposal.ctx-author-agent-b-msg { border-left-color: #047857; }
   .ctx-msg-vote { border-left: 3px solid #16a34a; }
+  .ctx-msg-vote.ctx-author-agent-a-msg { border-left-color: #4338ca; }
+  .ctx-msg-vote.ctx-author-agent-b-msg { border-left-color: #047857; }
   .ctx-msg-tool-result { border-left: 3px solid #ca8a04; }
   .ctx-msg-directive { border-left: 3px solid #ea580c; }
   .ctx-msg-context-snapshot { border-left: 3px solid #7c3aed; }
@@ -4055,7 +4149,6 @@ const CONTEXT_CSS = `
   .ctx-msg-child-report { border-left: 3px solid #14b8a6; }
   .ctx-msg-upward-message { border-left: 3px solid #0284c7; }
   .ctx-msg-runtime-broadcast { border-left: 3px solid #ef4444; }
-  .ctx-msg-input-message { border-left: 3px solid #0284c7; }
 
   /* Tools */
   .ctx-tools { display: flex; flex-wrap: wrap; gap: 0.375rem; }
@@ -4085,22 +4178,17 @@ function registerDataIpc() {
     };
   });
   ipcMain.handle("get-unit-messages", async (_event, unitId, opts) => {
-    const s = getSession();
-    if (!s) return [];
-    const unit = s.getRootUnit().findUnitById(unitId);
-    if (!unit) return [];
-    const snapshot = unit.exportSnapshot();
-    let messages = snapshot.ledger.messages;
-    if (opts?.before !== void 0 && opts.before >= 0) {
-      messages = messages.filter((_m, i) => {
-        const seq = snapshot.ledger.sequenceStart + i;
-        return seq < opts.before;
-      });
-    }
+    const persistence2 = getPersistence();
+    if (!persistence2) return { messages: [], hasMore: false, oldestSeq: null };
     const limit = opts?.limit ?? 50;
-    const hasMore = messages.length > limit;
-    const result = hasMore ? messages.slice(-limit) : messages;
-    return result;
+    if (opts?.before !== void 0 && opts.before >= 0) {
+      const result2 = persistence2.getMessagesBefore(unitId, opts.before, limit);
+      const oldestSeq2 = result2.messages.length > 0 ? result2.messages[0].seq : null;
+      return { messages: result2.messages.map((m) => m.message), hasMore: result2.hasMore, oldestSeq: oldestSeq2 };
+    }
+    const result = persistence2.getLatestMessages(unitId, limit);
+    const oldestSeq = result.messages.length > 0 ? result.messages[0].seq : null;
+    return { messages: result.messages.map((m) => m.message), hasMore: result.hasMore, oldestSeq };
   });
   ipcMain.handle("send-message", async (_event, content) => {
     const s = getSession();

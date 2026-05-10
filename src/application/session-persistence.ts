@@ -28,4 +28,9 @@ export interface SessionPersistenceAdapter {
   getContextTextHistoryByRowid(rowid: number): { content: string; metadata: string } | null;
   getLedgerMessagesBySeqRange(unitId: string, startSeq: number, endSeq: number): SequencedConversationMessage[];
   getLatestChildCommitViewMessage(unitId: string, beforeSeq: number): { content: string } | null;
+
+  // Paginated message queries — for UI infinite scroll
+  getMessageSeqRange(unitId: string): { minSeq: number; maxSeq: number } | null;
+  getLatestMessages(unitId: string, limit: number): { messages: SequencedConversationMessage[]; hasMore: boolean };
+  getMessagesBefore(unitId: string, beforeSeq: number, limit: number): { messages: SequencedConversationMessage[]; hasMore: boolean };
 }
