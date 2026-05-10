@@ -14,7 +14,7 @@
 
 import type { FileReference } from "../../lib/types";
 
-export type TabType = "markdown" | "code";
+export type TabType = "markdown" | "code" | "html";
 
 export interface PreviewTab {
   key: string;   // Unique identifier (file path)

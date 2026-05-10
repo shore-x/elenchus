@@ -12,6 +12,7 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
   // --- File system ---
   getFsTree: (mode) => electron.ipcRenderer.invoke("get-fs-tree", mode),
   readFile: (path) => electron.ipcRenderer.invoke("read-file", path),
+  showItemInFolder: (path) => electron.ipcRenderer.invoke("show-item-in-folder", path),
   // --- Context reconstruction ---
   reconstructContext: (messageId) => electron.ipcRenderer.invoke("reconstruct-context", messageId),
   // --- Config ---

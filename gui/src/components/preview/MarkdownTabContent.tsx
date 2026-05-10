@@ -26,6 +26,8 @@ import remarkGfm from "remark-gfm";
 import type { Element } from "hast";
 import type { TabContentProps } from "./tab-types";
 import { useDragToChat } from "../../hooks/useDragToChat";
+import { useTabContextMenu } from "../../hooks/useTabContextMenu";
+import { ContextMenu } from "../shared/ContextMenu";
 import { VirtualCodeViewer } from "./VirtualCodeViewer";
 
 // --- External link handler ---
@@ -135,6 +137,7 @@ export const MarkdownTabContent = React.memo(function MarkdownTabContent({ tabKe
 
   const getMdLineRange = useCallback(() => getMdLineRangeFromSelection(tabKey), [tabKey]);
   const mdDrag = useDragToChat({ getLineRange: getMdLineRange, onAddRef });
+  const mdCtxMenu = useTabContextMenu({ filePath: tabKey, getLineRange: getMdLineRange, onAddRef });
 
   // Scroll to line
   useEffect(() => {
@@ -171,16 +174,20 @@ export const MarkdownTabContent = React.memo(function MarkdownTabContent({ tabKe
         </div>
       )}
       {renderAsMarkdown ? (
-        <div
-          className={`markdown-body preview-content-body${content.fileDeleted ? " preview-dimmed" : ""}`}
-          onMouseMove={mdDrag.handleMouseMove}
-          onMouseLeave={mdDrag.handleMouseLeave}
-          onMouseDown={mdDrag.handleMouseDown}
-        >
-          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
-            {content.content}
-          </ReactMarkdown>
-        </div>
+        <>
+          <div
+            className={`markdown-body preview-content-body${content.fileDeleted ? " preview-dimmed" : ""}`}
+            onMouseMove={mdDrag.handleMouseMove}
+            onMouseLeave={mdDrag.handleMouseLeave}
+            onMouseDown={mdDrag.handleMouseDown}
+            onContextMenu={mdCtxMenu.handleContextMenu}
+          >
+            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
+              {content.content}
+            </ReactMarkdown>
+          </div>
+          {mdCtxMenu.menuState && <ContextMenu x={mdCtxMenu.menuState.x} y={mdCtxMenu.menuState.y} items={mdCtxMenu.menuItems} onClose={mdCtxMenu.closeMenu} />}
+        </>
       ) : (
         <div className={content.fileDeleted ? "preview-dimmed" : ""}>
           <VirtualCodeViewer

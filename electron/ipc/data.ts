@@ -2,13 +2,13 @@
 // Provides read-only access to session state, unit info, messages, and file system.
 // Replaces the REST API endpoints that were served by the sidecar HTTP server.
 
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 import { readdir, readFile as fsReadFile, stat, mkdir } from "node:fs/promises";
 import { writeFile as fsWriteFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, extname, basename } from "node:path";
 import { getSession, getPersistence, getWorkspaceRoot } from "./session.js";
-import { reconstructContext, formatContextAsMarkdown } from "../../src/core/context-reconstructor.js";
+import { reconstructContext, formatContextAsHtml } from "../../src/core/context-reconstructor.js";
 import type { ConversationMessage } from "../../src/core/types.js";
 
 export function registerDataIpc(): void {
@@ -81,6 +81,11 @@ export function registerDataIpc(): void {
     }
   });
 
+  // --- Show file in Finder/Explorer ---
+  ipcMain.handle("show-item-in-folder", async (_event, filePath: string) => {
+    shell.showItemInFolder(filePath);
+  });
+
   // --- Reconstruct message context ---
   ipcMain.handle("reconstruct-context", async (_event, messageId: string) => {
     const persistence = getPersistence();
@@ -94,14 +99,14 @@ export function registerDataIpc(): void {
       return { ok: false, error: "No context recipe found for this message. Early messages may not have recipe records." };
     }
 
-    const markdown = formatContextAsMarkdown(ctx, messageId);
+    const html = formatContextAsHtml(ctx, messageId);
 
     // Write to ~/Elenchus/context-dumps/
     const dumpDir = join(wsRoot, "context-dumps");
     await mkdir(dumpDir, { recursive: true });
-    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.md`;
+    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.html`;
     const filePath = join(dumpDir, fileName);
-    await fsWriteFile(filePath, markdown, "utf-8");
+    await fsWriteFile(filePath, html, "utf-8");
 
     return { ok: true, path: filePath, name: fileName };
   });

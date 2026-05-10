@@ -17,6 +17,7 @@ export interface ElectronAPI {
   // --- File system ---
   getFsTree: (mode: "docs" | "all") => Promise<FsTreeNode[]>;
   readFile: (path: string) => Promise<FileContent | null>;
+  showItemInFolder: (path: string) => Promise<void>;
 
   // --- Context reconstruction ---
   reconstructContext: (messageId: string) => Promise<{ ok: boolean; path?: string; name?: string; error?: string }>;

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("get-fs-tree", mode),
   readFile: (path: string) =>
     ipcRenderer.invoke("read-file", path),
+  showItemInFolder: (path: string) =>
+    ipcRenderer.invoke("show-item-in-folder", path),
 
   // --- Context reconstruction ---
   reconstructContext: (messageId: string) =>

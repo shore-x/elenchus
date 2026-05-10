@@ -6,6 +6,8 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import type { FileReference } from "../../lib/types";
 import { useDragToChat } from "../../hooks/useDragToChat";
+import { useTabContextMenu } from "../../hooks/useTabContextMenu";
+import { ContextMenu } from "../shared/ContextMenu";
 
 interface VirtualCodeViewerProps {
   lines: string[];
@@ -52,6 +54,7 @@ export function VirtualCodeViewer({ lines, filePath, scrollToLine, onAddRef }: V
 
   const getLineRange = useCallback(() => getLineRangeFromSelection(lines, filePath), [lines, filePath]);
   const { handleMouseMove, handleMouseLeave, handleMouseDown } = useDragToChat({ getLineRange, onAddRef });
+  const { menuState, menuItems, handleContextMenu, closeMenu } = useTabContextMenu({ filePath, getLineRange, onAddRef });
 
   const useVirtual = lines.length > 100;
 
@@ -97,29 +100,33 @@ export function VirtualCodeViewer({ lines, filePath, scrollToLine, onAddRef }: V
   // For native rendering, show all lines
   if (!useVirtual) {
     return (
-      <div
-        ref={containerRef}
-        className="virtual-code-container native-scroll"
-        onScroll={handleScroll}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-        onMouseDown={handleMouseDown}
-      >
-        {lines.map((line, i) => {
-          const lineNum = i + 1;
-          return (
-            <div
-              key={lineNum}
-              className="virtual-code-row"
-              data-line={lineNum}
-              style={{ height: LINE_HEIGHT }}
-            >
-              <div className="virtual-line-number">{lineNum}</div>
-              <div className="virtual-code-line">{line || "\u00A0"}</div>
-            </div>
-          );
-        })}
-      </div>
+      <>
+        <div
+          ref={containerRef}
+          className="virtual-code-container native-scroll"
+          onScroll={handleScroll}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onMouseDown={handleMouseDown}
+          onContextMenu={handleContextMenu}
+        >
+          {lines.map((line, i) => {
+            const lineNum = i + 1;
+            return (
+              <div
+                key={lineNum}
+                className="virtual-code-row"
+                data-line={lineNum}
+                style={{ height: LINE_HEIGHT }}
+              >
+                <div className="virtual-line-number">{lineNum}</div>
+                <div className="virtual-code-line">{line || "\u00A0"}</div>
+              </div>
+            );
+          })}
+        </div>
+        {menuState && <ContextMenu x={menuState.x} y={menuState.y} items={menuItems} onClose={closeMenu} />}
+      </>
     );
   }
 
@@ -128,14 +135,16 @@ export function VirtualCodeViewer({ lines, filePath, scrollToLine, onAddRef }: V
   const bottomPadding = (lines.length - endIdx - 1) * LINE_HEIGHT;
 
   return (
-    <div
-      ref={containerRef}
-      className="virtual-code-container"
-      onScroll={handleScroll}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      onMouseDown={handleMouseDown}
-    >
+    <>
+      <div
+        ref={containerRef}
+        className="virtual-code-container"
+        onScroll={handleScroll}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        onMouseDown={handleMouseDown}
+        onContextMenu={handleContextMenu}
+      >
       {/* Top padding - creates scrollable space above visible rows */}
       {topPadding > 0 && <div style={{ height: topPadding }} />}
 
@@ -157,6 +166,8 @@ export function VirtualCodeViewer({ lines, filePath, scrollToLine, onAddRef }: V
 
       {/* Bottom padding - creates scrollable space below visible rows */}
       {bottomPadding > 0 && <div style={{ height: bottomPadding }} />}
-    </div>
+      </div>
+      {menuState && <ContextMenu x={menuState.x} y={menuState.y} items={menuItems} onClose={closeMenu} />}
+    </>
   );
 }

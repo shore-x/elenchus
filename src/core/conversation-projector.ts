@@ -10,7 +10,7 @@ import { charsToTokens } from "./context/context-budget-controller.js";
 const DISPLAY_NAMES: Record<string, string> = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
-  incoming: "Incoming Message",
+  incoming: "External",
   system: "System",
 };
 
@@ -57,13 +57,10 @@ function renderProposalMessage(message: Extract<ConversationMessage, { kind: "pr
   return {
     role: "user",
     content:
-      `[Public Fact][Proposal]\n` +
-      `Author: ${authorName}\n` +
-      `Proposal ID: ${message.id}\n` +
-      `Tool: ${message.toolName}\n` +
-      `Status: ${message.status}\n` +
+      `<proposal author="${authorName}" id="${message.id}" tool="${message.toolName}" status="${message.status}">\n` +
       `Proposed step: ${message.proposedStep}\n` +
-      `${renderProposalDetail(message)}`,
+      `${renderProposalDetail(message)}\n` +
+      `</proposal>`,
     timestamp: message.timestamp,
   };
 }
@@ -74,11 +71,9 @@ function renderVoteMessage(message: Extract<ConversationMessage, { kind: "vote_m
   return {
     role: "user",
     content:
-      `[Public Fact][Vote]\n` +
-      `Voter: ${voterName}\n` +
-      `Proposal ID: ${message.proposalId}\n` +
-      `Decision: ${message.approve ? "APPROVE" : "REJECT"}\n` +
-      `Reason: ${message.reason}`,
+      `<vote voter="${voterName}" proposal="${message.proposalId}" decision="${message.approve ? "APPROVE" : "REJECT"}">\n` +
+      `Reason: ${message.reason}\n` +
+      `</vote>`,
     timestamp: message.timestamp,
   };
 }
@@ -96,11 +91,9 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     return {
       role: "user",
       content:
-        `[Public Fact][Tool Result]\n` +
-        `Tool result for ${message.toolName} on proposal ${message.proposalId}:\n` +
-        `Success: ${message.success ? "true" : "false"}\n` +
-        `Duration: ${message.durationMs}ms\n` +
-        `Output:\n${message.output}`,
+        `<tool-result tool="${message.toolName}" proposal="${message.proposalId}" success="${message.success ? "true" : "false"}" duration="${message.durationMs}ms">\n` +
+        `${message.output}\n` +
+        `</tool-result>`,
       timestamp: message.timestamp,
     };
   }
@@ -109,9 +102,9 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     return {
       role: "user",
       content:
-        `[Public Fact][Upward Message]\n` +
-        `Delivery mode: ${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}\n` +
-        `Content:\n${message.content}`,
+        `<upward-message mode="${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}">\n` +
+        `${message.content}\n` +
+        `</upward-message>`,
       timestamp: message.timestamp,
     };
   }
@@ -120,10 +113,9 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     return {
       role: "user",
       content:
-        `[Public Fact][Child Report]\n` +
-        `Child: ${message.childId}\n` +
-        `Delivery mode: ${message.deliveryMode}\n` +
-        `Content:\n${message.content}`,
+        `<child-report child="${message.childId}" mode="${message.deliveryMode}">\n` +
+        `${message.content}\n` +
+        `</child-report>`,
       timestamp: message.timestamp,
     };
   }
@@ -131,7 +123,7 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
   if (message.kind === "system_message") {
     return {
       role: "user",
-      content: `[Public Fact][Unit Runtime]\n${message.content}`,
+      content: `<runtime-broadcast>\n${message.content}\n</runtime-broadcast>`,
       timestamp: message.timestamp,
     };
   }
@@ -144,14 +136,26 @@ function renderConversationMessage(message: ConversationMessage): LlmMessage {
     };
   }
 
-  const prefix = getDisplayName(message.authoredBy);
-  const content = "content" in message ? message.content : "";
+  if (message.kind === "incoming_message") {
+    return {
+      role: "user",
+      content: `<input-message>${message.content}</input-message>`,
+      timestamp: message.timestamp,
+    };
+  }
 
-  return {
-    role: "user",
-    content: `[${prefix}]: ${content}`,
-    timestamp: message.timestamp,
-  };
+  if (message.kind === "agent_message") {
+    const authorName = getDisplayName(message.authoredBy);
+    return {
+      role: "user",
+      content: `<message author="${authorName}">${message.content}</message>`,
+      timestamp: message.timestamp,
+    };
+  }
+
+  // Exhaustive check — all ConversationMessage kinds are handled above
+  const _exhaustive: never = message;
+  return _exhaustive;
 }
 
 export class ConversationProjector {
@@ -164,10 +168,11 @@ export class ConversationProjector {
     return {
       role: "user",
       content:
-        `[Context Snapshot][Memory Snapshot]\n` +
+        `<context-snapshot type="memory">\n` +
         `The following Memory Snapshot was compressed from earlier conversation history. ` +
         `Treat it as reference context rather than verbatim transcript. Some recent raw messages may overlap with it.\n\n` +
-        `${snapshot.content}`,
+        `${snapshot.content}\n` +
+        `</context-snapshot>`,
       timestamp: snapshot.createdAt,
     };
   }
@@ -175,13 +180,14 @@ export class ConversationProjector {
   buildNewlyVisibleBoundaryOverlay(agentId: AgentId, count: number): LlmMessage {
     const agentName = getDisplayName(agentId);
     const lines = [
-      "[Context Boundary]",
+      `<context-boundary count="${count}">`,
       count === 1
         ? `The message below this marker became newly visible in this turn for ${agentName}.`
         : `${count} messages below this marker became newly visible in this turn for ${agentName}.`,
       count === 1
         ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.`
         : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`,
+      `</context-boundary>`,
     ];
 
     return {
@@ -200,9 +206,10 @@ export class ConversationProjector {
     return {
       role: "user",
       content:
-        `[Context Reminder]\n` +
+        `<context-reminder>\n` +
         `The recent raw context visible to ${agentName} is estimated at about ${estimatedTokens} tokens${pct}, above the compression reminder threshold. ` +
-        `Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
+        `Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.\n` +
+        `</context-reminder>`,
       timestamp: Date.now(),
     };
   }
@@ -211,10 +218,11 @@ export class ConversationProjector {
     return {
       role: "user",
       content:
-        `[Directive]\n` +
+        `<directive>\n` +
         `${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.\n` +
         `${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.\n` +
-        `If you do not vote this turn, the proposal will be automatically superseded.`,
+        `If you do not vote this turn, the proposal will be automatically superseded.\n` +
+        `</directive>`,
       timestamp: Date.now(),
     };
   }
@@ -223,10 +231,11 @@ export class ConversationProjector {
     return {
       role: "user",
       content:
-        `[Directive]\n` +
+        `<directive>\n` +
         `${proposerName}, your ${toolName} proposal is pending and awaiting ${voterName}'s vote.\n` +
         `You cannot vote on your own proposal. Do not call the vote tool. Wait for ${voterName} to decide.\n` +
-        `If ${voterName} does not vote this turn, the proposal will be automatically superseded and you may propose again.`,
+        `If ${voterName} does not vote this turn, the proposal will be automatically superseded and you may propose again.\n` +
+        `</directive>`,
       timestamp: Date.now(),
     };
   }
@@ -238,7 +247,7 @@ export class ConversationProjector {
 
     const agentName = getDisplayName(agentId);
     const lines = [
-      "[Context Snapshot]",
+      `<context-snapshot type="child-commits">`,
       `The following currently visible child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`,
     ];
 
@@ -254,6 +263,8 @@ export class ConversationProjector {
         lines.push(`  - ${proposerName} via ${step.toolName}: ${step.proposedStep}`);
       }
     }
+
+    lines.push(`</context-snapshot>`);
 
     return {
       role: "user",

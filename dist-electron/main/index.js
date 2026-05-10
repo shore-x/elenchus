@@ -1,4 +1,4 @@
-import { ipcMain, dialog, app, BrowserWindow } from "electron";
+import { ipcMain, shell, dialog, app, BrowserWindow } from "electron";
 import { join, dirname, extname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync, writeFileSync, readFileSync, watch } from "node:fs";
@@ -71,7 +71,7 @@ class AgentTurn {
     this.selfId = selfId;
     this.llmClient = llmClient;
   }
-  async execute(context, tools, signal) {
+  async execute(context, tools, signal, turnInfo) {
     const providerContext = {
       ...context,
       tools: toProviderTools([...tools])
@@ -98,9 +98,9 @@ class AgentTurn {
         }
       }
     }
-    return this.parseTurnResult(response, tools);
+    return this.parseTurnResult(response, tools, turnInfo);
   }
-  parseTurnResult(response, tools) {
+  parseTurnResult(response, tools, turnInfo) {
     const result = {
       reply: response.content.filter((block) => block.type === "text").map((block) => block.text).join(""),
       stopReason: response.stopReason
@@ -122,11 +122,9 @@ class AgentTurn {
     const [toolCall] = toolCalls;
     const validToolNames = new Set(tools.map((tool) => tool.name));
     if (!validToolNames.has(toolCall.name)) {
+      const specificMessage = this.buildToolNotAvailableMessage(toolCall.name, agentName, turnInfo);
       result.unitRuntimeBroadcasts = [
-        this.createUnitRuntimeBroadcast(
-          "tool_not_available",
-          `${agentName}'s tool invocation was rejected because tool "${toolCall.name}" was not available in the current turn. No proposal or vote was recorded.`
-        )
+        this.createUnitRuntimeBroadcast("tool_not_available", specificMessage)
       ];
       return result;
     }
@@ -179,6 +177,15 @@ class AgentTurn {
       proposedStep
     };
   }
+  buildToolNotAvailableMessage(toolName, agentName, turnInfo) {
+    if (toolName === "vote") {
+      if (turnInfo?.hasPendingProposalFromOther) {
+        return `${agentName} called the vote tool, but it was not available in the current turn. This should not happen — if you see this message, the vote tool should have been available. No vote was recorded.`;
+      }
+      return `${agentName}'s vote invocation was rejected because there is no pending proposal from the other agent to vote on. The vote tool is only available when the other agent has a pending proposal awaiting your decision. If you want to take action, propose one using the available tools instead. No vote was recorded.`;
+    }
+    return `${agentName}'s tool invocation was rejected because tool "${toolName}" was not available in the current turn. No proposal or vote was recorded.`;
+  }
   createUnitRuntimeBroadcast(code, content) {
     return { code, content };
   }
@@ -216,7 +223,7 @@ const reportTool = {
 };
 const compressContextTool = {
   name: "compressContext",
-  description: "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. This is a PROPOSAL — the other agent must vote APPROVE before it starts. After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. Provide preservation requirements describing what this compression should especially retain. If a compression task is already active, a duplicate approved call will fail at runtime.",
+  description: "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. This is a PROPOSAL — the other agent must vote APPROVE before it starts. After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. Use this primarily when a <context-reminder> indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. Provide preservation requirements describing what this compression should especially retain. If a compression task is already active, a duplicate approved call will fail at runtime.",
   parameters: Type.Object({
     requirements: Type.String({
       description: "What this background compression task should especially preserve: unresolved issues, disagreements, constraints, tentative judgments, or anything else that should not be flattened away. This is a preservation-priority declaration, not an inline summary and not a request to pause for compression."
@@ -306,9 +313,9 @@ const writeFileTool = {
 };
 const spawnChildTool = {
   name: "spawnChild",
-  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
+  description: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as <child-report> broadcasts. Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. A child may have direct capabilities that are not available in the current layer. Use this when a delegated unit would be a better way to make progress on part of the task. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task.",
   levelDescriptions: {
-    L0: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. From L0, spawnChild creates an L1 child unit with full execution capabilities. Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task."
+    L0: "Create a child agent unit for a delegated task. The child works independently, and upward messages from that child arrive asynchronously as <child-report> broadcasts. From L0, spawnChild creates an L1 child unit with full execution capabilities. Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. SpawnChild provides an initial brief rather than a guarantee that all relevant context has already been transferred; follow-up context can continue through sendToChild, report, and yield. You must provide proposedStep to describe how delegating this work advances the unit's task."
   },
   parameters: Type.Object({
     task: Type.String({
@@ -340,7 +347,7 @@ const sendToChildTool = {
 };
 const sleepTool = {
   name: "sleep",
-  description: "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. You must specify an explicit timeout in seconds. If no child agent reports before the timeout, a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. Avoid very short timeouts (under 10s) — they rarely accomplish meaningful waiting and mostly waste turns on repeated sleep cycles. You must provide proposedStep to describe why this wait advances the task.",
+  description: "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. You must specify an explicit timeout in seconds. If no child agent reports before the timeout, a <runtime-broadcast> timeout broadcast is recorded and the unit can resume deliberation. Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. Avoid very short timeouts (under 10s) — they rarely accomplish meaningful waiting and mostly waste turns on repeated sleep cycles. You must provide proposedStep to describe why this wait advances the task.",
   parameters: Type.Object({
     timeoutSeconds: Type.Number({
       description: "Timeout in seconds. The unit will be woken after this duration if no other event wakes it first. Choose a duration appropriate to what you are waiting for — avoid very short timeouts under 10s."
@@ -438,12 +445,12 @@ The absence of a tool describes a local capability boundary, not necessarily the
 Raw assistant and tool-call traces are not carried forward as private chat history across turns. Each turn is grounded in shared context projected from public facts such as proposals, votes, tool results, child reports, and recorded protocol rejections.
 
 ### System-Level Behaviors
-- A [Context Snapshot] memory snapshot is compressed from earlier conversation history; treat it as reference context rather than verbatim transcript.
-- A [Context Reminder] means recent raw context has grown large enough that compression is worth considering, but it is not an instruction to compress immediately.
+- A <context-snapshot> memory snapshot is compressed from earlier conversation history; treat it as reference context rather than verbatim transcript.
+- A <context-reminder> means recent raw context has grown large enough that compression is worth considering, but it is not an instruction to compress immediately.
 - After compressContext is approved, the compression work runs asynchronously in the background and does not block the unit's ongoing deliberation. Do not use sleep merely to wait for compression completion.
-- Child agent upward messages arrive asynchronously as [Public Fact][Child Report] broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped.
-- Tool execution results appear as [Public Fact][Tool Result] broadcasts.
-- If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a [Public Fact][Unit Runtime] broadcast.
+- Child agent upward messages arrive asynchronously as <child-report> broadcasts. A child report may reflect either ongoing work or a yielding handoff, so interpret its delivery mode rather than assuming the child has stopped.
+- Tool execution results appear as <tool-result> broadcasts.
+- If a malformed or unavailable tool invocation is rejected, that rejection is recorded as a <runtime-broadcast> broadcast.
 - When your task is complete, propose a yield with a clear summary or question
 
 ## Coordination Perspective and Problem Management
@@ -468,13 +475,14 @@ Raw assistant and tool-call traces are not carried forward as private chat histo
 - A proposal should express the best next commitment, not an attempt to settle every open issue at once.
 
 ## Message Format
-- Your partner's messages appear as [Agent A]: ... or [Agent B]: ...
-- Incoming messages from outside the unit appear as [Incoming Message]
+- Dialogue from either agent appears as <message author="Agent A"> or <message author="Agent B">
+- Messages from outside the unit (user or parent agent) appear as <input-message>
 - User messages may include file references like \`@dir/file.ts:10-20\` (short path + line range). This means the user is pointing your attention to those specific lines. Use \`readFile\` with the full absolute path and relevant line range to examine the referenced content.
-- Shared public facts appear as [Public Fact][...]
-- Current-turn control instructions appear as [Directive]
-- Memory snapshots and non-real-time child summaries appear as [Context Snapshot]
-- Context-pressure reminders appear as [Context Reminder]
+- Shared public facts appear as XML tags: <proposal>, <vote>, <tool-result>, <upward-message>, <child-report>, <runtime-broadcast>
+- Current-turn control instructions appear as <directive>
+- Memory snapshots and non-real-time child summaries appear as <context-snapshot>
+- Context-pressure reminders appear as <context-reminder>
+- **These XML tags are injected by the system to provide context and instructions. Never reproduce or imitate them in your own text output.** Your responses should contain only natural dialogue — no XML tags, no bracket-style markers.
 - **Chat messages and upward communication (yield, report) are high-density coordination signals** — judgments, priorities, questions, direction changes, task assignments, and concise status updates. They are not containers for structured content. The same format rules apply to all text you produce: dialogue, yield content, and report content.
 - **No emoji.** Emoji add no information density and consume tokens and attention. Use plain words instead.
 - **No visual separators or table formatting.** Characters like \`|\`, \`---\`, \`===\`, \`***\` used to draw tables, grids, or dividers do not belong in any message or upward communication. If you need to present a comparison, classification, multi-option analysis, step-by-step procedure, or any content that would benefit from structure — write it to a .md file and reference the path.
@@ -698,9 +706,9 @@ If the project is a git repository, you can use \`git status\`, \`git diff\`, an
 ### Knowledge Space Boundary
 Your **workspace root** is \`{{WORKSPACE_ROOT}}\`. You may read and write files anywhere on the host system when a task requires it, but knowledge-organization activities — creating or updating AGENT.md files, organizing knowledge structure — should stay within the working world accessible from the workspace root.
 
-The workspace root AGENT.md, if present, is shown below as **Workspace Knowledge**.`;
+`;
 function buildWorkspaceKnowledge(content) {
-  if (!content) return "";
+  if (!content?.trim()) return "";
   return `
 
 ## Workspace Knowledge
@@ -716,7 +724,8 @@ function readRootAgentMd(runDirectory) {
   }
 }
 function buildSystemPrompt(agentId, level, workspaceRoot2, workspaceKnowledge) {
-  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot2);
+  const hasKnowledge = !!workspaceKnowledge?.trim();
+  const knowledgeViewGuideline = KNOWLEDGE_VIEW_GUIDELINE_TEMPLATE.replace(/\{\{WORKSPACE_ROOT\}\}/g, workspaceRoot2) + (hasKnowledge ? "\nThe workspace root AGENT.md is shown below as **Workspace Knowledge**." : "");
   return buildGuideline() + buildLayerOrientation(level) + knowledgeViewGuideline + buildWorkspaceKnowledge(workspaceKnowledge ?? null) + COGNITIVE_STYLES[agentId];
 }
 function buildCompressionSystemPrompt() {
@@ -750,7 +759,10 @@ function estimateMessageChars$1(message) {
   }
 }
 function estimateMessagesChars$1(messages) {
-  return messages.reduce((total, message) => total + estimateMessageChars$1(message), 0);
+  return messages.reduce((total, message) => {
+    if (message.kind === "child_commit_view_message") return total;
+    return total + estimateMessageChars$1(message);
+  }, 0);
 }
 function clamp$2(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -820,7 +832,7 @@ function tightenTurnContextBudgetPlan(input) {
 const DISPLAY_NAMES = {
   "agent-a": "Agent A",
   "agent-b": "Agent B",
-  incoming: "Incoming Message",
+  incoming: "External",
   system: "System"
 };
 function getDisplayName(author) {
@@ -885,13 +897,10 @@ function renderProposalMessage(message) {
   const authorName = getDisplayName(message.authoredBy);
   return {
     role: "user",
-    content: `[Public Fact][Proposal]
-Author: ${authorName}
-Proposal ID: ${message.id}
-Tool: ${message.toolName}
-Status: ${message.status}
+    content: `<proposal author="${authorName}" id="${message.id}" tool="${message.toolName}" status="${message.status}">
 Proposed step: ${message.proposedStep}
-${renderProposalDetail(message)}`,
+${renderProposalDetail(message)}
+</proposal>`,
     timestamp: message.timestamp
   };
 }
@@ -899,11 +908,9 @@ function renderVoteMessage(message) {
   const voterName = getDisplayName(message.authoredBy);
   return {
     role: "user",
-    content: `[Public Fact][Vote]
-Voter: ${voterName}
-Proposal ID: ${message.proposalId}
-Decision: ${message.approve ? "APPROVE" : "REJECT"}
-Reason: ${message.reason}`,
+    content: `<vote voter="${voterName}" proposal="${message.proposalId}" decision="${message.approve ? "APPROVE" : "REJECT"}">
+Reason: ${message.reason}
+</vote>`,
     timestamp: message.timestamp
   };
 }
@@ -917,41 +924,36 @@ function renderConversationMessage(message) {
   if (message.kind === "tool_result_message") {
     return {
       role: "user",
-      content: `[Public Fact][Tool Result]
-Tool result for ${message.toolName} on proposal ${message.proposalId}:
-Success: ${message.success ? "true" : "false"}
-Duration: ${message.durationMs}ms
-Output:
-${message.output}`,
+      content: `<tool-result tool="${message.toolName}" proposal="${message.proposalId}" success="${message.success ? "true" : "false"}" duration="${message.durationMs}ms">
+${message.output}
+</tool-result>`,
       timestamp: message.timestamp
     };
   }
   if (message.kind === "upward_message") {
     return {
       role: "user",
-      content: `[Public Fact][Upward Message]
-Delivery mode: ${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}
-Content:
-${message.content}`,
+      content: `<upward-message mode="${message.deliveryMode}${message.deliveryMode === "yield" ? " (handoff and pause)" : " (coordination and continue)"}">
+${message.content}
+</upward-message>`,
       timestamp: message.timestamp
     };
   }
   if (message.kind === "child_report_message") {
     return {
       role: "user",
-      content: `[Public Fact][Child Report]
-Child: ${message.childId}
-Delivery mode: ${message.deliveryMode}
-Content:
-${message.content}`,
+      content: `<child-report child="${message.childId}" mode="${message.deliveryMode}">
+${message.content}
+</child-report>`,
       timestamp: message.timestamp
     };
   }
   if (message.kind === "system_message") {
     return {
       role: "user",
-      content: `[Public Fact][Unit Runtime]
-${message.content}`,
+      content: `<runtime-broadcast>
+${message.content}
+</runtime-broadcast>`,
       timestamp: message.timestamp
     };
   }
@@ -962,13 +964,23 @@ ${message.content}`,
       timestamp: message.timestamp
     };
   }
-  const prefix = getDisplayName(message.authoredBy);
-  const content = "content" in message ? message.content : "";
-  return {
-    role: "user",
-    content: `[${prefix}]: ${content}`,
-    timestamp: message.timestamp
-  };
+  if (message.kind === "incoming_message") {
+    return {
+      role: "user",
+      content: `<input-message>${message.content}</input-message>`,
+      timestamp: message.timestamp
+    };
+  }
+  if (message.kind === "agent_message") {
+    const authorName = getDisplayName(message.authoredBy);
+    return {
+      role: "user",
+      content: `<message author="${authorName}">${message.content}</message>`,
+      timestamp: message.timestamp
+    };
+  }
+  const _exhaustive = message;
+  return _exhaustive;
 }
 class ConversationProjector {
   projectVisibleMessages(messages) {
@@ -977,19 +989,21 @@ class ConversationProjector {
   buildMemorySnapshotMessage(snapshot) {
     return {
       role: "user",
-      content: `[Context Snapshot][Memory Snapshot]
+      content: `<context-snapshot type="memory">
 The following Memory Snapshot was compressed from earlier conversation history. Treat it as reference context rather than verbatim transcript. Some recent raw messages may overlap with it.
 
-${snapshot.content}`,
+${snapshot.content}
+</context-snapshot>`,
       timestamp: snapshot.createdAt
     };
   }
   buildNewlyVisibleBoundaryOverlay(agentId, count) {
     const agentName = getDisplayName(agentId);
     const lines = [
-      "[Context Boundary]",
+      `<context-boundary count="${count}">`,
       count === 1 ? `The message below this marker became newly visible in this turn for ${agentName}.` : `${count} messages below this marker became newly visible in this turn for ${agentName}.`,
-      count === 1 ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.` : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`
+      count === 1 ? `${agentName} should prioritize interpreting this newest item in light of the earlier shared history above.` : `${agentName} should prioritize interpreting these newest items in light of the earlier shared history above.`,
+      `</context-boundary>`
     ];
     return {
       role: "user",
@@ -1003,17 +1017,31 @@ ${snapshot.content}`,
     const pct = contextWindowTokens ? ` (approximately ${Math.round(estimatedTokens / contextWindowTokens * 100)}% of model context capacity)` : "";
     return {
       role: "user",
-      content: `[Context Reminder]
-The recent raw context visible to ${agentName} is estimated at about ${estimatedTokens} tokens${pct}, above the compression reminder threshold. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.`,
+      content: `<context-reminder>
+The recent raw context visible to ${agentName} is estimated at about ${estimatedTokens} tokens${pct}, above the compression reminder threshold. Context compression is worth considering, but this is a reminder rather than an instruction to compress immediately.
+</context-reminder>`,
       timestamp: Date.now()
     };
   }
   buildProposalNotification(proposal, proposerName, voterName) {
     return {
       role: "user",
-      content: `[Directive]
+      content: `<directive>
 ${voterName} must now vote on ${proposerName}'s pending ${proposal.toolName} proposal.
-${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.`,
+${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason in this turn.
+If you do not vote this turn, the proposal will be automatically superseded.
+</directive>`,
+      timestamp: Date.now()
+    };
+  }
+  buildProposerWaitNotification(proposerName, voterName, toolName) {
+    return {
+      role: "user",
+      content: `<directive>
+${proposerName}, your ${toolName} proposal is pending and awaiting ${voterName}'s vote.
+You cannot vote on your own proposal. Do not call the vote tool. Wait for ${voterName} to decide.
+If ${voterName} does not vote this turn, the proposal will be automatically superseded and you may propose again.
+</directive>`,
       timestamp: Date.now()
     };
   }
@@ -1023,7 +1051,7 @@ ${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason
     }
     const agentName = getDisplayName(agentId);
     const lines = [
-      "[Context Snapshot]",
+      `<context-snapshot type="child-commits">`,
       `The following currently visible child unit commit log snapshot is visible to ${agentName} (accepted steps only; not real-time activity):`
     ];
     for (const view of childCommitViews) {
@@ -1037,6 +1065,7 @@ ${voterName} may only call the **vote** tool with APPROVE or REJECT and a reason
         lines.push(`  - ${proposerName} via ${step.toolName}: ${step.proposedStep}`);
       }
     }
+    lines.push(`</context-snapshot>`);
     return {
       role: "user",
       content: lines.join("\n"),
@@ -1059,19 +1088,29 @@ function assembleTurnContext(input) {
     input.hasChildren,
     input.canSpawnChild
   );
-  const recentRawStartIndex = clamp$1(
+  const filteredVisible = input.visibleMessages.filter((m) => m.kind !== "child_commit_view_message");
+  const filteredNewlyVisible = input.newlyVisibleMessages.filter(
+    (m) => m.kind !== "child_commit_view_message" && !(m.kind === "agent_message" && m.authoredBy === input.agentId)
+  );
+  const originalRecentRawStartIndex = clamp$1(
     input.budgetPlan.recentRawStartSeq - (input.budgetPlan.visibleEndSeq - input.visibleMessages.length),
     0,
     input.visibleMessages.length
   );
-  const recentRawMessages = input.visibleMessages.slice(recentRawStartIndex);
-  const recentNewMessageIds = new Set(input.newlyVisibleMessages.map((message) => message.id));
+  const startMessage = input.visibleMessages[originalRecentRawStartIndex];
+  const recentRawStartIndex = startMessage ? Math.max(0, filteredVisible.findIndex((m) => m.id === startMessage.id)) : 0;
+  const recentRawMessages = filteredVisible.slice(recentRawStartIndex);
+  const recentNewMessageIds = new Set(filteredNewlyVisible.map((message) => message.id));
   const firstRecentNewIndex = recentRawMessages.findIndex((message) => recentNewMessageIds.has(message.id));
   const oldRecentRawMessages = firstRecentNewIndex === -1 ? recentRawMessages : recentRawMessages.slice(0, firstRecentNewIndex);
   const newRecentRawMessages = firstRecentNewIndex === -1 ? [] : recentRawMessages.slice(firstRecentNewIndex);
   const messages = [];
   if (input.memorySnapshot) {
     messages.push(projector.buildMemorySnapshotMessage(input.memorySnapshot));
+  }
+  const childCommitOverlay = projector.buildChildCommitViewMessage(input.agentId, input.childCommitViews);
+  if (childCommitOverlay) {
+    messages.push(childCommitOverlay);
   }
   messages.push(...projector.projectVisibleMessages(oldRecentRawMessages));
   if (newRecentRawMessages.length > 0) {
@@ -1090,6 +1129,10 @@ function assembleTurnContext(input) {
     const proposerName = AGENT_NAMES$1[input.pendingProposal.proposer] ?? input.pendingProposal.proposer;
     const voterName = AGENT_NAMES$1[input.agentId] ?? input.agentId;
     messages.push(projector.buildProposalNotification(input.pendingProposal, proposerName, voterName));
+  } else if (input.pendingProposal && input.pendingProposal.proposer === input.agentId) {
+    const proposerName = AGENT_NAMES$1[input.agentId] ?? input.agentId;
+    const voterName = AGENT_NAMES$1[input.pendingProposal.proposer === "agent-a" ? "agent-b" : "agent-a"];
+    messages.push(projector.buildProposerWaitNotification(proposerName, voterName, input.pendingProposal.toolName));
   }
   return {
     plan: {
@@ -1153,7 +1196,10 @@ function estimateMessageChars(message) {
   }
 }
 function estimateMessagesChars(messages) {
-  return messages.reduce((total, message) => total + estimateMessageChars(message), 0);
+  return messages.reduce((total, message) => {
+    if (message.kind === "child_commit_view_message") return total;
+    return total + estimateMessageChars(message);
+  }, 0);
 }
 function findRecentRawStartIndex(messages, targetChars) {
   if (messages.length === 0) {
@@ -2163,7 +2209,17 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
       this.appendChildCommitViewSnapshot(currentAgent, childCommitViews);
       const visibleSnapshot = this.ledger.readVisibleSnapshotForAgent(currentAgent, this.turnCounter);
       const canSpawnChild = this.children.size < DeliberationUnit.MAX_CHILDREN;
-      const pendingProposal = this.getPendingProposal();
+      let pendingProposal = this.getPendingProposal();
+      if (pendingProposal && pendingProposal.proposer === currentAgent) {
+        const voterName = AGENT_NAMES[currentAgent === "agent-a" ? "agent-b" : "agent-a"];
+        this.ledger.markProposalSuperseded(pendingProposal.messageId);
+        this.ledger.appendSystemMessage(
+          `The pending ${pendingProposal.toolName} proposal (ID: ${pendingProposal.messageId}) by ${agentName} has been automatically superseded because ${voterName} did not vote on it during their turn. ${agentName} may propose again if needed.`,
+          this.buildDeferredVisibilityMeta()
+        );
+        this.notifyDurableStateChange();
+        pendingProposal = null;
+      }
       const persistedContextTextRefs = this.persistContextTextRefs();
       const reminderShown = this.compressionManager.shouldShowReminder(visibleSnapshot.visibleMessages);
       const reminderChars = reminderShown ? this.compressionManager.estimateRecentRawChars(visibleSnapshot.visibleMessages) : null;
@@ -2188,6 +2244,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         visibleMessages: visibleSnapshot.visibleMessages,
         newlyVisibleMessages: visibleSnapshot.newlyVisibleMessages,
         pendingProposal,
+        childCommitViews,
         hasChildren,
         canSpawnChild,
         memorySnapshot: this.compressionManager.getMemorySnapshot(),
@@ -2219,7 +2276,7 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
         console.log(`[DU:${this.unitId}] turn#${this.turnCounter} ${agentName}: calling LLM with ${assembled.llmContext.messages.length} messages, recentRawStartSeq=${assembled.plan.recentRawStartSeq}, visibleEndSeq=${assembled.plan.visibleEndSeq}, truncationLevel=${assembled.plan.truncationLevel}`);
         try {
           const llmSignal = AbortSignal.timeout(this.llmTimeoutMs);
-          result = await agentTurn.execute(assembled.llmContext, assembled.tools, llmSignal);
+          result = await agentTurn.execute(assembled.llmContext, assembled.tools, llmSignal, { hasPendingProposalFromOther: pendingProposal !== null && pendingProposal.proposer !== currentAgent });
           break;
         } catch (err) {
           if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -2362,6 +2419,14 @@ Write a refreshed Memory Snapshot that integrates the earlier snapshot reference
       }
       if (result.action?.kind === "proposal") {
         const proposal = result.action.proposal;
+        const supersededCount = this.ledger.supersedeAllPendingProposals();
+        if (supersededCount > 0) {
+          this.ledger.appendSystemMessage(
+            `A new ${proposal.toolName} proposal by ${agentName} supersedes the previous pending proposal(s).`,
+            this.buildDeferredVisibilityMeta()
+          );
+          this.notifyDurableStateChange();
+        }
         const proposalMessage = this.ledger.appendProposalMessage({
           authoredBy: currentAgent,
           toolName: proposal.toolName,
@@ -2750,13 +2815,13 @@ class LocalNodeToolExecutor {
         break;
       case "readFile":
         result = await executeReadFile(
-          args.path,
+          args.path ?? args.filePath,
           args.offset,
           args.limit
         );
         break;
       case "writeFile":
-        result = await executeWriteFile(args.path, args.content);
+        result = await executeWriteFile(args.path ?? args.filePath, args.content);
         break;
       default:
         result = { success: false, output: `Unknown blocking tool: ${toolName}` };
@@ -3551,6 +3616,21 @@ class SqliteSessionPersistence {
       message: parseJson(row.body)
     }));
   }
+  getLatestChildCommitViewMessage(unitId, beforeSeq) {
+    const row = this.db.prepare(
+      `SELECT body FROM (
+        SELECT body, seq, message_id, version,
+               ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY version DESC) AS rn
+        FROM ledger_messages
+        WHERE unit_id = ? AND kind = 'child_commit_view_message' AND seq < ?
+      ) WHERE rn = 1
+      ORDER BY seq DESC LIMIT 1`
+    ).get(unitId, beforeSeq);
+    if (!row) return null;
+    const message = parseJson(row.body);
+    if (message.kind !== "child_commit_view_message") return null;
+    return { content: message.content };
+  }
 }
 const store = new ElectronStore({
   name: "elenchus-config",
@@ -3726,13 +3806,16 @@ function reconstructContext(deps, messageId) {
     recipe.recentRawStartSeq,
     recipe.visibleEndSeq
   );
-  const allMessages = sequencedMessages.map((entry) => entry.message);
+  const filteredSequenced = sequencedMessages.filter(
+    (entry) => entry.message.kind !== "child_commit_view_message"
+  );
+  const allMessages = filteredSequenced.map((entry) => entry.message);
   const projector = new ConversationProjector();
   let oldMessages = allMessages;
   let newMessages = [];
   if (recipe.newlyVisibleSeq !== null) {
-    const splitIndex = allMessages.findIndex(
-      (_message, index) => sequencedMessages[index].seq >= recipe.newlyVisibleSeq
+    const splitIndex = filteredSequenced.findIndex(
+      (entry) => entry.seq >= recipe.newlyVisibleSeq
     );
     if (splitIndex >= 0) {
       oldMessages = allMessages.slice(0, splitIndex);
@@ -3751,6 +3834,14 @@ function reconstructContext(deps, messageId) {
         createdAt: 0
       }));
     }
+  }
+  const latestChildCommitView = persistence2.getLatestChildCommitViewMessage(recipe.unitId, recipe.visibleEndSeq);
+  if (latestChildCommitView) {
+    messages.push({
+      role: "user",
+      content: latestChildCommitView.content,
+      timestamp: 0
+    });
   }
   messages.push(...projector.projectVisibleMessages(oldMessages));
   if (newMessages.length > 0) {
@@ -3773,44 +3864,209 @@ function reconstructContext(deps, messageId) {
   const toolNames = tools.map((t) => t.name);
   return { systemPrompt, messages, toolNames, recipe };
 }
-function formatContextAsMarkdown(ctx, messageId) {
+function formatContextAsHtml(ctx, messageId) {
   const { systemPrompt, messages, toolNames, recipe } = ctx;
   const agentName = recipe.agentId === "agent-a" ? "Agent A" : "Agent B";
   const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-  const sections = [];
-  sections.push(`# Context Reconstruction`);
-  sections.push(``);
-  sections.push(`> **Unit**: ${recipe.unitId} | **Agent**: ${agentName} | **Turn**: ${recipe.effectiveTurn} | **Level**: ${recipe.level}`);
-  sections.push(`> **Reconstructed at**: ${timestamp}`);
-  sections.push(`> **Source message**: \`${messageId}\``);
-  sections.push(``);
-  sections.push(`---`);
-  sections.push(``);
-  sections.push(`## System Prompt`);
-  sections.push(``);
-  sections.push(systemPrompt);
-  sections.push(``);
-  sections.push(`---`);
-  sections.push(``);
-  sections.push(`## Messages`);
-  sections.push(``);
-  for (const msg of messages) {
-    const role = msg.role === "user" ? "user" : "assistant";
-    sections.push(`### [${role}]`);
-    sections.push(``);
-    sections.push(msg.content);
-    sections.push(``);
+  const html = [];
+  html.push(`<!DOCTYPE html>`);
+  html.push(`<html lang="en"><head><meta charset="utf-8">`);
+  html.push(`<title>Context Dump — ${agentName} Turn ${recipe.effectiveTurn}</title>`);
+  html.push(`<style>${CONTEXT_CSS}</style>`);
+  html.push(`</head><body>`);
+  html.push(`<header class="ctx-header">`);
+  html.push(`<h1>Context Reconstruction</h1>`);
+  html.push(`<table class="ctx-meta">`);
+  html.push(`<tr><th>Unit</th><td>${esc(recipe.unitId)}</td></tr>`);
+  html.push(`<tr><th>Agent</th><td>${esc(agentName)}</td></tr>`);
+  html.push(`<tr><th>Turn</th><td>${recipe.effectiveTurn}</td></tr>`);
+  html.push(`<tr><th>Level</th><td>${esc(recipe.level)}</td></tr>`);
+  html.push(`<tr><th>Source message</th><td><code>${esc(messageId)}</code></td></tr>`);
+  html.push(`<tr><th>Reconstructed at</th><td>${esc(timestamp)}</td></tr>`);
+  html.push(`</table>`);
+  html.push(`</header>`);
+  html.push(`<section class="ctx-section">`);
+  html.push(`<details>`);
+  html.push(`<summary class="ctx-section-title ctx-section-system">System Prompt</summary>`);
+  html.push(`<pre class="ctx-pre">${esc(systemPrompt)}</pre>`);
+  html.push(`</details>`);
+  html.push(`</section>`);
+  html.push(`<section class="ctx-section">`);
+  html.push(`<h2 class="ctx-section-title">Messages <span class="ctx-count">${messages.length}</span></h2>`);
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2);
+    const role = msg.role;
+    const kind = classifyMessage(content);
+    const roleLabel = role === "user" ? "user" : role === "assistant" ? "assistant" : "tool-result";
+    const isLong = content.length > 600;
+    html.push(`<div class="ctx-msg ctx-msg-${kind}">`);
+    html.push(`<div class="ctx-msg-header">`);
+    html.push(`<span class="ctx-msg-index">#${i + 1}</span>`);
+    html.push(`<span class="ctx-msg-role ctx-role-${roleLabel}">${esc(roleLabel)}</span>`);
+    html.push(`<span class="ctx-msg-kind ctx-kind-${kind}">${esc(kind)}</span>`);
+    html.push(`</div>`);
+    if (isLong) {
+      html.push(`<details>`);
+      html.push(`<summary class="ctx-msg-summary">${esc(truncate(content, 200))}</summary>`);
+      html.push(`<pre class="ctx-pre">${esc(content)}</pre>`);
+      html.push(`</details>`);
+    } else {
+      html.push(`<pre class="ctx-pre">${esc(content)}</pre>`);
+    }
+    html.push(`</div>`);
   }
-  sections.push(`---`);
-  sections.push(``);
-  sections.push(`## Available Tools`);
-  sections.push(``);
+  html.push(`</section>`);
+  html.push(`<section class="ctx-section">`);
+  html.push(`<h2 class="ctx-section-title">Available Tools <span class="ctx-count">${toolNames.length}</span></h2>`);
+  html.push(`<div class="ctx-tools">`);
   for (const name of toolNames) {
-    sections.push(`- \`${name}\``);
+    html.push(`<span class="ctx-tool-badge">${esc(name)}</span>`);
   }
-  sections.push(``);
-  return sections.join("\n");
+  html.push(`</div>`);
+  html.push(`</section>`);
+  html.push(`</body></html>`);
+  return html.join("\n");
 }
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function truncate(s, maxLen) {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + "…";
+}
+function classifyMessage(content) {
+  if (content.startsWith("<proposal")) return "proposal";
+  if (content.startsWith("<vote")) return "vote";
+  if (content.startsWith("<tool-result")) return "tool-result";
+  if (content.startsWith("<directive")) return "directive";
+  if (content.startsWith("<context-snapshot")) return "context-snapshot";
+  if (content.startsWith("<context-reminder")) return "context-reminder";
+  if (content.startsWith("<context-boundary")) return "context-boundary";
+  if (content.startsWith("<child-report")) return "child-report";
+  if (content.startsWith("<upward-message")) return "upward-message";
+  if (content.startsWith("<runtime-broadcast")) return "runtime-broadcast";
+  if (content.startsWith("<input-message")) return "input-message";
+  if (content.startsWith("<message")) return "dialogue";
+  return "dialogue";
+}
+const CONTEXT_CSS = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    font-size: 13px; line-height: 1.5;
+    color: #111827; background: #ffffff;
+    padding: 1.5rem 2rem; max-width: 960px; margin: 0 auto;
+  }
+
+  /* Header */
+  .ctx-header h1 { font-size: 18px; font-weight: 700; margin-bottom: 0.75rem; }
+  .ctx-meta { border-collapse: collapse; margin-bottom: 1rem; }
+  .ctx-meta th { text-align: left; font-weight: 600; color: #6b7280; padding: 0.2rem 1rem 0.2rem 0; font-size: 12px; }
+  .ctx-meta td { font-size: 12px; color: #4b5563; }
+  .ctx-meta code { background: #f2f4f7; padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 11px; }
+
+  /* Sections */
+  .ctx-section { margin-bottom: 1.5rem; }
+  .ctx-section-title {
+    font-size: 14px; font-weight: 700; color: #111827;
+    padding: 0.5rem 0; border-bottom: 1px solid #e5e7eb; margin-bottom: 0.75rem;
+  }
+  .ctx-section-system { cursor: pointer; }
+  .ctx-count { font-size: 11px; font-weight: 500; color: #9ca3af; margin-left: 0.5rem; }
+
+  /* Collapsible */
+  details { margin-bottom: 0.25rem; }
+  summary { cursor: pointer; user-select: none; }
+  summary::marker { color: #9ca3af; }
+  details[open] > .ctx-msg-summary { display: none; }
+
+  /* Pre blocks */
+  .ctx-pre {
+    font-family: "SF Mono", "Menlo", "Monaco", "Courier New", monospace;
+    font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    padding: 0.625rem 0.75rem;
+    border-radius: 8px;
+    background: #fafbfc;
+    border: 1px solid #e5e7eb;
+    margin: 0.25rem 0;
+  }
+
+  /* Message card */
+  .ctx-msg {
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+  }
+  .ctx-msg-header {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    background: #fafbfc;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 12px;
+  }
+  .ctx-msg-index { color: #9ca3af; font-weight: 600; }
+  .ctx-msg-role {
+    font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 11px;
+  }
+  .ctx-role-user { background: #eff6ff; color: #2563eb; }
+  .ctx-role-assistant { background: #f0fdf4; color: #16a34a; }
+  .ctx-role-tool-result { background: #fefce8; color: #a16207; }
+
+  .ctx-msg-kind {
+    font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 11px;
+  }
+  .ctx-kind-dialogue { background: #f2f4f7; color: #4b5563; }
+  .ctx-kind-proposal { background: #dbeafe; color: #1d4ed8; }
+  .ctx-kind-vote { background: #dcfce7; color: #15803d; }
+  .ctx-kind-tool-result { background: #fef9c3; color: #a16207; }
+  .ctx-kind-directive { background: #ffedd5; color: #c2410c; }
+  .ctx-kind-context-snapshot { background: #ede9fe; color: #7c3aed; }
+  .ctx-kind-context-reminder { background: #fce7f3; color: #be185d; }
+  .ctx-kind-context-boundary { background: #e0e7ff; color: #4338ca; }
+  .ctx-kind-child-report { background: #ccfbf1; color: #0f766e; }
+  .ctx-kind-upward-message { background: #f0f9ff; color: #0369a1; }
+  .ctx-kind-runtime-broadcast { background: #fef2f2; color: #dc2626; }
+  .ctx-kind-input-message { background: #e0f2fe; color: #0369a1; }
+  .ctx-kind-system { background: #f2f4f7; color: #4b5563; }
+
+  /* Message body inside card */
+  .ctx-msg .ctx-pre {
+    border: none; background: transparent; margin: 0;
+    padding: 0.5rem 0.75rem;
+  }
+  .ctx-msg-summary {
+    padding: 0.375rem 0.75rem;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 12px; color: #6b7280;
+    white-space: pre-wrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Border accent by kind */
+  .ctx-msg-proposal { border-left: 3px solid #2563eb; }
+  .ctx-msg-vote { border-left: 3px solid #16a34a; }
+  .ctx-msg-tool-result { border-left: 3px solid #ca8a04; }
+  .ctx-msg-directive { border-left: 3px solid #ea580c; }
+  .ctx-msg-context-snapshot { border-left: 3px solid #7c3aed; }
+  .ctx-msg-context-reminder { border-left: 3px solid #ec4899; }
+  .ctx-msg-context-boundary { border-left: 3px solid #6366f1; }
+  .ctx-msg-child-report { border-left: 3px solid #14b8a6; }
+  .ctx-msg-upward-message { border-left: 3px solid #0284c7; }
+  .ctx-msg-runtime-broadcast { border-left: 3px solid #ef4444; }
+  .ctx-msg-input-message { border-left: 3px solid #0284c7; }
+
+  /* Tools */
+  .ctx-tools { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+  .ctx-tool-badge {
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 11px; font-weight: 500;
+    padding: 0.2rem 0.5rem; border-radius: 6px;
+    background: #f2f4f7; color: #4b5563;
+    border: 1px solid #e5e7eb;
+  }
+`;
 function registerDataIpc() {
   ipcMain.handle("get-unit-info", async (_event, unitId) => {
     const s = getSession();
@@ -3866,6 +4122,9 @@ function registerDataIpc() {
       return null;
     }
   });
+  ipcMain.handle("show-item-in-folder", async (_event, filePath) => {
+    shell.showItemInFolder(filePath);
+  });
   ipcMain.handle("reconstruct-context", async (_event, messageId) => {
     const persistence2 = getPersistence();
     if (!persistence2) {
@@ -3876,12 +4135,12 @@ function registerDataIpc() {
     if (!ctx) {
       return { ok: false, error: "No context recipe found for this message. Early messages may not have recipe records." };
     }
-    const markdown = formatContextAsMarkdown(ctx, messageId);
+    const html = formatContextAsHtml(ctx, messageId);
     const dumpDir = join(wsRoot, "context-dumps");
     await mkdir(dumpDir, { recursive: true });
-    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.md`;
+    const fileName = `context-${ctx.recipe.unitId}-${ctx.recipe.agentId}-turn${ctx.recipe.effectiveTurn}.html`;
     const filePath = join(dumpDir, fileName);
-    await writeFile(filePath, markdown, "utf-8");
+    await writeFile(filePath, html, "utf-8");
     return { ok: true, path: filePath, name: fileName };
   });
 }

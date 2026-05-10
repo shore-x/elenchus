@@ -93,7 +93,7 @@ export const compressContextTool: ElenchusTool = {
     "Propose to start a background asynchronous context compression task that refreshes the unit's memory snapshot. " +
     "This is a PROPOSAL — the other agent must vote APPROVE before it starts. " +
     "After approval, compression runs in the background and does not block the current agent unit's workflow, so the unit should continue normal deliberation rather than sleeping merely to wait for completion. " +
-    "Use this primarily when a [Context Reminder] indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. " +
+    "Use this primarily when a <context-reminder> indicates recent raw context pressure, or when the unit has a strong reason to refresh its memory snapshot. " +
     "Provide preservation requirements describing what this compression should especially retain. " +
     "If a compression task is already active, a duplicate approved call will fail at runtime.",
   parameters: Type.Object({
@@ -242,7 +242,7 @@ export const spawnChildTool: ElenchusTool = {
   name: "spawnChild",
   description:
     "Create a child agent unit for a delegated task. " +
-    "The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
+    "The child works independently, and upward messages from that child arrive asynchronously as <child-report> broadcasts. " +
     "Child creation follows the fixed layered structure: spawnChild creates a child unit at the next layer down. " +
     "A child may have direct capabilities that are not available in the current layer. " +
     "Use this when a delegated unit would be a better way to make progress on part of the task. " +
@@ -251,7 +251,7 @@ export const spawnChildTool: ElenchusTool = {
   levelDescriptions: {
     L0:
       "Create a child agent unit for a delegated task. " +
-      "The child works independently, and upward messages from that child arrive asynchronously as [Public Fact][Child Report] broadcasts. " +
+      "The child works independently, and upward messages from that child arrive asynchronously as <child-report> broadcasts. " +
       "From L0, spawnChild creates an L1 child unit with full execution capabilities. " +
       "Delegation is the default path for any work beyond initial orientation and knowledge-space maintenance — " +
       "research, investigation, implementation, analysis, and all execution work should be delegated to a child unit rather than performed directly. " +
@@ -297,7 +297,7 @@ export const sleepTool: ElenchusTool = {
   description:
     "Propose to pause the deliberation and enter Idle without sending an upward message. This is a PROPOSAL — the other agent must vote APPROVE. " +
     "You must specify an explicit timeout in seconds. If no child agent reports before the timeout, " +
-    "a [Public Fact][Unit Runtime] timeout broadcast is recorded and the unit can resume deliberation. " +
+    "a <runtime-broadcast> timeout broadcast is recorded and the unit can resume deliberation. " +
     "Use this when waiting is itself the best next commitment, not merely because child work exists in parallel. " +
     "Choose a duration that matches the expected wait: a short wait (e.g. 30–60s) for a prompt child response, " +
     "a moderate wait (e.g. 120–300s) for a multi-step child task, or a longer wait (e.g. 600s+) when the unit has no imminent expectation and is simply parking until something changes. " +

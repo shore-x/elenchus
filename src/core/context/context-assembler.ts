@@ -73,7 +73,14 @@ export function assembleTurnContext(input: AssembleTurnContextInput): AssembledT
   // child_commit_view_message is stored in ledger for observability but excluded from
   // normal projection — it is injected as a single turn-local overlay from childCommitViews.
   const filteredVisible = input.visibleMessages.filter(m => m.kind !== "child_commit_view_message");
-  const filteredNewlyVisible = input.newlyVisibleMessages.filter(m => m.kind !== "child_commit_view_message");
+  // Filter newly visible: exclude child_commit_view_message and the current agent's own
+  // agent_message. Own agent_messages have deferred visibility but are semantically
+  // self-authored — the agent already knows what it said, so marking them "newly visible"
+  // would be misleading and cause the context-boundary to be placed incorrectly.
+  const filteredNewlyVisible = input.newlyVisibleMessages.filter(m =>
+    m.kind !== "child_commit_view_message" &&
+    !(m.kind === "agent_message" && m.authoredBy === input.agentId),
+  );
 
   // seq-to-index offset uses the original (unfiltered) array since seq is a ledger-level concept.
   // Then we find the corresponding position in the filtered array.
